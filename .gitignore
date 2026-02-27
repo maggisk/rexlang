@@ -1,1 +1,3 @@
 _build/
+guide.elm-lang.org/
+*.pyc

@@ -1,4 +1,0 @@
-(executable
- (public_name rexlang)
- (name main)
- (libraries rexlang))

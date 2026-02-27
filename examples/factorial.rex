@@ -1,6 +1,9 @@
 let rec fact n =
-  if n <= 1 then 1
-  else n * fact (n - 1)
-;;
+    case n of
+        0 ->
+            1
+        _ ->
+            n * fact (n - 1)
 
-fact 10
+
+print (fact 10)

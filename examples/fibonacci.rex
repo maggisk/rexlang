@@ -1,6 +1,11 @@
 let rec fib n =
-  if n <= 1 then n
-  else fib (n - 1) + fib (n - 2)
-;;
+    case n of
+        0 ->
+            0
+        1 ->
+            1
+        _ ->
+            fib (n - 1) + fib (n - 2)
 
-fib 20
+
+print (fib 20)

@@ -1,38 +1,41 @@
-(* Pattern matching examples *)
+-- Pattern matching examples
 
-(* Fibonacci with match *)
+
+-- Fibonacci using case
 let rec fib n =
-  match n with
-  | 0 -> 0
-  | 1 -> 1
-  | n -> fib (n - 1) + fib (n - 2)
-;;
+    case n of
+        0 ->
+            0
+        1 ->
+            1
+        _ ->
+            fib (n - 1) + fib (n - 2)
 
-fib 10
-;;
+print (fib 10)
 
-(* Wildcard pattern *)
+
+-- Describe a number as a string
 let describe x =
-  match x with
-  | 0 -> "zero"
-  | 1 -> "one"
-  | _ -> "other"
-;;
+    case x of
+        0 ->
+            "zero"
+        1 ->
+            "one"
+        _ ->
+            "other"
 
-describe 0
-;;
-describe 1
-;;
-describe 42
-;;
+print (describe 0)
+print (describe 1)
+print (describe 42)
 
-(* Boolean matching *)
-let not b =
-  match b with
-  | true -> false
-  | false -> true
-;;
 
-not true
-;;
-not false
+-- Boolean negation via pattern matching
+let myNot b =
+    case b of
+        true ->
+            false
+        false ->
+            true
+
+print (myNot true)
+print (myNot false)
