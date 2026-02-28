@@ -145,40 +145,40 @@ else
 
 ## Standard library
 
-| Module | Contents |
-|---|---|
-| `std:List` | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
-| `std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
-| `std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr` |
-| `std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT |
-| `std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat` |
-| `std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
-| `std:IO` | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`) |
-| `std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
+| Module       | Contents                                                                                                                                                                                                                                                                                    |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `std:List`   | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
+| `std:Map`    | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values`                                                                                                            |
+| `std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`                                                                                                                                                                                                                      |
+| `std:Json`   | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT                                                                                                     |
+| `std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`                  |
+| `std:Math`   | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase`                                                                                                                                                                                 |
+| `std:IO`     | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`)                                                                                                                                                                                                        |
+| `std:Env`    | `getEnv` (returns `Maybe`), `getEnvOr`, `args`                                                                                                                                                                                                                                              |
 
 ## Examples
 
-| File | Description |
-|---|---|
-| `examples/factorial.rex` | Recursive factorial |
-| `examples/fibonacci.rex` | Recursive Fibonacci |
-| `examples/adt.rex` | Algebraic data types |
-| `examples/pattern_match.rex` | Pattern matching on multiple types |
-| `examples/higher_order.rex` | Higher-order functions |
-| `examples/pipe.rex` | Pipe operator `\|>` |
-| `examples/list.rex` | List stdlib |
-| `examples/tuple.rex` | Tuples and destructuring |
-| `examples/mutual_recursion.rex` | Mutual recursion with `let rec … and` |
-| `examples/traits.rex` | Trait declarations and implementations |
-| `examples/map.rex` | `std:Map` sorted map |
-| `examples/import.rex` | Module imports (selective and qualified) |
-| `examples/maybe.rex` | `Maybe` type from Prelude |
-| `examples/io.rex` | File I/O with `Result` |
-| `examples/string.rex` | String stdlib |
-| `examples/math.rex` | Math stdlib |
-| `examples/floats.rex` | Float arithmetic |
-| `examples/modulo.rex` | Modulo operator |
-| `examples/testing.rex` | Built-in test framework |
+| File                            | Description                              |
+| ------------------------------- | ---------------------------------------- |
+| `examples/factorial.rex`        | Recursive factorial                      |
+| `examples/fibonacci.rex`        | Recursive Fibonacci                      |
+| `examples/adt.rex`              | Algebraic data types                     |
+| `examples/pattern_match.rex`    | Pattern matching on multiple types       |
+| `examples/higher_order.rex`     | Higher-order functions                   |
+| `examples/pipe.rex`             | Pipe operator `\|>`                      |
+| `examples/list.rex`             | List stdlib                              |
+| `examples/tuple.rex`            | Tuples and destructuring                 |
+| `examples/mutual_recursion.rex` | Mutual recursion with `let rec … and`    |
+| `examples/traits.rex`           | Trait declarations and implementations   |
+| `examples/map.rex`              | `std:Map` sorted map                     |
+| `examples/import.rex`           | Module imports (selective and qualified) |
+| `examples/maybe.rex`            | `Maybe` type from Prelude                |
+| `examples/io.rex`               | File I/O with `Result`                   |
+| `examples/string.rex`           | String stdlib                            |
+| `examples/math.rex`             | Math stdlib                              |
+| `examples/floats.rex`           | Float arithmetic                         |
+| `examples/modulo.rex`           | Modulo operator                          |
+| `examples/testing.rex`          | Built-in test framework                  |
 
 ## Running tests
 
@@ -188,12 +188,14 @@ else
 ./rex --test stdlib/Map.rex
 ./rex --test stdlib/Result.rex
 ./rex --test stdlib/Json.rex
+./rex --test stdlib/*.rex
 go test ./...
 ```
 
 ## Roadmap
 
 ### Language
+
 - [ ] Records — `{ name : String, age : Int }`, field access, update syntax
 - [ ] String interpolation — `"hello ${name}"`
 - [ ] Type aliases — `type Name = String`
@@ -203,17 +205,20 @@ go test ./...
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
 
 ### Stdlib
+
 - [x] JSON — `std:Json` with ADT, `parse`/`stringify`, encode/decode helpers
 - [ ] JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
 - [ ] Date/Time
 - [ ] Random numbers
 
 ### Tooling
+
 - [ ] Installable `rex` CLI (`go install`)
 - [ ] REPL history (`readline`)
 - [ ] Better error messages with source locations
 
 ### Compilation
+
 - [ ] IR design (A-normal form)
 - [ ] WasmGC backend — emit WAT → `wasm-tools` → `.wasm`
 - [ ] WASI output (servers/CLI) and browser deployment via standard Wasm loader

@@ -25,10 +25,16 @@ func main() {
 	}
 	if args[0] == "--test" {
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: rex --test <file.rex>")
+			fmt.Fprintln(os.Stderr, "Usage: rex --test <file.rex> [file.rex ...]")
 			os.Exit(1)
 		}
-		runTests(args[1], args[2:])
+		totalFailed := 0
+		for _, path := range args[1:] {
+			totalFailed += runTests(path)
+		}
+		if totalFailed > 0 {
+			os.Exit(1)
+		}
 		return
 	}
 	runFile(args[0], args[1:])
@@ -61,7 +67,7 @@ func runFile(path string, programArgs []string) {
 	}
 }
 
-func runTests(path string, programArgs []string) {
+func runTests(path string) int {
 	source, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
@@ -76,7 +82,7 @@ func runTests(path string, programArgs []string) {
 	absPath, _ := filepath.Abs(path)
 	moduleName := stdlibModuleForPath(absPath)
 	if moduleName != "" {
-		extraBuiltins = eval.BuiltinsForModule(moduleName, programArgs)
+		extraBuiltins = eval.BuiltinsForModule(moduleName, nil)
 		extraTypeEnv = typechecker.TypeEnvForModule(moduleName)
 	}
 
@@ -100,14 +106,13 @@ func runTests(path string, programArgs []string) {
 		}
 	}
 
-	_, failed, err := eval.RunTests(src, programArgs, extraBuiltins)
+	fmt.Printf("=== %s ===\n", path)
+	_, failed, err := eval.RunTests(src, nil, extraBuiltins)
 	if err != nil {
 		printErr("Error", err)
 		os.Exit(1)
 	}
-	if failed > 0 {
-		os.Exit(1)
-	}
+	return failed
 }
 
 // stdlibModuleForPath detects if path is inside the embedded stdlib.

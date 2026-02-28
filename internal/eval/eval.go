@@ -883,7 +883,7 @@ func RunTests(source string, programArgs []string, extraBuiltins map[string]Valu
 			fmt.Printf("PASS  %s\n", test.Name)
 		}
 	}
-	fmt.Printf("\n%d passed, %d failed\n", passed, failed)
+	fmt.Printf("%d passed, %d failed\n\n", passed, failed)
 	return passed, failed, nil
 }
 
