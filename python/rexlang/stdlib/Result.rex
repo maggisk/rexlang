@@ -90,3 +90,30 @@ let andThen f r =
             f x
         Err e ->
             Err e
+
+
+-- # Tests
+
+
+test "isOk and isErr" =
+    assert (isOk (Ok 42))
+    assert (not (isOk (Err "oops")))
+    assert (isErr (Err "oops"))
+    assert (not (isErr (Ok 42)))
+
+test "withDefault" =
+    assert (withDefault 0 (Ok 42) == 42)
+    assert (withDefault 0 (Err "oops") == 0)
+
+test "map" =
+    assert (withDefault 0 (map (fun x -> x * 2) (Ok 5)) == 10)
+    assert (isErr (map (fun x -> x * 2) (Err "oops")))
+
+test "mapErr" =
+    assert (isOk (mapErr (fun e -> e ++ "!") (Ok 5)))
+    assert (isErr (mapErr (fun e -> e ++ "!") (Err "oops")))
+
+test "andThen" =
+    assert (withDefault 0 (andThen (fun x -> Ok (x * 2)) (Ok 5)) == 10)
+    assert (isErr (andThen (fun x -> Ok (x * 2)) (Err "oops")))
+    assert (isErr (andThen (fun _ -> Err "nope") (Ok 5)))

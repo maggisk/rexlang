@@ -278,3 +278,77 @@ let filter pred m =
             insert k v acc
         else
             acc) empty m
+
+
+-- # Helpers (internal, not exported)
+
+
+let unwrap m =
+    case m of
+        Just v ->
+            v
+        Nothing ->
+            error "unwrap: Nothing"
+
+
+-- # Tests
+
+
+test "empty and singleton" =
+    assert (isEmpty empty)
+    assert (not (isEmpty (singleton 1 10)))
+    assert (size (singleton 1 10) == 1)
+
+test "insert and lookup" =
+    let m = insert 2 20 (insert 1 10 empty)
+    assert (size m == 2)
+    assert (unwrap (lookup 1 m) == 10)
+    assert (unwrap (lookup 2 m) == 20)
+    assert (member 1 m)
+    assert (not (member 3 m))
+
+test "insert replaces existing key" =
+    let m = insert 1 99 (insert 1 10 empty)
+    assert (size m == 1)
+    assert (unwrap (lookup 1 m) == 99)
+
+test "remove" =
+    let m = insert 3 30 (insert 2 20 (insert 1 10 empty))
+    let m2 = remove 2 m
+    assert (size m2 == 2)
+    assert (member 1 m2)
+    assert (not (member 2 m2))
+    assert (member 3 m2)
+
+test "update" =
+    let m = insert 1 10 empty
+    let m2 = update 1 (fun v -> v + 5) m
+    assert (unwrap (lookup 1 m2) == 15)
+
+test "fromList and size" =
+    let m = fromList [(1, 10), (2, 20), (3, 30)]
+    assert (size m == 3)
+    assert (unwrap (lookup 2 m) == 20)
+
+test "map values" =
+    let m = fromList [(1, 10), (2, 20)]
+    let m2 = map (fun v -> v * 2) m
+    assert (unwrap (lookup 1 m2) == 20)
+    assert (unwrap (lookup 2 m2) == 40)
+
+test "filter" =
+    let m = fromList [(1, 10), (2, 20), (3, 30)]
+    let m2 = filter (fun k v -> v > 15) m
+    assert (size m2 == 2)
+    assert (not (member 1 m2))
+    assert (member 2 m2)
+
+test "foldl sums values" =
+    let m = fromList [(1, 10), (2, 20), (3, 30)]
+    assert (foldl (fun k v acc -> acc + v) 0 m == 60)
+
+test "keys and values" =
+    import std:List (length)
+    let m = fromList [(3, 30), (1, 10), (2, 20)]
+    assert (length (keys m) == 3)
+    assert (length (values m) == 3)

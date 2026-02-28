@@ -193,3 +193,52 @@ let any pred lst =
 --
 let all pred lst =
     foldl (fun acc x -> acc && pred x) true lst
+
+
+-- # Tests
+
+
+test "length" =
+    assert (length [] == 0)
+    assert (length [1, 2, 3] == 3)
+
+test "head and tail" =
+    assert (head [1, 2, 3] == 1)
+    assert (head (tail [1, 2, 3]) == 2)
+
+test "map" =
+    assert (sum (map (fun x -> x * 2) [1, 2, 3]) == 12)
+    assert (length (map (fun x -> x) []) == 0)
+
+test "filter" =
+    assert (sum (filter (fun x -> x > 2) [1, 2, 3, 4, 5]) == 12)
+    assert (length (filter (fun x -> x > 10) [1, 2, 3]) == 0)
+
+test "foldl and foldr" =
+    assert (foldl (fun acc x -> acc + x) 0 [1, 2, 3] == 6)
+    assert (foldl (fun acc x -> acc - x) 10 [1, 2, 3] == 4)
+    assert (head (foldr (fun x acc -> x :: acc) [] [1, 2, 3]) == 1)
+
+test "append and reverse" =
+    assert (length (append [1, 2] [3, 4]) == 4)
+    assert (sum (append [1, 2] [3, 4]) == 10)
+    assert (head (reverse [1, 2, 3]) == 3)
+    assert (length (reverse []) == 0)
+
+test "take and drop" =
+    assert (sum (take 2 [1, 2, 3, 4]) == 3)
+    assert (sum (drop 2 [1, 2, 3, 4]) == 7)
+    assert (length (take 0 [1, 2, 3]) == 0)
+    assert (length (take 10 [1, 2]) == 2)
+
+test "sum and product" =
+    assert (sum [1, 2, 3, 4, 5] == 15)
+    assert (sum [] == 0)
+    assert (product [1, 2, 3, 4] == 24)
+    assert (product [] == 1)
+
+test "any and all" =
+    assert (any (fun x -> x > 3) [1, 2, 3, 4])
+    assert (not (any (fun x -> x > 10) [1, 2, 3]))
+    assert (all (fun x -> x > 0) [1, 2, 3])
+    assert (not (all (fun x -> x > 2) [1, 2, 3]))
