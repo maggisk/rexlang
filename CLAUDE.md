@@ -25,8 +25,9 @@ python/
       List.rex     list stdlib (map, filter, foldl, foldr, take, drop, ...)
       Math.rex     math stdlib (abs, min, max, pow, trig, log, exp, pi, e, clamp, degrees, radians, logBase)
       String.rex   string stdlib (length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, isEmpty)
-      IO.rex       filesystem stdlib (readFile, writeFile, appendFile, fileExists, listDir)
-      Env.rex      environment stdlib (getEnv, getEnvOr, args)
+      IO.rex       filesystem stdlib (readFile→Result, writeFile→Result, appendFile→Result, fileExists→Bool, listDir→Result)
+      Env.rex      environment stdlib (getEnv→Maybe, getEnvOr, args)
+      Result.rex   result stdlib (Ok, Err, map, mapErr, withDefault, isOk, isErr, andThen)
   tests/
     test_lexer.py
     test_parser.py
@@ -115,6 +116,8 @@ One blank line between top-level definitions; two blank lines between sections. 
 
 ## Key decisions already made
 
+- **`()` unit**: zero-element tuple; `TUnit = TCon("Unit", [])` already existed; added `ast.Unit`, `ast.PUnit`, `VUnit`, `parse_atom`/`parse_atom_pattern` handling
+- **Error handling**: IO functions return `Result ok String` instead of raising; `getEnv` returns `Maybe String`; use `std:Result` or `std:Maybe` to handle failures
 - **Type system**: full Hindley-Milner inference, no annotations required
 - **Compilation target**: WasmGC — emit WAT, assemble with `wasm-tools`. Runs in browsers natively and on servers via WASI (no runtime install). ADTs map to WasmGC `struct` subtypes; TCO via `return_call`.
 - **Concurrency**: actors are a stdlib library, not a language feature. Start with a single-threaded cooperative scheduler (spawn/send/receive backed by message queues). Swap internals for real WASI threads when the spec matures — API stays the same.

@@ -71,6 +71,14 @@ def TTuple(ts):
     return TCon("Tuple", list(ts))
 
 
+def TMaybe(a):
+    return TCon("Maybe", [a])
+
+
+def TResult(a, e):
+    return TCon("Result", [a, e])
+
+
 # ---------------------------------------------------------------------------
 # Substitution operations
 # ---------------------------------------------------------------------------
@@ -171,8 +179,9 @@ def unify(t1, t2) -> dict:
 def generalize(env: dict, ty) -> Scheme:
     """Generalize ty over type variables not free in env."""
     env_free = set()
-    for scheme in env.values():
-        env_free |= free_vars_scheme(scheme)
+    for v in env.values():
+        if isinstance(v, Scheme):
+            env_free |= free_vars_scheme(v)
     quantified = sorted(free_vars(ty) - env_free)
     return Scheme(quantified, ty)
 
@@ -204,6 +213,8 @@ def type_to_string(ty) -> str:
                 if in_fun_arg:
                     return f"({result})"
                 return result
+            elif ty.name == "Unit" and not ty.args:
+                return "()"
             elif ty.name == "List" and len(ty.args) == 1:
                 return f"[{render(ty.args[0])}]"
             elif ty.name == "Tuple":

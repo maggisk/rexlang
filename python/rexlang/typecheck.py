@@ -19,6 +19,8 @@ from .types import (
     TFun,
     TList,
     TTuple,
+    TMaybe,
+    TResult,
     apply_subst,
     apply_subst_scheme,
     apply_subst_env,
@@ -62,6 +64,9 @@ class TypeChecker:
         if isinstance(pat, ast.PWild):
             tv = self.fresh()
             return subst, tv, {}
+
+        elif isinstance(pat, ast.PUnit):
+            return subst, TUnit, {}
 
         elif isinstance(pat, ast.PVar):
             tv = self.fresh()
@@ -156,6 +161,9 @@ class TypeChecker:
 
         elif isinstance(expr, ast.Bool):
             return subst, TBool
+
+        elif isinstance(expr, ast.Unit):
+            return subst, TUnit
 
         elif isinstance(expr, ast.Var):
             if expr.name not in env:
@@ -732,13 +740,13 @@ def initial_type_env() -> dict:
         "readLine": Scheme([], TFun(TString, TString)),
         "error": Scheme(["a"], TFun(TString, TVar("a"))),
         # Filesystem (std:IO)
-        "readFile": Scheme([], TFun(TString, TString)),
-        "writeFile": Scheme([], TFun(TString, TFun(TString, TString))),
-        "appendFile": Scheme([], TFun(TString, TFun(TString, TString))),
+        "readFile": Scheme([], TFun(TString, TResult(TString, TString))),
+        "writeFile": Scheme([], TFun(TString, TFun(TString, TResult(TUnit, TString)))),
+        "appendFile": Scheme([], TFun(TString, TFun(TString, TResult(TUnit, TString)))),
         "fileExists": Scheme([], TFun(TString, TBool)),
-        "listDir": Scheme([], TFun(TString, TList(TString))),
+        "listDir": Scheme([], TFun(TString, TResult(TList(TString), TString))),
         # Environment (std:Env)
-        "getEnv": Scheme([], TFun(TString, TString)),
+        "getEnv": Scheme([], TFun(TString, TMaybe(TString))),
         "getEnvOr": Scheme([], TFun(TString, TFun(TString, TString))),
         "args": Scheme([], TList(TString)),
     }

@@ -17,6 +17,7 @@ from rexlang.eval import (
     VBuiltin,
     VList,
     VTuple,
+    VUnit,
     VModule,
     Error,
     value_to_string,
@@ -856,6 +857,78 @@ class TestQualifiedImports:
             prog(src)
 
 
+class TestUnit:
+    def test_unit_value(self):
+        assert ev("()") == VUnit()
+
+    def test_unit_in_let(self):
+        assert prog("let x = ()\nx") == VUnit()
+
+    def test_unit_pattern(self):
+        src = "case () of\n    () ->\n        42"
+        assert ev(src) == VInt(42)
+
+    def test_unit_as_ctor_arg(self):
+        src = (
+            "import std:Result (Ok, Err)\n"
+            "case Ok () of\n"
+            "    Ok () ->\n"
+            "        1\n"
+            "    Err _ ->\n"
+            "        2"
+        )
+        assert prog(src) == VInt(1)
+
+
+class TestResultStdlib:
+    def test_ok(self):
+        assert prog("import std:Result (Ok, Err)\nOk 42") == VCtor("Ok", [VInt(42)])
+
+    def test_err(self):
+        assert prog('import std:Result (Ok, Err)\nErr "oops"') == VCtor("Err", [VString("oops")])
+
+    def test_map_ok(self):
+        src = "import std:Result (Ok, Err, map)\nmap (fun x -> x * 2) (Ok 5)"
+        assert prog(src) == VCtor("Ok", [VInt(10)])
+
+    def test_map_err(self):
+        src = 'import std:Result (Ok, Err, map)\nmap (fun x -> x * 2) (Err "oops")'
+        assert prog(src) == VCtor("Err", [VString("oops")])
+
+    def test_mapErr(self):
+        src = 'import std:Result (Ok, Err, mapErr)\nmapErr (fun e -> "error: " ++ e) (Err "oops")'
+        assert prog(src) == VCtor("Err", [VString("error: oops")])
+
+    def test_withDefault_ok(self):
+        src = "import std:Result (Ok, Err, withDefault)\nwithDefault 0 (Ok 42)"
+        assert prog(src) == VInt(42)
+
+    def test_withDefault_err(self):
+        src = 'import std:Result (Ok, Err, withDefault)\nwithDefault 0 (Err "oops")'
+        assert prog(src) == VInt(0)
+
+    def test_isOk_true(self):
+        assert prog("import std:Result (Ok, Err, isOk)\nisOk (Ok 1)") == VBool(True)
+
+    def test_isOk_false(self):
+        assert prog('import std:Result (Ok, Err, isOk)\nisOk (Err "x")') == VBool(False)
+
+    def test_isErr_true(self):
+        assert prog('import std:Result (Ok, Err, isErr)\nisErr (Err "x")') == VBool(True)
+
+    def test_andThen_ok(self):
+        src = "import std:Result (Ok, Err, andThen)\nandThen (fun x -> Ok (x * 2)) (Ok 5)"
+        assert prog(src) == VCtor("Ok", [VInt(10)])
+
+    def test_andThen_err_passthrough(self):
+        src = 'import std:Result (Ok, Err, andThen)\nandThen (fun x -> Ok (x * 2)) (Err "oops")'
+        assert prog(src) == VCtor("Err", [VString("oops")])
+
+    def test_andThen_returns_err(self):
+        src = 'import std:Result (Ok, Err, andThen)\nandThen (fun x -> Err "nope") (Ok 5)'
+        assert prog(src) == VCtor("Err", [VString("nope")])
+
+
 class TestIOStdlib:
     def test_read_file(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -863,16 +936,21 @@ class TestIOStdlib:
             path = f.name
         try:
             src = f'import std:IO (readFile)\nreadFile "{path}"'
-            assert prog(src) == VString("hello")
+            assert prog(src) == VCtor("Ok", [VString("hello")])
         finally:
             os.unlink(path)
+
+    def test_read_file_not_found(self):
+        src = 'import std:IO (readFile)\nreadFile "/nonexistent/rexlang_xyz.txt"'
+        result = prog(src)
+        assert isinstance(result, VCtor) and result.name == "Err"
 
     def test_write_file(self):
         with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
             path = f.name
         try:
             src = f'import std:IO (writeFile)\nwriteFile "{path}" "world"'
-            assert prog(src) == VString(path)
+            assert prog(src) == VCtor("Ok", [VUnit()])
             with open(path) as f:
                 assert f.read() == "world"
         finally:
@@ -884,7 +962,7 @@ class TestIOStdlib:
             path = f.name
         try:
             src = f'import std:IO (appendFile)\nappendFile "{path}" " world"'
-            assert prog(src) == VString(path)
+            assert prog(src) == VCtor("Ok", [VUnit()])
             with open(path) as f:
                 assert f.read() == "hello world"
         finally:
@@ -908,12 +986,7 @@ class TestIOStdlib:
             open(os.path.join(d, "a.txt"), "w").close()
             open(os.path.join(d, "b.txt"), "w").close()
             src = f'import std:IO (listDir)\nlistDir "{d}"'
-            assert prog(src) == VList([VString("a.txt"), VString("b.txt")])
-
-    def test_read_file_not_found(self):
-        src = 'import std:IO (readFile)\nreadFile "/nonexistent/rexlang_xyz.txt"'
-        with pytest.raises(Error, match="readFile"):
-            prog(src)
+            assert prog(src) == VCtor("Ok", [VList([VString("a.txt"), VString("b.txt")])])
 
     def test_qualified_import(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -921,7 +994,7 @@ class TestIOStdlib:
             path = f.name
         try:
             src = f'import std:IO as IO\nIO.readFile "{path}"'
-            assert prog(src) == VString("data")
+            assert prog(src) == VCtor("Ok", [VString("data")])
         finally:
             os.unlink(path)
 
@@ -931,14 +1004,13 @@ class TestEnvStdlib:
         os.environ["REX_TEST_VAR"] = "hello"
         try:
             src = 'import std:Env (getEnv)\ngetEnv "REX_TEST_VAR"'
-            assert prog(src) == VString("hello")
+            assert prog(src) == VCtor("Just", [VString("hello")])
         finally:
             del os.environ["REX_TEST_VAR"]
 
     def test_get_env_missing(self):
         src = 'import std:Env (getEnv)\ngetEnv "REX_NONEXISTENT_XYZ_123"'
-        with pytest.raises(Error, match="getEnv"):
-            prog(src)
+        assert prog(src) == VCtor("Nothing", [])
 
     def test_get_env_or_existing(self):
         os.environ["REX_TEST_VAR2"] = "found"
@@ -962,6 +1034,6 @@ class TestEnvStdlib:
         os.environ["REX_TEST_VAR3"] = "qualified"
         try:
             src = 'import std:Env as Env\nEnv.getEnv "REX_TEST_VAR3"'
-            assert prog(src) == VString("qualified")
+            assert prog(src) == VCtor("Just", [VString("qualified")])
         finally:
             del os.environ["REX_TEST_VAR3"]

@@ -68,6 +68,11 @@ class VTuple:
 
 
 @dataclass
+class VUnit:
+    pass
+
+
+@dataclass
 class VBuiltin:
     name: str
     fn: Any
@@ -128,6 +133,8 @@ def value_to_string(v) -> str:
         return "[" + ", ".join(value_to_string(i) for i in v.items) + "]"
     elif isinstance(v, VTuple):
         return "(" + ", ".join(value_to_string(i) for i in v.items) + ")"
+    elif isinstance(v, VUnit):
+        return "()"
     elif isinstance(v, VModule):
         return f"<module {v.name}>"
     raise Error(f"unknown value type: {type(v)}")
@@ -335,11 +342,11 @@ def _builtin_read_file(v):
     path = _check_str("readFile", v)
     try:
         with open(path) as f:
-            return VString(f.read())
+            return VCtor("Ok", [VString(f.read())])
     except FileNotFoundError:
-        raise Error(f"readFile: file not found: {path}")
+        return VCtor("Err", [VString(f"file not found: {path}")])
     except OSError as e:
-        raise Error(f"readFile: {e}")
+        return VCtor("Err", [VString(str(e))])
 
 
 def _builtin_write_file(path_v):
@@ -350,9 +357,9 @@ def _builtin_write_file(path_v):
         try:
             with open(path, "w") as f:
                 f.write(content)
-            return VString(path)
+            return VCtor("Ok", [VUnit()])
         except OSError as e:
-            raise Error(f"writeFile: {e}")
+            return VCtor("Err", [VString(str(e))])
 
     return VBuiltin("writeFile$1", inner)
 
@@ -365,9 +372,9 @@ def _builtin_append_file(path_v):
         try:
             with open(path, "a") as f:
                 f.write(content)
-            return VString(path)
+            return VCtor("Ok", [VUnit()])
         except OSError as e:
-            raise Error(f"appendFile: {e}")
+            return VCtor("Err", [VString(str(e))])
 
     return VBuiltin("appendFile$1", inner)
 
@@ -380,9 +387,9 @@ def _builtin_file_exists(v):
 def _builtin_list_dir(v):
     path = _check_str("listDir", v)
     try:
-        return VList([VString(e) for e in sorted(os.listdir(path))])
+        return VCtor("Ok", [VList([VString(e) for e in sorted(os.listdir(path))])])
     except OSError as e:
-        raise Error(f"listDir: {e}")
+        return VCtor("Err", [VString(str(e))])
 
 
 # ---------------------------------------------------------------------------
@@ -394,8 +401,8 @@ def _builtin_get_env(v):
     name = _check_str("getEnv", v)
     val = os.environ.get(name)
     if val is None:
-        raise Error(f"getEnv: environment variable not set: {name}")
-    return VString(val)
+        return VCtor("Nothing", [])
+    return VCtor("Just", [VString(val)])
 
 
 def _builtin_get_env_or(name_v):
@@ -482,6 +489,8 @@ def _match_pattern(pat, value) -> Optional[dict]:
     """Return a binding dict if pat matches value, else None."""
     if isinstance(pat, ast.PWild):
         return {}
+    elif isinstance(pat, ast.PUnit):
+        return {} if isinstance(value, VUnit) else None
     elif isinstance(pat, ast.PVar):
         return {pat.name: value}
     elif isinstance(pat, ast.PInt):
@@ -586,6 +595,9 @@ def eval(env: dict, expr) -> Any:
             return VString(expr.value)
         elif isinstance(expr, ast.Bool):
             return VBool(expr.value)
+
+        elif isinstance(expr, ast.Unit):
+            return VUnit()
 
         elif isinstance(expr, ast.Var):
             if expr.name in env:

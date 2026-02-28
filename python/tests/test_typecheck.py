@@ -529,29 +529,59 @@ class TestQualifiedImports:
         assert raises_type_error("Z.length [1,2,3]")
 
 
+class TestUnit:
+    def test_unit_type(self):
+        assert ty("()") == "()"
+
+    def test_unit_in_let(self):
+        assert ty("let x = ()\nx") == "()"
+
+    def test_unit_pattern(self):
+        assert ty("case () of\n    () ->\n        42") == "Int"
+
+
+class TestResultStdlib:
+    def test_ok_type(self):
+        assert ty("import std:Result (Ok, Err)\nOk 42") == "(Result Int a)"
+
+    def test_err_type(self):
+        assert ty('import std:Result (Ok, Err)\nErr "oops"') == "(Result a String)"
+
+    def test_map_type(self):
+        # error type stays polymorphic when only Ok is used
+        assert ty("import std:Result (Ok, Err, map)\nmap (fun x -> x * 2) (Ok 5)") == "(Result Int a)"
+
+    def test_withDefault_type(self):
+        assert ty('import std:Result (Ok, Err, withDefault)\nwithDefault 0 (Ok 42)') == "Int"
+
+    def test_andThen_type(self):
+        src = "import std:Result (Ok, Err, andThen)\nandThen (fun x -> Ok (x * 2)) (Ok 5)"
+        assert ty(src) == "(Result Int a)"
+
+
 class TestIOStdlib:
     def test_read_file_type(self):
-        assert ty('import std:IO (readFile)\nreadFile "x"') == "String"
+        assert ty('import std:IO (readFile)\nreadFile "x"') == "(Result String String)"
 
     def test_write_file_type(self):
-        assert ty('import std:IO (writeFile)\nwriteFile "x" "y"') == "String"
+        assert ty('import std:IO (writeFile)\nwriteFile "x" "y"') == "(Result () String)"
 
     def test_append_file_type(self):
-        assert ty('import std:IO (appendFile)\nappendFile "x" "y"') == "String"
+        assert ty('import std:IO (appendFile)\nappendFile "x" "y"') == "(Result () String)"
 
     def test_file_exists_type(self):
         assert ty('import std:IO (fileExists)\nfileExists "x"') == "Bool"
 
     def test_list_dir_type(self):
-        assert ty('import std:IO (listDir)\nlistDir "."') == "[String]"
+        assert ty('import std:IO (listDir)\nlistDir "."') == "(Result [String] String)"
 
     def test_qualified_import(self):
-        assert ty('import std:IO as IO\nIO.readFile "x"') == "String"
+        assert ty('import std:IO as IO\nIO.readFile "x"') == "(Result String String)"
 
 
 class TestEnvStdlib:
     def test_get_env_type(self):
-        assert ty('import std:Env (getEnv)\ngetEnv "PATH"') == "String"
+        assert ty('import std:Env (getEnv)\ngetEnv "PATH"') == "(Maybe String)"
 
     def test_get_env_or_type(self):
         assert ty('import std:Env (getEnvOr)\ngetEnvOr "HOME" "/tmp"') == "String"
@@ -560,4 +590,4 @@ class TestEnvStdlib:
         assert ty('import std:Env (args)\nargs') == "[String]"
 
     def test_qualified_import(self):
-        assert ty('import std:Env as Env\nEnv.getEnv "PATH"') == "String"
+        assert ty('import std:Env as Env\nEnv.getEnv "PATH"') == "(Maybe String)"

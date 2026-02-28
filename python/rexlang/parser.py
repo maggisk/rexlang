@@ -83,6 +83,9 @@ def parse_tokens(tokens: list) -> list:
             return ast.Var(tok.value)
         elif tok.kind == "(":
             advance()
+            if peek().kind == ")":
+                advance()
+                return ast.Unit()
             first = parse_expr()
             if peek().kind == ",":
                 items = [first]
@@ -316,6 +319,9 @@ def parse_tokens(tokens: list) -> list:
             return ast.PBool(tok.value)
         elif tok.kind == "(":
             advance()
+            if peek().kind == ")":
+                advance()
+                return ast.PUnit()
             first = parse_pattern()
             if peek().kind == ",":
                 pats = [first]

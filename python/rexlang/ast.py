@@ -13,6 +13,11 @@ class PWild:
 
 
 @dataclass
+class PUnit:
+    pass
+
+
+@dataclass
 class PVar:
     name: str
 
@@ -108,6 +113,11 @@ class String:
 @dataclass
 class Bool:
     value: bool
+
+
+@dataclass
+class Unit:
+    pass
 
 
 @dataclass
