@@ -1,3 +1,6 @@
+import std:IO (print)
+import std:Math (sqrt, toFloat)
+
 -- Float arithmetic
 
 

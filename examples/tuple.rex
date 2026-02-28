@@ -1,3 +1,5 @@
+import std:IO (print)
+
 -- Tuple type and let destructuring
 
 let swap pair =

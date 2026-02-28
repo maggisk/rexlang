@@ -1,3 +1,5 @@
+import std:IO (print)
+
 let rec fib n =
     case n of
         0 ->

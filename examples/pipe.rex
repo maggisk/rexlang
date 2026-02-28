@@ -1,3 +1,5 @@
+import std:IO (print)
+
 -- Pipe operator |>
 
 let double n = n * 2

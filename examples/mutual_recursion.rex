@@ -1,3 +1,5 @@
+import std:IO (print)
+
 -- Mutual recursion: isEven and isOdd
 
 let rec isEven n =

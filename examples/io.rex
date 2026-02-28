@@ -1,3 +1,5 @@
+import std:IO (print)
+
 -- I/O builtins: print and readLine
 
 let greet name =

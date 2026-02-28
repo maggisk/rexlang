@@ -1,3 +1,5 @@
+import std:IO (print)
+
 -- modulo operator examples
 let a = 10 % 3   -- 1
 let b = 7 % 2    -- 1

@@ -6,6 +6,7 @@ from ..values import (
     VInt,
     Error,
     _as_float,
+    _as_int,
     value_to_string,
 )
 
@@ -77,4 +78,9 @@ def builtins() -> dict:
         "exp": VBuiltin("exp", lambda v: VFloat(_math.exp(_as_float(v)))),
         "pi": VFloat(_math.pi),
         "e": VFloat(_math.e),
+        "toFloat": VBuiltin("toFloat", lambda v: VFloat(float(_as_int(v)))),
+        "round": VBuiltin("round", lambda v: VInt(round(_as_float(v)))),
+        "floor": VBuiltin("floor", lambda v: VInt(_math.floor(_as_float(v)))),
+        "ceiling": VBuiltin("ceiling", lambda v: VInt(_math.ceil(_as_float(v)))),
+        "truncate": VBuiltin("truncate", lambda v: VInt(int(_as_float(v)))),
     }

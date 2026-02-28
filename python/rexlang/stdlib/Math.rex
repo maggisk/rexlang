@@ -1,4 +1,4 @@
-export abs, min, max, sin, cos, tan, asin, acos, atan, atan2, log, exp, pow, sqrt, pi, e, clamp, degrees, radians, logBase
+export abs, min, max, sin, cos, tan, asin, acos, atan, atan2, log, exp, pow, sqrt, pi, e, clamp, degrees, radians, logBase, toFloat, round, floor, ceiling, truncate
 
 
 -- # Derived

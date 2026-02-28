@@ -1,3 +1,4 @@
+import std:IO (print)
 import std:List (map, filter, sum)
 
 let xs = [1, 2, 3, 4, 5]

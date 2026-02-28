@@ -1,3 +1,5 @@
+import std:IO (print)
+
 -- Higher-order functions
 
 

@@ -8,7 +8,26 @@ from ..values import (
     VString,
     VUnit,
     _check_str,
+    _display,
 )
+
+
+def _builtin_print(v):
+    print(_display(v), end="")
+    return v
+
+
+def _builtin_println(v):
+    print(_display(v))
+    return v
+
+
+def _builtin_readline(v):
+    prompt = _check_str("readLine", v)
+    try:
+        return VString(input(prompt))
+    except EOFError:
+        return VString("")
 
 
 def _builtin_read_file(v):
@@ -72,4 +91,7 @@ def builtins() -> dict:
         "appendFile": VBuiltin("appendFile", _builtin_append_file),
         "fileExists": VBuiltin("fileExists", _builtin_file_exists),
         "listDir": VBuiltin("listDir", _builtin_list_dir),
+        "print": VBuiltin("print", _builtin_print),
+        "println": VBuiltin("println", _builtin_println),
+        "readLine": VBuiltin("readLine", _builtin_readline),
     }

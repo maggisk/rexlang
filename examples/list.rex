@@ -1,3 +1,5 @@
+import std:IO (print)
+
 -- Built-in list examples
 
 let xs = [1, 2, 3, 4, 5]

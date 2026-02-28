@@ -677,7 +677,7 @@ def check_module(module_name: str) -> dict:
 
     exprs = parser_mod.parse(source)
     checker = TypeChecker()
-    env = initial_type_env()
+    env = _all_type_env()
     type_defs: dict = {}
     exports: set = set()
 
@@ -697,10 +697,10 @@ def check_module(module_name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def initial_type_env() -> dict:
-    """Return a type environment with all builtin names."""
+def _all_type_env() -> dict:
+    """Return a type environment with all builtin names (for stdlib modules)."""
     return {
-        "not": Scheme([], TFun(TBool, TBool)),
+        **initial_type_env(),
         "toFloat": Scheme([], TFun(TInt, TFloat)),
         "round": Scheme([], TFun(TFloat, TInt)),
         "floor": Scheme([], TFun(TFloat, TInt)),
@@ -738,7 +738,6 @@ def initial_type_env() -> dict:
         "print": Scheme(["a"], TFun(TVar("a"), TVar("a"))),
         "println": Scheme(["a"], TFun(TVar("a"), TVar("a"))),
         "readLine": Scheme([], TFun(TString, TString)),
-        "error": Scheme(["a"], TFun(TString, TVar("a"))),
         # Filesystem (std:IO)
         "readFile": Scheme([], TFun(TString, TResult(TString, TString))),
         "writeFile": Scheme([], TFun(TString, TFun(TString, TResult(TUnit, TString)))),
@@ -749,6 +748,14 @@ def initial_type_env() -> dict:
         "getEnv": Scheme([], TFun(TString, TMaybe(TString))),
         "getEnvOr": Scheme([], TFun(TString, TFun(TString, TString))),
         "args": Scheme([], TList(TString)),
+    }
+
+
+def initial_type_env() -> dict:
+    """Return a type environment with only globally available builtins."""
+    return {
+        "not": Scheme([], TFun(TBool, TBool)),
+        "error": Scheme(["a"], TFun(TString, TVar("a"))),
     }
 
 

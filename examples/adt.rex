@@ -1,3 +1,5 @@
+import std:IO (print)
+
 type Option = None | Some int
 type List = Nil | Cons int List
 

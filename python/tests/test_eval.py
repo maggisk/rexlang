@@ -131,22 +131,22 @@ class TestFloat:
         assert ev("-3.14") == VFloat(-3.14)
 
     def test_sqrt(self):
-        assert ev("sqrt 4.0") == VFloat(2.0)
+        assert prog("import std:Math (sqrt)\nsqrt 4.0") == VFloat(2.0)
 
     def test_to_float(self):
-        assert ev("toFloat 3") == VFloat(3.0)
+        assert prog("import std:Math (toFloat)\ntoFloat 3") == VFloat(3.0)
 
     def test_round(self):
-        assert ev("round 3.7") == VInt(4)
+        assert prog("import std:Math (round)\nround 3.7") == VInt(4)
 
     def test_floor(self):
-        assert ev("floor 3.9") == VInt(3)
+        assert prog("import std:Math (floor)\nfloor 3.9") == VInt(3)
 
     def test_ceiling(self):
-        assert ev("ceiling 3.1") == VInt(4)
+        assert prog("import std:Math (ceiling)\nceiling 3.1") == VInt(4)
 
     def test_truncate(self):
-        assert ev("truncate 3.9") == VInt(3)
+        assert prog("import std:Math (truncate)\ntruncate 3.9") == VInt(3)
 
 
 class TestLogic:
@@ -727,41 +727,41 @@ class TestExhaustiveness:
 
 class TestIO:
     def test_print_string(self, capsys):
-        result = ev('print "hello"')
+        result = prog('import std:IO (print)\nprint "hello"')
         assert result == VString("hello")
         assert capsys.readouterr().out == "hello"
 
     def test_print_int(self, capsys):
-        result = ev("print 42")
+        result = prog("import std:IO (print)\nprint 42")
         assert result == VInt(42)
         assert capsys.readouterr().out == "42"
 
     def test_print_returns_value(self, capsys):
-        assert ev('print "x"') == VString("x")
+        assert prog('import std:IO (print)\nprint "x"') == VString("x")
         capsys.readouterr()  # discard output
 
     def test_println_string(self, capsys):
-        result = ev('println "hello"')
+        result = prog('import std:IO (println)\nprintln "hello"')
         assert result == VString("hello")
         assert capsys.readouterr().out == "hello\n"
 
     def test_println_int(self, capsys):
-        result = ev("println 42")
+        result = prog("import std:IO (println)\nprintln 42")
         assert result == VInt(42)
         assert capsys.readouterr().out == "42\n"
 
     def test_println_bool(self, capsys):
-        result = ev("println true")
+        result = prog("import std:IO (println)\nprintln true")
         assert result == VBool(True)
         assert capsys.readouterr().out == "true\n"
 
     def test_println_returns_value(self, capsys):
-        assert ev('println "x"') == VString("x")
+        assert prog('import std:IO (println)\nprintln "x"') == VString("x")
         capsys.readouterr()  # discard output
 
     def test_readline(self, monkeypatch):
         monkeypatch.setattr("builtins.input", lambda prompt: "test input")
-        result = ev('readLine "Enter: "')
+        result = prog('import std:IO (readLine)\nreadLine "Enter: "')
         assert result == VString("test input")
 
     def test_readline_eof(self, monkeypatch):
@@ -769,7 +769,7 @@ class TestIO:
             raise EOFError
 
         monkeypatch.setattr("builtins.input", raise_eof)
-        result = ev('readLine ""')
+        result = prog('import std:IO (readLine)\nreadLine ""')
         assert result == VString("")
 
 
