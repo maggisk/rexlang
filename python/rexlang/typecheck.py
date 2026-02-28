@@ -297,7 +297,25 @@ class TypeChecker:
                     f"{type_to_string(apply_subst(s12, tr))}"
                 )
             s_final = compose_subst(s3, s12)
-            return s_final, apply_subst(s_final, tl)
+            result_ty = apply_subst(s_final, tl)
+
+            # Restrict arithmetic to numeric types (sound type system)
+            if isinstance(result_ty, TVar):
+                # Free type variable: default to Int (numeric defaulting)
+                s_final = compose_subst({result_ty.name: TInt}, s_final)
+                result_ty = TInt
+            elif result_ty not in (TInt, TFloat):
+                raise TypeError(
+                    f"arithmetic requires Int or Float, got {type_to_string(result_ty)}"
+                )
+
+            # Mod is Int-only (no float modulo)
+            if op == "Mod" and result_ty != TInt:
+                raise TypeError(
+                    f"(%) requires Int operands, got {type_to_string(result_ty)}"
+                )
+
+            return s_final, result_ty
 
         elif op == "Concat":
             s1, tl = self.infer(env, type_defs, subst, expr.left)

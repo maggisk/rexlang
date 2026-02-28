@@ -94,6 +94,20 @@ class TestHMArithmetic:
     def test_int_mod(self):
         assert ty("10 % 3") == "Int"
 
+    def test_string_arithmetic_is_error(self):
+        assert raises_type_error('"hello" + "world"')
+
+    def test_bool_arithmetic_is_error(self):
+        assert raises_type_error("true + false")
+
+    def test_mod_float_is_error(self):
+        assert raises_type_error("1.5 % 2.5")
+
+    def test_free_var_defaults_to_int(self):
+        env = tc("let f x = x + x")
+        assert type_to_string(env["f"].ty) == "Int -> Int"
+        assert len(env["f"].vars) == 0
+
     def test_concat(self):
         assert ty('"a" ++ "b"') == "String"
 
@@ -151,10 +165,9 @@ class TestHMFunctions:
         env = tc("let add x y = x + y")
         assert "add" in env
         scheme = env["add"]
-        ts = type_to_string(scheme.ty)
-        # Arithmetic is polymorphic: ∀a. a -> a -> a
-        assert ts == "a -> a -> a"
-        assert len(scheme.vars) == 1
+        # Free vars default to Int; no longer polymorphic
+        assert type_to_string(scheme.ty) == "Int -> Int -> Int"
+        assert len(scheme.vars) == 0
 
     def test_closure_captures_env(self):
         assert ty("let x = 5\nlet f y = x + y") == "Int -> Int"
@@ -493,4 +506,8 @@ class TestMaybeStdlib:
 
     def test_import_map_type(self):
         result = ty('import std:Maybe (Nothing, Just, map)\nmap (fun x -> x * 2) (Just 5)')
+        assert result == "(Maybe Int)"
+
+    def test_andThen_type(self):
+        result = ty('import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) (Just 5)')
         assert result == "(Maybe Int)"

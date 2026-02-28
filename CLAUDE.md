@@ -56,7 +56,7 @@ All commands run from `python/`:
 ## Architecture notes
 
 - **Pipeline**: source → `lexer.tokenize()` → `parser.parse()` → `typecheck.check_program()` → `eval.eval_program()`
-- **Type inference**: `typecheck.py` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types live in `types.py` (`TVar`, `TCon`, `Scheme`). Arithmetic is polymorphic (`∀a. a → a → a`). REPL shows `name : type` after each binding.
+- **Type inference**: `typecheck.py` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types live in `types.py` (`TVar`, `TCon`, `Scheme`). Arithmetic operators (`+` `-` `*` `/`) require `Int` or `Float`; free type variables in arithmetic expressions default to `Int`. Use `toFloat` to convert before Float arithmetic. REPL shows `name : type` after each binding.
 - **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin` — all are plain dataclasses with `__eq__`
 - **Environment**: plain `dict` passed through eval; closures capture a snapshot
 - **Tail calls**: the evaluator uses a trampoline loop for tail-recursive functions
@@ -103,6 +103,9 @@ One blank line between top-level definitions; two blank lines between sections. 
 - WasmGC backend: emit WAT (WebAssembly Text) → `wasm-tools` assemble → `.wasm`
 - Full module system (`module Foo` declarations, third-party namespaces)
 
+### Can land any time
+- Qualified module imports: `import std:List as L` then `L.length [1,2,3]`; optional `as` alias (`import std:List` → module name `List` used as qualifier). Requires `VModule` value wrapping env, dot-access syntax in parser, and lookup in eval. Fixes name collisions between modules (e.g. `length` in `std:List` and `std:String`).
+
 ### Before going public
 - `pyproject.toml` + installable CLI (`rexlang` command)
 - Ruff linting config
@@ -117,4 +120,4 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **No hot reloading** for now
 - **No guards in pattern matching** (not planned)
 - **Import system**: `import std:List (map, filter)` — file-based selective import; `std:` namespace resolves to `python/rexlang/stdlib/`. Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
-- **`length` name collision**: `std:String` exports `length` (string length builtin) and `std:List` exports `length` (Rex recursive function). Whichever is imported last wins. No fix until namespacing lands.
+- **`length` name collision**: `std:String` exports `length` (string length builtin) and `std:List` exports `length` (Rex recursive function). Whichever is imported last wins. Fix: qualified module imports (see Planned work).
