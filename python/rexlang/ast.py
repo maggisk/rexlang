@@ -196,7 +196,7 @@ class LetPat:
 
 @dataclass
 class LetRec:
-    bindings: list       # list of (name: str, body: Expr); len >= 2
+    bindings: list  # list of (name: str, body: Expr); len >= 2
     in_expr: Optional[Any]  # None = top-level
 
 
@@ -295,8 +295,10 @@ def to_string(expr) -> str:
         )
         return f"(case {to_string(expr.scrutinee)} of {arms})"
     elif isinstance(expr, TypeDecl):
+
         def ctor_str(name, args):
             return name if not args else f"{name} of {' '.join(args)}"
+
         ctors = " | ".join(ctor_str(n, a) for n, a in expr.ctors)
         params_str = (" " + " ".join(expr.params)) if expr.params else ""
         return f"(type {expr.name}{params_str} = {ctors})"
@@ -311,7 +313,9 @@ def to_string(expr) -> str:
             return f"(let {pat_s} = {body_s})"
         return f"(let {pat_s} = {body_s} in {to_string(expr.in_expr)})"
     elif isinstance(expr, LetRec):
-        parts = " and ".join(f"{name} = {to_string(body)}" for name, body in expr.bindings)
+        parts = " and ".join(
+            f"{name} = {to_string(body)}" for name, body in expr.bindings
+        )
         if expr.in_expr is None:
             return f"(let rec {parts})"
         return f"(let rec {parts} in {to_string(expr.in_expr)})"

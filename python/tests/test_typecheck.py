@@ -497,19 +497,23 @@ class TestHMExamples:
 
 class TestMaybeStdlib:
     def test_import_just_type(self):
-        result = ty('import std:Maybe (Nothing, Just)\nJust 5')
+        result = ty("import std:Maybe (Nothing, Just)\nJust 5")
         assert result == "(Maybe Int)"
 
     def test_import_fromMaybe_type(self):
-        result = ty('import std:Maybe (Nothing, Just, fromMaybe)\nfromMaybe 0 (Just 7)')
+        result = ty("import std:Maybe (Nothing, Just, fromMaybe)\nfromMaybe 0 (Just 7)")
         assert result == "Int"
 
     def test_import_map_type(self):
-        result = ty('import std:Maybe (Nothing, Just, map)\nmap (fun x -> x * 2) (Just 5)')
+        result = ty(
+            "import std:Maybe (Nothing, Just, map)\nmap (fun x -> x * 2) (Just 5)"
+        )
         assert result == "(Maybe Int)"
 
     def test_andThen_type(self):
-        result = ty('import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) (Just 5)')
+        result = ty(
+            "import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) (Just 5)"
+        )
         assert result == "(Maybe Int)"
 
 
@@ -549,13 +553,21 @@ class TestResultStdlib:
 
     def test_map_type(self):
         # error type stays polymorphic when only Ok is used
-        assert ty("import std:Result (Ok, Err, map)\nmap (fun x -> x * 2) (Ok 5)") == "(Result Int a)"
+        assert (
+            ty("import std:Result (Ok, Err, map)\nmap (fun x -> x * 2) (Ok 5)")
+            == "(Result Int a)"
+        )
 
     def test_withDefault_type(self):
-        assert ty('import std:Result (Ok, Err, withDefault)\nwithDefault 0 (Ok 42)') == "Int"
+        assert (
+            ty("import std:Result (Ok, Err, withDefault)\nwithDefault 0 (Ok 42)")
+            == "Int"
+        )
 
     def test_andThen_type(self):
-        src = "import std:Result (Ok, Err, andThen)\nandThen (fun x -> Ok (x * 2)) (Ok 5)"
+        src = (
+            "import std:Result (Ok, Err, andThen)\nandThen (fun x -> Ok (x * 2)) (Ok 5)"
+        )
         assert ty(src) == "(Result Int a)"
 
 
@@ -564,10 +576,14 @@ class TestIOStdlib:
         assert ty('import std:IO (readFile)\nreadFile "x"') == "(Result String String)"
 
     def test_write_file_type(self):
-        assert ty('import std:IO (writeFile)\nwriteFile "x" "y"') == "(Result () String)"
+        assert (
+            ty('import std:IO (writeFile)\nwriteFile "x" "y"') == "(Result () String)"
+        )
 
     def test_append_file_type(self):
-        assert ty('import std:IO (appendFile)\nappendFile "x" "y"') == "(Result () String)"
+        assert (
+            ty('import std:IO (appendFile)\nappendFile "x" "y"') == "(Result () String)"
+        )
 
     def test_file_exists_type(self):
         assert ty('import std:IO (fileExists)\nfileExists "x"') == "Bool"
@@ -587,7 +603,7 @@ class TestEnvStdlib:
         assert ty('import std:Env (getEnvOr)\ngetEnvOr "HOME" "/tmp"') == "String"
 
     def test_args_type(self):
-        assert ty('import std:Env (args)\nargs') == "[String]"
+        assert ty("import std:Env (args)\nargs") == "[String]"
 
     def test_qualified_import(self):
         assert ty('import std:Env as Env\nEnv.getEnv "PATH"') == "(Maybe String)"

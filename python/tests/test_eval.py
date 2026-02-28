@@ -775,44 +775,40 @@ class TestIO:
 
 class TestMaybeStdlib:
     def test_import_nothing(self):
-        src = 'import std:Maybe (Nothing, Just)\nNothing'
+        src = "import std:Maybe (Nothing, Just)\nNothing"
         assert prog(src) == VCtor("Nothing", [])
 
     def test_import_just(self):
-        src = 'import std:Maybe (Nothing, Just)\nJust 42'
+        src = "import std:Maybe (Nothing, Just)\nJust 42"
         assert prog(src) == VCtor("Just", [VInt(42)])
 
     def test_import_fromMaybe(self):
-        src = 'import std:Maybe (Nothing, Just, fromMaybe)\nfromMaybe 0 (Just 7)'
+        src = "import std:Maybe (Nothing, Just, fromMaybe)\nfromMaybe 0 (Just 7)"
         assert prog(src) == VInt(7)
 
     def test_import_isNothing(self):
-        src = 'import std:Maybe (Nothing, Just, isNothing)\nisNothing Nothing'
+        src = "import std:Maybe (Nothing, Just, isNothing)\nisNothing Nothing"
         assert prog(src) == VBool(True)
 
     def test_import_map(self):
-        src = 'import std:Maybe (Nothing, Just, map)\nmap (fun x -> x * 2) (Just 5)'
+        src = "import std:Maybe (Nothing, Just, map)\nmap (fun x -> x * 2) (Just 5)"
         assert prog(src) == VCtor("Just", [VInt(10)])
 
     def test_andThen_just(self):
-        src = 'import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) (Just 5)'
+        src = "import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) (Just 5)"
         assert prog(src) == VCtor("Just", [VInt(10)])
 
     def test_andThen_returns_nothing(self):
-        src = 'import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Nothing) (Just 5)'
+        src = "import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Nothing) (Just 5)"
         assert prog(src) == VCtor("Nothing", [])
 
     def test_andThen_nothing_input(self):
-        src = 'import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) Nothing'
+        src = "import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) Nothing"
         assert prog(src) == VCtor("Nothing", [])
 
     def test_exhaustive_check_works(self):
         # exhaustiveness check should work for imported constructors
-        src = (
-            'import std:Maybe (Nothing, Just)\n'
-            'case Just 5 of\n'
-            '  Just n -> n'
-        )
+        src = "import std:Maybe (Nothing, Just)\ncase Just 5 of\n  Just n -> n"
         with pytest.raises(Error, match="non-exhaustive"):
             prog(src)
 
@@ -828,17 +824,9 @@ class TestQualifiedImports:
 
     def test_collision_resolved(self):
         # L.length = list length, S.length = string length — no collision
-        src = (
-            "import std:List as L\n"
-            "import std:String as S\n"
-            "L.length [1,2]"
-        )
+        src = "import std:List as L\nimport std:String as S\nL.length [1,2]"
         assert prog(src) == VInt(2)
-        src2 = (
-            "import std:List as L\n"
-            "import std:String as S\n"
-            'S.length "hi"'
-        )
+        src2 = 'import std:List as L\nimport std:String as S\nS.length "hi"'
         assert prog(src2) == VInt(2)
 
     def test_nonexistent_field_raises(self):
@@ -885,7 +873,9 @@ class TestResultStdlib:
         assert prog("import std:Result (Ok, Err)\nOk 42") == VCtor("Ok", [VInt(42)])
 
     def test_err(self):
-        assert prog('import std:Result (Ok, Err)\nErr "oops"') == VCtor("Err", [VString("oops")])
+        assert prog('import std:Result (Ok, Err)\nErr "oops"') == VCtor(
+            "Err", [VString("oops")]
+        )
 
     def test_map_ok(self):
         src = "import std:Result (Ok, Err, map)\nmap (fun x -> x * 2) (Ok 5)"
@@ -914,10 +904,14 @@ class TestResultStdlib:
         assert prog('import std:Result (Ok, Err, isOk)\nisOk (Err "x")') == VBool(False)
 
     def test_isErr_true(self):
-        assert prog('import std:Result (Ok, Err, isErr)\nisErr (Err "x")') == VBool(True)
+        assert prog('import std:Result (Ok, Err, isErr)\nisErr (Err "x")') == VBool(
+            True
+        )
 
     def test_andThen_ok(self):
-        src = "import std:Result (Ok, Err, andThen)\nandThen (fun x -> Ok (x * 2)) (Ok 5)"
+        src = (
+            "import std:Result (Ok, Err, andThen)\nandThen (fun x -> Ok (x * 2)) (Ok 5)"
+        )
         assert prog(src) == VCtor("Ok", [VInt(10)])
 
     def test_andThen_err_passthrough(self):
@@ -925,7 +919,9 @@ class TestResultStdlib:
         assert prog(src) == VCtor("Err", [VString("oops")])
 
     def test_andThen_returns_err(self):
-        src = 'import std:Result (Ok, Err, andThen)\nandThen (fun x -> Err "nope") (Ok 5)'
+        src = (
+            'import std:Result (Ok, Err, andThen)\nandThen (fun x -> Err "nope") (Ok 5)'
+        )
         assert prog(src) == VCtor("Err", [VString("nope")])
 
 
@@ -986,7 +982,9 @@ class TestIOStdlib:
             open(os.path.join(d, "a.txt"), "w").close()
             open(os.path.join(d, "b.txt"), "w").close()
             src = f'import std:IO (listDir)\nlistDir "{d}"'
-            assert prog(src) == VCtor("Ok", [VList([VString("a.txt"), VString("b.txt")])])
+            assert prog(src) == VCtor(
+                "Ok", [VList([VString("a.txt"), VString("b.txt")])]
+            )
 
     def test_qualified_import(self):
         with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
@@ -1025,7 +1023,7 @@ class TestEnvStdlib:
         assert prog(src) == VString("fallback")
 
     def test_args_is_list_of_strings(self):
-        src = 'import std:Env (args)\nargs'
+        src = "import std:Env (args)\nargs"
         result = prog(src)
         assert isinstance(result, VList)
         assert all(isinstance(v, VString) for v in result.items)

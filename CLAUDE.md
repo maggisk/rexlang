@@ -19,8 +19,16 @@ python/
     parser.py      recursive-descent parser → list[Expr]
     types.py       HM type representation (TVar, TCon, Scheme, unify, generalize, …)
     typecheck.py   Algorithm W inference; runs after parse, before eval; errors fatal
-    eval.py        tree-walking evaluator + Value types
+    values.py      value types (VInt, VFloat, …), Error, value_to_string, helpers
+    eval.py        tree-walking evaluator (imports values + builtins)
     __init__.py    re-exports run(), run_program(), eval_toplevel()
+    builtins/
+      __init__.py  all_builtins() — assembles the full builtin dict
+      core.py      not, error, print, println, readLine, toFloat, round, floor, ceiling, truncate
+      math.py      abs, min, max, pow, sqrt, trig, log, exp, pi, e
+      string.py    length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith
+      io.py        readFile, writeFile, appendFile, fileExists, listDir
+      env.py       getEnv, getEnvOr, args
     stdlib/
       List.rex     list stdlib (map, filter, foldl, foldr, take, drop, ...)
       Math.rex     math stdlib (abs, min, max, pow, trig, log, exp, pi, e, clamp, degrees, radians, logBase)

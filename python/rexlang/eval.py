@@ -1,418 +1,28 @@
-import math
 import os
-import sys
-from dataclasses import dataclass
 from typing import Any, Optional
 
 from . import ast
 from . import parser
+from .builtins import all_builtins
+from .values import (
+    VInt,
+    VFloat,
+    VString,
+    VBool,
+    VClosure,
+    VCtor,
+    VCtorFn,
+    VList,
+    VTuple,
+    VUnit,
+    VBuiltin,
+    VModule,
+    Error,
+    value_to_string,
+    _as_bool,
+)
 
 STDLIB_DIR = os.path.join(os.path.dirname(__file__), "stdlib")
-
-
-# ---------------------------------------------------------------------------
-# Values
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class VInt:
-    value: int
-
-
-@dataclass
-class VFloat:
-    value: float
-
-
-@dataclass
-class VString:
-    value: str
-
-
-@dataclass
-class VBool:
-    value: bool
-
-
-@dataclass
-class VClosure:
-    param: str
-    body: Any
-    env: dict
-
-
-@dataclass
-class VCtor:
-    name: str
-    args: list
-
-
-@dataclass
-class VCtorFn:
-    """Partially-applied constructor waiting for more arguments."""
-
-    name: str
-    remaining: int
-    acc_args: list  # built in reverse; reversed when arity is satisfied
-
-
-@dataclass
-class VList:
-    items: list
-
-
-@dataclass
-class VTuple:
-    items: list
-
-
-@dataclass
-class VUnit:
-    pass
-
-
-@dataclass
-class VBuiltin:
-    name: str
-    fn: Any
-
-
-@dataclass
-class VModule:
-    name: str
-    env: dict  # exported name → value
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-class Error(Exception):
-    pass
-
-
-def _escape_string(s: str) -> str:
-    out = ['"']
-    for c in s:
-        if c == '"':
-            out.append('\\"')
-        elif c == "\\":
-            out.append("\\\\")
-        elif c == "\n":
-            out.append("\\n")
-        elif c == "\t":
-            out.append("\\t")
-        else:
-            out.append(c)
-    out.append('"')
-    return "".join(out)
-
-
-def value_to_string(v) -> str:
-    if isinstance(v, VInt):
-        return str(v.value)
-    elif isinstance(v, VFloat):
-        return str(v.value)
-    elif isinstance(v, VString):
-        return _escape_string(v.value)
-    elif isinstance(v, VBool):
-        return "true" if v.value else "false"
-    elif isinstance(v, VClosure):
-        return "<fun>"
-    elif isinstance(v, VBuiltin):
-        return f"<builtin {v.name}>"
-    elif isinstance(v, VCtor):
-        if not v.args:
-            return v.name
-        return f"({v.name} {' '.join(value_to_string(a) for a in v.args)})"
-    elif isinstance(v, VCtorFn):
-        return f"<ctor {v.name}>"
-    elif isinstance(v, VList):
-        return "[" + ", ".join(value_to_string(i) for i in v.items) + "]"
-    elif isinstance(v, VTuple):
-        return "(" + ", ".join(value_to_string(i) for i in v.items) + ")"
-    elif isinstance(v, VUnit):
-        return "()"
-    elif isinstance(v, VModule):
-        return f"<module {v.name}>"
-    raise Error(f"unknown value type: {type(v)}")
-
-
-def _as_int(v) -> int:
-    if isinstance(v, VInt):
-        return v.value
-    raise Error(f"expected int, got {value_to_string(v)}")
-
-
-def _as_float(v) -> float:
-    if isinstance(v, VFloat):
-        return v.value
-    raise Error(f"expected float, got {value_to_string(v)}")
-
-
-def _as_bool(v) -> bool:
-    if isinstance(v, VBool):
-        return v.value
-    raise Error(f"expected bool, got {value_to_string(v)}")
-
-
-# ---------------------------------------------------------------------------
-# Math builtin helpers
-# ---------------------------------------------------------------------------
-
-
-def _builtin_abs(v):
-    if isinstance(v, VInt):
-        return VInt(abs(v.value))
-    if isinstance(v, VFloat):
-        return VFloat(abs(v.value))
-    raise Error(f"abs: expected number, got {value_to_string(v)}")
-
-
-def _builtin_min(x):
-    def inner(y):
-        if isinstance(x, VInt) and isinstance(y, VInt):
-            return x if x.value <= y.value else y
-        if isinstance(x, VFloat) and isinstance(y, VFloat):
-            return x if x.value <= y.value else y
-        raise Error("min: expected matching numeric types")
-
-    return VBuiltin("min$1", inner)
-
-
-def _builtin_max(x):
-    def inner(y):
-        if isinstance(x, VInt) and isinstance(y, VInt):
-            return x if x.value >= y.value else y
-        if isinstance(x, VFloat) and isinstance(y, VFloat):
-            return x if x.value >= y.value else y
-        raise Error("max: expected matching numeric types")
-
-    return VBuiltin("max$1", inner)
-
-
-def _builtin_pow(x):
-    if not isinstance(x, (VInt, VFloat)):
-        raise Error("pow: expected number")
-
-    def inner(y):
-        if not isinstance(y, (VInt, VFloat)):
-            raise Error("pow: expected number")
-        return VFloat(math.pow(float(x.value), float(y.value)))
-
-    return VBuiltin("pow$1", inner)
-
-
-def _builtin_atan2(y):
-    def inner(x):
-        return VFloat(math.atan2(_as_float(y), _as_float(x)))
-
-    return VBuiltin("atan2$1", inner)
-
-
-# ---------------------------------------------------------------------------
-# String builtin helpers
-# ---------------------------------------------------------------------------
-
-
-def _check_str(name, v):
-    if not isinstance(v, VString):
-        raise Error(f"{name}: expected string, got {value_to_string(v)}")
-    return v.value
-
-
-def _builtin_str_length(v):
-    return VInt(len(_check_str("length", v)))
-
-
-def _builtin_to_upper(v):
-    return VString(_check_str("toUpper", v).upper())
-
-
-def _builtin_to_lower(v):
-    return VString(_check_str("toLower", v).lower())
-
-
-def _builtin_trim(v):
-    return VString(_check_str("trim", v).strip())
-
-
-def _builtin_split(sep):
-    s = _check_str("split", sep)
-
-    def inner(v):
-        return VList([VString(p) for p in _check_str("split", v).split(s)])
-
-    return VBuiltin("split$1", inner)
-
-
-def _builtin_join(sep):
-    s = _check_str("join", sep)
-
-    def inner(lst):
-        if not isinstance(lst, VList):
-            raise Error("join: expected list")
-        parts = [_check_str("join", item) for item in lst.items]
-        return VString(s.join(parts))
-
-    return VBuiltin("join$1", inner)
-
-
-def _builtin_to_string(v):
-    if isinstance(v, VInt):
-        return VString(str(v.value))
-    if isinstance(v, VFloat):
-        return VString(str(v.value))
-    if isinstance(v, VBool):
-        return VString("true" if v.value else "false")
-    if isinstance(v, VString):
-        return v
-    raise Error(f"toString: cannot convert {value_to_string(v)}")
-
-
-def _builtin_contains(sub):
-    s = _check_str("contains", sub)
-
-    def inner(v):
-        return VBool(s in _check_str("contains", v))
-
-    return VBuiltin("contains$1", inner)
-
-
-def _builtin_starts_with(prefix):
-    s = _check_str("startsWith", prefix)
-
-    def inner(v):
-        return VBool(_check_str("startsWith", v).startswith(s))
-
-    return VBuiltin("startsWith$1", inner)
-
-
-def _builtin_ends_with(suffix):
-    s = _check_str("endsWith", suffix)
-
-    def inner(v):
-        return VBool(_check_str("endsWith", v).endswith(s))
-
-    return VBuiltin("endsWith$1", inner)
-
-
-# ---------------------------------------------------------------------------
-# I/O builtin helpers
-# ---------------------------------------------------------------------------
-
-
-def _display(v) -> str:
-    """Human-readable: strings without quotes, everything else via value_to_string."""
-    if isinstance(v, VString):
-        return v.value
-    return value_to_string(v)
-
-
-def _builtin_print(v):
-    print(_display(v), end="")
-    return v
-
-
-def _builtin_println(v):
-    print(_display(v))
-    return v
-
-
-def _builtin_error(v):
-    raise Error(_check_str("error", v))
-
-
-def _builtin_readline(v):
-    prompt = _check_str("readLine", v)
-    try:
-        return VString(input(prompt))
-    except EOFError:
-        return VString("")
-
-
-# ---------------------------------------------------------------------------
-# IO builtin helpers
-# ---------------------------------------------------------------------------
-
-
-def _builtin_read_file(v):
-    path = _check_str("readFile", v)
-    try:
-        with open(path) as f:
-            return VCtor("Ok", [VString(f.read())])
-    except FileNotFoundError:
-        return VCtor("Err", [VString(f"file not found: {path}")])
-    except OSError as e:
-        return VCtor("Err", [VString(str(e))])
-
-
-def _builtin_write_file(path_v):
-    path = _check_str("writeFile", path_v)
-
-    def inner(content_v):
-        content = _check_str("writeFile", content_v)
-        try:
-            with open(path, "w") as f:
-                f.write(content)
-            return VCtor("Ok", [VUnit()])
-        except OSError as e:
-            return VCtor("Err", [VString(str(e))])
-
-    return VBuiltin("writeFile$1", inner)
-
-
-def _builtin_append_file(path_v):
-    path = _check_str("appendFile", path_v)
-
-    def inner(content_v):
-        content = _check_str("appendFile", content_v)
-        try:
-            with open(path, "a") as f:
-                f.write(content)
-            return VCtor("Ok", [VUnit()])
-        except OSError as e:
-            return VCtor("Err", [VString(str(e))])
-
-    return VBuiltin("appendFile$1", inner)
-
-
-def _builtin_file_exists(v):
-    path = _check_str("fileExists", v)
-    return VBool(os.path.exists(path))
-
-
-def _builtin_list_dir(v):
-    path = _check_str("listDir", v)
-    try:
-        return VCtor("Ok", [VList([VString(e) for e in sorted(os.listdir(path))])])
-    except OSError as e:
-        return VCtor("Err", [VString(str(e))])
-
-
-# ---------------------------------------------------------------------------
-# Env builtin helpers
-# ---------------------------------------------------------------------------
-
-
-def _builtin_get_env(v):
-    name = _check_str("getEnv", v)
-    val = os.environ.get(name)
-    if val is None:
-        return VCtor("Nothing", [])
-    return VCtor("Just", [VString(val)])
-
-
-def _builtin_get_env_or(name_v):
-    name = _check_str("getEnvOr", name_v)
-
-    def inner(default_v):
-        default = _check_str("getEnvOr", default_v)
-        return VString(os.environ.get(name, default))
-
-    return VBuiltin("getEnvOr$1", inner)
 
 
 def _eval_binop(op: str, l, r):
@@ -706,7 +316,11 @@ def eval(env: dict, expr) -> Any:
             raw = {}
             for bname, bbody in expr.bindings:
                 val = eval(env, bbody)
-                raw[bname] = VClosure(val.param, val.body, shared_env) if isinstance(val, VClosure) else val
+                raw[bname] = (
+                    VClosure(val.param, val.body, shared_env)
+                    if isinstance(val, VClosure)
+                    else val
+                )
             shared_env.update(raw)
             last_value = raw[expr.bindings[-1][0]]
             if expr.in_expr is not None:
@@ -755,7 +369,11 @@ def _load_module(module_name: str) -> tuple:
 def eval_toplevel(env: dict, expr) -> tuple:
     if isinstance(expr, ast.TypeDecl):
         ctor_env = {
-            cname: (VCtor(cname, []) if len(arg_types) == 0 else VCtorFn(cname, len(arg_types), []))
+            cname: (
+                VCtor(cname, [])
+                if len(arg_types) == 0
+                else VCtorFn(cname, len(arg_types), [])
+            )
             for cname, arg_types in expr.ctors
         }
         types = dict(env.get("__types__", {}))
@@ -808,7 +426,11 @@ def eval_toplevel(env: dict, expr) -> tuple:
         raw = {}
         for bname, bbody in expr.bindings:
             val = eval(env, bbody)
-            raw[bname] = VClosure(val.param, val.body, shared_env) if isinstance(val, VClosure) else val
+            raw[bname] = (
+                VClosure(val.param, val.body, shared_env)
+                if isinstance(val, VClosure)
+                else val
+            )
         shared_env.update(raw)
         last_value = raw[expr.bindings[-1][0]]
         return last_value, {**env, **raw}
@@ -818,58 +440,7 @@ def eval_toplevel(env: dict, expr) -> tuple:
 
 
 def initial_env() -> dict:
-    return {
-        "not": VBuiltin("not", lambda v: VBool(not _as_bool(v))),
-        "toFloat": VBuiltin("toFloat", lambda v: VFloat(float(_as_int(v)))),
-        "round": VBuiltin("round", lambda v: VInt(round(_as_float(v)))),
-        "floor": VBuiltin("floor", lambda v: VInt(math.floor(_as_float(v)))),
-        "ceiling": VBuiltin("ceiling", lambda v: VInt(math.ceil(_as_float(v)))),
-        "truncate": VBuiltin("truncate", lambda v: VInt(int(_as_float(v)))),
-        "sqrt": VBuiltin("sqrt", lambda v: VFloat(math.sqrt(_as_float(v)))),
-        # Math builtins
-        "abs": VBuiltin("abs", _builtin_abs),
-        "min": VBuiltin("min", _builtin_min),
-        "max": VBuiltin("max", _builtin_max),
-        "pow": VBuiltin("pow", _builtin_pow),
-        "sin": VBuiltin("sin", lambda v: VFloat(math.sin(_as_float(v)))),
-        "cos": VBuiltin("cos", lambda v: VFloat(math.cos(_as_float(v)))),
-        "tan": VBuiltin("tan", lambda v: VFloat(math.tan(_as_float(v)))),
-        "asin": VBuiltin("asin", lambda v: VFloat(math.asin(_as_float(v)))),
-        "acos": VBuiltin("acos", lambda v: VFloat(math.acos(_as_float(v)))),
-        "atan": VBuiltin("atan", lambda v: VFloat(math.atan(_as_float(v)))),
-        "atan2": VBuiltin("atan2", _builtin_atan2),
-        "log": VBuiltin("log", lambda v: VFloat(math.log(_as_float(v)))),
-        "exp": VBuiltin("exp", lambda v: VFloat(math.exp(_as_float(v)))),
-        "pi": VFloat(math.pi),
-        "e": VFloat(math.e),
-        # String builtins
-        "length": VBuiltin("length", _builtin_str_length),
-        "toUpper": VBuiltin("toUpper", _builtin_to_upper),
-        "toLower": VBuiltin("toLower", _builtin_to_lower),
-        "trim": VBuiltin("trim", _builtin_trim),
-        "split": VBuiltin("split", _builtin_split),
-        "join": VBuiltin("join", _builtin_join),
-        "toString": VBuiltin("toString", _builtin_to_string),
-        "contains": VBuiltin("contains", _builtin_contains),
-        "startsWith": VBuiltin("startsWith", _builtin_starts_with),
-        "endsWith": VBuiltin("endsWith", _builtin_ends_with),
-        # Error
-        "error": VBuiltin("error", _builtin_error),
-        # I/O builtins
-        "print": VBuiltin("print", _builtin_print),
-        "println": VBuiltin("println", _builtin_println),
-        "readLine": VBuiltin("readLine", _builtin_readline),
-        # Filesystem (std:IO)
-        "readFile": VBuiltin("readFile", _builtin_read_file),
-        "writeFile": VBuiltin("writeFile", _builtin_write_file),
-        "appendFile": VBuiltin("appendFile", _builtin_append_file),
-        "fileExists": VBuiltin("fileExists", _builtin_file_exists),
-        "listDir": VBuiltin("listDir", _builtin_list_dir),
-        # Environment (std:Env)
-        "getEnv": VBuiltin("getEnv", _builtin_get_env),
-        "getEnvOr": VBuiltin("getEnvOr", _builtin_get_env_or),
-        "args": VList([VString(a) for a in sys.argv[1:]]),
-    }
+    return all_builtins()
 
 
 def run_program(source: str):
