@@ -203,6 +203,7 @@ cd python
 - [ ] Where clauses — `expr where x = …`
 - [ ] Type annotations — optional `let f : Int -> Int`
 - [ ] User modules — import your own `.rex` files
+- [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
 
 ### Stdlib
 - [x] JSON — `std:Json` with ADT, `parse`/`stringify`, encode/decode helpers
@@ -220,3 +221,11 @@ cd python
 - [ ] WasmGC backend — emit WAT → `wasm-tools` → `.wasm`
 - [ ] WASI output (servers/CLI)
 - [ ] Browser ES module output
+
+## Simmering
+
+Ideas worth keeping in mind but not yet committed to. May never happen.
+
+- **Extensible records (row polymorphism)** — functions over "any record with field `x`". Elm had these and [removed them in 0.19](https://elm-lang.org/news/small-assets-without-the-headache) because the complexity cost (error messages, type system machinery) outweighed the flexibility. Traits already cover many of the same use cases. WasmGC's fixed-layout structs also push against it. Worth revisiting only if plain records prove genuinely limiting in practice.
+- **Hot module reloading** — WasmGC separates code from the GC-managed heap, which makes this more tractable than classic linear-memory Wasm. Live GC references are typed and runtime-managed, so a host could in theory transfer them from an old module instance to a new one. The open questions are type layout compatibility across versions and the lack of standardized dynamic linking in the Wasm spec today. Needs more research before committing.
+- **Concurrency / actors** — single-threaded cooperative scheduler as a stdlib library. Swap internals for real WASI threads when the spec matures.

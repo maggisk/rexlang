@@ -86,7 +86,6 @@ All commands run from `python/`:
 
 ## Conventions
 
-- One feature = one commit
 - Every new language feature needs: lexer token (if needed) + AST node + parser rule + eval case + tests + example file
 - Example files in `examples/` end with a single expression whose value is asserted in `TestExampleFiles`
 - `ruff format` before committing; `ruff check` should be clean
@@ -128,6 +127,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 ### Module system
 - [x] Stdlib modules — `import std:List`, `import std:Map as M`, etc.
 - User modules — import your own `.rex` files
+- Opaque types — export a type without its constructor; consumers interact only through provided functions. Prerequisite: user modules. Syntax TBD.
 - Package system — third-party dependencies
 
 ### Stdlib
