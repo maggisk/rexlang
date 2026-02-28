@@ -114,8 +114,8 @@ One blank line between top-level definitions; two blank lines between sections. 
 ## Planned work (ordered by dependency)
 
 ### Data structures & types
+- [x] Map/Dict — `std:Map` AVL tree, sorted by `Ord` trait
 - Records — `{ name : String, age : Int }`, field access, update syntax
-- Map/Dict — key-value data structure (stdlib or built-in)
 - String interpolation — `"hello ${name}"` or similar
 - Type aliases — `type Name = String` (lightweight, distinct from ADTs)
 - Multi-line strings
@@ -123,16 +123,25 @@ One blank line between top-level definitions; two blank lines between sections. 
 - Char type vs expanded String — decide later
 
 ### Module system
+- [x] Stdlib modules — `import std:List`, `import std:Map as M`, etc.
 - User modules — import your own `.rex` files
 - Package system — third-party dependencies
 
 ### Stdlib
+- [x] List — map, filter, foldl, foldr, take, drop, sum, product, any, all, …
+- [x] Map — AVL tree sorted map (insert, lookup, remove, fold, …)
+- [x] Result — Ok/Err, map, mapErr, andThen, withDefault
+- [x] String — length, toUpper, toLower, trim, split, join, contains, …
+- [x] Math — abs, min, max, pow, trig, log, exp, pi, e, clamp, …
+- [x] IO — readFile, writeFile, appendFile, fileExists, listDir (return Result)
+- [x] Env — getEnv (Maybe), getEnvOr, args
 - Date/Time (even basic)
 - JSON parsing
 - Random numbers
-- Expand String/Char utilities
 
 ### Language ergonomics
+- [x] Traits v1 — `trait`/`impl`, runtime dispatch, `Eq`/`Ord` in Prelude
+- [x] Test framework — `test "name" = …` / `assert expr`, `--test` flag
 - Type annotations — optional `let f : Int -> Int`, documentation aid
 - Where clauses — `expr where x = ...` (syntactic sugar)
 - Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`), `Show` trait
