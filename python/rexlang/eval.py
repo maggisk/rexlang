@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from . import ast
 from . import parser
-from .builtins import all_builtins, core_builtins
+from .builtins import builtins_for_module, core_builtins
 from .values import (
     VInt,
     VFloat,
@@ -352,7 +352,7 @@ def _load_module(module_name: str) -> tuple:
     except FileNotFoundError:
         raise Error(f"unknown module: {module_name}")
     exprs = parser.parse(source)
-    env = all_builtins()
+    env = builtins_for_module(name)
     exports = set()
     for expr in exprs:
         if isinstance(expr, ast.Export):

@@ -677,7 +677,7 @@ def check_module(module_name: str) -> dict:
 
     exprs = parser_mod.parse(source)
     checker = TypeChecker()
-    env = _all_type_env()
+    env = _type_env_for_module(name)
     type_defs: dict = {}
     exports: set = set()
 
@@ -697,17 +697,14 @@ def check_module(module_name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _all_type_env() -> dict:
-    """Return a type environment with all builtin names (for stdlib modules)."""
+def _math_type_env() -> dict:
     return {
-        **initial_type_env(),
         "toFloat": Scheme([], TFun(TInt, TFloat)),
         "round": Scheme([], TFun(TFloat, TInt)),
         "floor": Scheme([], TFun(TFloat, TInt)),
         "ceiling": Scheme([], TFun(TFloat, TInt)),
         "truncate": Scheme([], TFun(TFloat, TInt)),
         "sqrt": Scheme([], TFun(TFloat, TFloat)),
-        # Math
         "abs": Scheme(["a"], TFun(TVar("a"), TVar("a"))),
         "min": Scheme(["a"], TFun(TVar("a"), TFun(TVar("a"), TVar("a")))),
         "max": Scheme(["a"], TFun(TVar("a"), TFun(TVar("a"), TVar("a")))),
@@ -723,7 +720,11 @@ def _all_type_env() -> dict:
         "exp": Scheme([], TFun(TFloat, TFloat)),
         "pi": Scheme([], TFloat),
         "e": Scheme([], TFloat),
-        # String
+    }
+
+
+def _string_type_env() -> dict:
+    return {
         "length": Scheme([], TFun(TString, TInt)),
         "toUpper": Scheme([], TFun(TString, TString)),
         "toLower": Scheme([], TFun(TString, TString)),
@@ -734,21 +735,42 @@ def _all_type_env() -> dict:
         "contains": Scheme([], TFun(TString, TFun(TString, TBool))),
         "startsWith": Scheme([], TFun(TString, TFun(TString, TBool))),
         "endsWith": Scheme([], TFun(TString, TFun(TString, TBool))),
-        # I/O
+    }
+
+
+def _io_type_env() -> dict:
+    return {
         "print": Scheme(["a"], TFun(TVar("a"), TVar("a"))),
         "println": Scheme(["a"], TFun(TVar("a"), TVar("a"))),
         "readLine": Scheme([], TFun(TString, TString)),
-        # Filesystem (std:IO)
         "readFile": Scheme([], TFun(TString, TResult(TString, TString))),
         "writeFile": Scheme([], TFun(TString, TFun(TString, TResult(TUnit, TString)))),
         "appendFile": Scheme([], TFun(TString, TFun(TString, TResult(TUnit, TString)))),
         "fileExists": Scheme([], TFun(TString, TBool)),
         "listDir": Scheme([], TFun(TString, TResult(TList(TString), TString))),
-        # Environment (std:Env)
+    }
+
+
+def _env_type_env() -> dict:
+    return {
         "getEnv": Scheme([], TFun(TString, TMaybe(TString))),
         "getEnvOr": Scheme([], TFun(TString, TFun(TString, TString))),
         "args": Scheme([], TList(TString)),
     }
+
+
+_MODULE_TYPE_ENVS = {
+    "Math": _math_type_env,
+    "String": _string_type_env,
+    "IO": _io_type_env,
+    "Env": _env_type_env,
+}
+
+
+def _type_env_for_module(name: str) -> dict:
+    """Core + domain type env for a specific stdlib module."""
+    extra = _MODULE_TYPE_ENVS.get(name, lambda: {})
+    return {**initial_type_env(), **extra()}
 
 
 def initial_type_env() -> dict:
