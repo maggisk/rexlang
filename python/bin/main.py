@@ -33,6 +33,26 @@ def run_file(path: str):
         sys.exit(1)
 
 
+def run_tests(path: str):
+    with open(path) as f:
+        source = f.read()
+    try:
+        failures = Eval.run_tests(source)
+        sys.exit(1 if failures else 0)
+    except Lexer.Error as e:
+        print(f"Lexer error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Parser.Error as e:
+        print(f"Parse error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except RexTypeError as e:
+        print(f"Type error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except Eval.Error as e:
+        print(f"Runtime error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def repl():
     print("RexLang v0.1.0")
     print("Press Enter on a blank line to evaluate. Ctrl-D to exit.\n")
@@ -79,10 +99,17 @@ def repl():
                     print(f"Runtime error: {e}")
                     break
 
-                # Display — skip TypeDecl/Import/Export/TraitDecl/ImplDecl (no interesting value)
+                # Display — skip TypeDecl/Import/Export/TraitDecl/ImplDecl/TestDecl (no interesting value)
                 if isinstance(
                     expr,
-                    (Ast.TypeDecl, Ast.Import, Ast.Export, Ast.TraitDecl, Ast.ImplDecl),
+                    (
+                        Ast.TypeDecl,
+                        Ast.Import,
+                        Ast.Export,
+                        Ast.TraitDecl,
+                        Ast.ImplDecl,
+                        Ast.TestDecl,
+                    ),
                 ):
                     continue
 
@@ -104,5 +131,10 @@ def repl():
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         repl()
+    elif sys.argv[1] == "--test":
+        if len(sys.argv) < 3:
+            print("Usage: rexlang --test <file.rex>", file=sys.stderr)
+            sys.exit(1)
+        run_tests(sys.argv[2])
     else:
         run_file(sys.argv[1])

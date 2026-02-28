@@ -795,3 +795,31 @@ class TestMapStdlib:
     def test_qualified_import(self):
         result = ty("import std:Map as M\nM.size (M.fromList [(1, 10)])")
         assert result == "Int"
+
+
+# ---------------------------------------------------------------------------
+# Built-in test framework
+# ---------------------------------------------------------------------------
+
+
+class TestBuiltinTests:
+    def test_assert_bool(self):
+        assert ty("assert true") == "()"
+
+    def test_assert_non_bool_error(self):
+        assert raises_type_error("assert 42")
+
+    def test_assert_type_is_unit(self):
+        assert ty("assert (1 == 1)") == "()"
+
+    def test_test_block_typechecks(self):
+        # Test block body is type-checked (should catch errors)
+        assert raises_type_error('test "bad" =\n    assert 42\n')
+
+    def test_test_block_env_isolated(self):
+        # Bindings inside test block don't leak
+        src = 'test "t" =\n    let x = 5\n    assert (x == 5)\n1 + 1'
+        assert ty(src) == "Int"
+
+    def test_test_block_type_is_unit(self):
+        assert ty('test "t" =\n    assert true\n') == "()"

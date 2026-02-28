@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from rexlang.eval import (
     run,
     run_program,
+    run_tests,
     eval_toplevel,
     VInt,
     VFloat,
@@ -1204,3 +1205,58 @@ class TestMapStdlib:
     def test_qualified_import(self):
         src = "import std:Map as M\nM.size (M.fromList [(1, 10), (2, 20)])"
         assert prog(src) == VInt(2)
+
+
+# ---------------------------------------------------------------------------
+# Built-in test framework
+# ---------------------------------------------------------------------------
+
+
+class TestBuiltinTests:
+    def test_assert_true(self):
+        assert prog("assert true") == VUnit()
+
+    def test_assert_false_raises(self):
+        with pytest.raises(Error, match="assert failed"):
+            prog("assert false")
+
+    def test_assert_expression(self):
+        assert prog("assert (1 + 1 == 2)") == VUnit()
+
+    def test_test_skipped_normal(self):
+        # Test blocks are skipped in normal mode; only the final expression runs
+        src = 'test "should not run" =\n    error "boom"\n42'
+        assert prog(src) == VInt(42)
+
+    def test_run_tests_pass(self, capsys):
+        src = 'let x = 10\ntest "x is 10" =\n    assert (x == 10)\n'
+        failures = run_tests(src)
+        assert failures == 0
+        out = capsys.readouterr().out
+        assert "PASS" in out
+        assert "1 passed, 0 failed" in out
+
+    def test_run_tests_fail(self, capsys):
+        src = 'test "bad" =\n    assert false\n'
+        failures = run_tests(src)
+        assert failures == 1
+        out = capsys.readouterr().out
+        assert "FAIL" in out
+        assert "0 passed, 1 failed" in out
+
+    def test_test_with_let(self, capsys):
+        src = 'test "let in test" =\n    let y = 5\n    assert (y == 5)\n'
+        failures = run_tests(src)
+        assert failures == 0
+
+    def test_test_env_isolated(self):
+        # Bindings from test body don't leak to outer scope
+        src = 'test "isolated" =\n    let secret = 42\n    assert (secret == 42)\n1 + 1'
+        assert prog(src) == VInt(2)
+
+    def test_multiple_tests(self, capsys):
+        src = 'test "a" =\n    assert true\ntest "b" =\n    assert true\n'
+        failures = run_tests(src)
+        assert failures == 0
+        out = capsys.readouterr().out
+        assert "2 passed, 0 failed" in out

@@ -572,6 +572,38 @@ def parse_tokens(tokens: list) -> list:
         case_arm_col = saved
         return ast.ImplDecl(trait_name, target_type, methods)
 
+    # --- test declaration ---
+    def parse_test():
+        nonlocal case_arm_col
+        advance()  # consume 'test'
+        tok = peek()
+        if tok.kind != "string":
+            raise Error(
+                f"expected test name string, got '{tok}' at line {tok.line}, col {tok.col + 1}"
+            )
+        name = tok.value
+        advance()
+        expect("=")
+        # Parse body: sequence of expressions at same or greater indentation
+        body_col = peek().col
+        saved = case_arm_col
+        case_arm_col = body_col
+        body = []
+        while peek().kind != "eof" and peek().col >= body_col:
+            body.append(parse_expr())
+        case_arm_col = saved
+        if not body:
+            raise Error(f"test '{name}' has empty body")
+        return ast.TestDecl(name, body)
+
+    # --- assert expression ---
+    def parse_assert():
+        tok = peek()
+        line = tok.line
+        advance()  # consume 'assert'
+        expr = parse_pipe()
+        return ast.Assert(expr, line)
+
     # --- top-level dispatch ---
     def parse_expr():
         k = peek().kind
@@ -593,6 +625,10 @@ def parse_tokens(tokens: list) -> list:
             return parse_trait_decl()
         elif k == "impl":
             return parse_impl()
+        elif k == "test":
+            return parse_test()
+        elif k == "assert":
+            return parse_assert()
         else:
             return parse_pipe()
 

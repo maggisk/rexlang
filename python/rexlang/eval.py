@@ -332,6 +332,12 @@ def eval(env: dict, expr) -> Any:
             else:
                 return last_value
 
+        elif isinstance(expr, ast.Assert):
+            v = eval(env, expr.expr)
+            if isinstance(v, VBool) and v.value:
+                return VUnit()
+            raise Error(f"assert failed at line {expr.line}")
+
         else:
             raise Error(f"unknown AST node: {type(expr)}")
 
@@ -425,6 +431,10 @@ def eval_toplevel(env: dict, expr) -> tuple:
         new_env["__instances__"] = instances
         return VBool(False), new_env
 
+    elif isinstance(expr, ast.TestDecl):
+        # In normal mode, test blocks are skipped
+        return VUnit(), env
+
     elif isinstance(expr, ast.LetRec) and expr.in_expr is None:
         shared_env = dict(env)
         raw = {}
@@ -473,6 +483,36 @@ def run_program(source: str):
     for expr in exprs:
         last, env = eval_toplevel(env, expr)
     return last
+
+
+def run_tests(source: str) -> int:
+    """Run test blocks in source. Returns number of failures."""
+    from . import typecheck
+
+    exprs = parser.parse(source)
+    typecheck.check_program(exprs)
+    env = dict(_load_prelude_eval())
+    tests = []
+    for expr in exprs:
+        if isinstance(expr, ast.TestDecl):
+            tests.append(expr)
+        else:
+            _, env = eval_toplevel(env, expr)
+    passed = 0
+    failed = 0
+    for test in tests:
+        try:
+            test_env = dict(env)
+            for body_expr in test.body:
+                _, test_env = eval_toplevel(test_env, body_expr)
+            passed += 1
+            print(f"PASS  {test.name}")
+        except Error as e:
+            failed += 1
+            print(f"FAIL  {test.name}")
+            print(f"  {e}")
+    print(f"\n{passed} passed, {failed} failed")
+    return failed
 
 
 def run(source: str):

@@ -53,6 +53,9 @@ All commands run from `python/`:
 # run a file
 .venv/bin/python bin/main.py ../examples/factorial.rex
 
+# run tests in a .rex file
+.venv/bin/python bin/main.py --test ../examples/testing.rex
+
 # REPL (blank line to eval, Ctrl-D to exit)
 .venv/bin/python bin/main.py
 
@@ -76,6 +79,7 @@ All commands run from `python/`:
 - **ADTs**: `type Foo = A | B int` registers constructors (no `of`; type name must be uppercase); `type Foo a = …` for parametric ADTs; `TypeDecl.params` holds type parameter names; `TypeDecl.ctors` is `list[(ctor_name: str, arg_type_names: list[str])]`
 - **Pipe** `|>`: left-associative, desugars to function application at eval time
 - **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch based on first argument's type. `Prelude.rex` loaded automatically before user code — defines `Ordering` type, `Eq`/`Ord` traits, and instances for `Int`, `Float`, `String`, `Bool`. Trait methods are `VTraitMethod` values; instances stored in `env["__instances__"]`. Typecheck stores trait metadata in `__traits__` and `__trait_instances__`.
+- **Test framework**: `test "name" = body` blocks (Zig-inspired). `assert expr` checks a Bool, returns `()`. Normal mode skips tests; `--test` flag runs them. Tests are type-checked but not evaluated in normal mode, REPL, or imported modules. `run_tests(source)` in `eval.py` is the test runner.
 
 ## Conventions
 
@@ -160,3 +164,4 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to `python/rexlang/stdlib/`. Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
 - **`length` name collision**: resolved via qualified imports — `import std:List as L` and `import std:String as S` then use `L.length` vs `S.length`.
 - **Traits v1**: `trait`/`impl` with Rust-style naming. Single-parameter traits only. Runtime dispatch (no type-level constraints). Prelude auto-loaded with `Ordering`, `Eq`, `Ord` and instances for `Int`, `Float`, `String`, `Bool`. Comparison operators (`<`, `>`, `<=`, `>=`) extended to String (lexicographic) and Bool (`false < true`). `where` is a keyword.
+- **Test framework**: Zig-inspired `test`/`assert` keywords. `test "name" = body` declares inline test blocks; `assert expr` checks a Bool at runtime. `--test` flag activates test runner; normal execution skips tests. Tests are type-checked in all modes but only evaluated in test mode. Test body env is isolated (bindings don't leak).

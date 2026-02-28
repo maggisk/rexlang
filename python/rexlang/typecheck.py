@@ -292,6 +292,16 @@ class TypeChecker:
                 )
             return subst, self.instantiate(mod_env[expr.field_name])
 
+        elif isinstance(expr, ast.Assert):
+            s1, t = self.infer(env, type_defs, subst, expr.expr)
+            try:
+                s2 = unify(apply_subst(s1, t), TBool)
+            except TypeError:
+                raise TypeError(
+                    f"assert requires Bool, got {type_to_string(apply_subst(s1, t))}"
+                )
+            return compose_subst(s2, s1), TUnit
+
         elif isinstance(
             expr, (ast.TypeDecl, ast.Import, ast.Export, ast.TraitDecl, ast.ImplDecl)
         ):
@@ -753,6 +763,16 @@ class TypeChecker:
             new_env["__traits__"] = traits
             return subst, TUnit, new_env, type_defs
 
+        elif isinstance(expr, ast.TestDecl):
+            # Type-check the test body in an isolated env (bindings don't leak)
+            test_env = dict(env)
+            test_type_defs = dict(type_defs)
+            for body_expr in expr.body:
+                _, _, test_env, test_type_defs = self.infer_toplevel(
+                    test_env, test_type_defs, {}, body_expr
+                )
+            return subst, TUnit, env, type_defs
+
         elif isinstance(expr, ast.ImplDecl):
             traits = env.get("__traits__", {})
             if expr.trait_name not in traits:
@@ -865,6 +885,8 @@ def check_module(module_name: str) -> dict:
     for expr in exprs:
         if isinstance(expr, ast.Export):
             exports.update(expr.names)
+        elif isinstance(expr, ast.TestDecl):
+            pass  # skip test blocks in imported modules
         else:
             _, _, env, type_defs = checker.infer_toplevel(env, type_defs, {}, expr)
 

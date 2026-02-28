@@ -117,6 +117,8 @@ def tokenize(source: str) -> list:
         "trait",
         "impl",
         "where",
+        "test",
+        "assert",
     }
 
     def read_ident():

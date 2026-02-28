@@ -275,6 +275,23 @@ class ImplDecl:
 
 
 # ---------------------------------------------------------------------------
+# Test declarations
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TestDecl:
+    name: str  # test name string
+    body: list  # list of expressions (evaluated sequentially)
+
+
+@dataclass
+class Assert:
+    expr: object  # expression that must evaluate to true
+    line: int  # source line number for error reporting
+
+
+# ---------------------------------------------------------------------------
 # Pretty-printing
 # ---------------------------------------------------------------------------
 
