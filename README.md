@@ -200,7 +200,6 @@ cd python
 - [ ] String interpolation — `"hello ${name}"`
 - [ ] Type aliases — `type Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation, `Show` trait
-- [ ] Where clauses — `expr where x = …`
 - [ ] Type annotations — optional `let f : Int -> Int`
 - [ ] User modules — import your own `.rex` files
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
@@ -219,8 +218,7 @@ cd python
 ### Compilation
 - [ ] IR design (A-normal form)
 - [ ] WasmGC backend — emit WAT → `wasm-tools` → `.wasm`
-- [ ] WASI output (servers/CLI)
-- [ ] Browser ES module output
+- [ ] WASI output (servers/CLI) and browser deployment via standard Wasm loader
 
 ## Simmering
 

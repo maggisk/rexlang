@@ -147,7 +147,6 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Traits v1 — `trait`/`impl`, runtime dispatch, `Eq`/`Ord` in Prelude
 - [x] Test framework — `test "name" = …` / `assert expr`, `--test` flag
 - Type annotations — optional `let f : Int -> Int`, documentation aid
-- Where clauses — `expr where x = ...` (syntactic sugar)
 - Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`), `Show` trait
 
 ### Error experience
