@@ -849,6 +849,16 @@ class TypeChecker:
 # Module loading
 # ---------------------------------------------------------------------------
 
+
+def _preregister_types(exprs: list, type_defs: dict) -> dict:
+    """Pre-register all TypeDecl names so mutually recursive types can resolve each other."""
+    for expr in exprs:
+        if isinstance(expr, ast.TypeDecl):
+            param_vars = [TVar(p) for p in expr.params]
+            type_defs = {**type_defs, expr.name: TCon(expr.name, param_vars)}
+    return type_defs
+
+
 _module_cache: dict = {}
 
 
@@ -879,7 +889,7 @@ def check_module(module_name: str) -> dict:
     checker = TypeChecker()
     prelude = _load_prelude_tc()
     env = {**prelude["env"], **_type_env_for_module(name)}
-    type_defs = dict(prelude["type_defs"])
+    type_defs = _preregister_types(exprs, dict(prelude["type_defs"]))
     exports: set = set()
 
     for expr in exprs:
@@ -944,6 +954,19 @@ def _string_type_env() -> dict:
         "contains": Scheme([], TFun(TString, TFun(TString, TBool))),
         "startsWith": Scheme([], TFun(TString, TFun(TString, TBool))),
         "endsWith": Scheme([], TFun(TString, TFun(TString, TBool))),
+        "charAt": Scheme([], TFun(TInt, TFun(TString, TMaybe(TString)))),
+        "substring": Scheme([], TFun(TInt, TFun(TInt, TFun(TString, TString)))),
+        "indexOf": Scheme([], TFun(TString, TFun(TString, TMaybe(TInt)))),
+        "replace": Scheme([], TFun(TString, TFun(TString, TFun(TString, TString)))),
+        "repeat": Scheme([], TFun(TInt, TFun(TString, TString))),
+        "padLeft": Scheme([], TFun(TInt, TFun(TString, TFun(TString, TString)))),
+        "padRight": Scheme([], TFun(TInt, TFun(TString, TFun(TString, TString)))),
+        "words": Scheme([], TFun(TString, TList(TString))),
+        "lines": Scheme([], TFun(TString, TList(TString))),
+        "charCode": Scheme([], TFun(TString, TInt)),
+        "fromCharCode": Scheme([], TFun(TInt, TString)),
+        "parseInt": Scheme([], TFun(TString, TMaybe(TInt))),
+        "parseFloat": Scheme([], TFun(TString, TMaybe(TFloat))),
     }
 
 
@@ -968,11 +991,19 @@ def _env_type_env() -> dict:
     }
 
 
+def _json_type_env() -> dict:
+    TJson = TCon("Json", [])
+    return {
+        "jsonParse": Scheme([], TFun(TString, TResult(TJson, TString))),
+    }
+
+
 _MODULE_TYPE_ENVS = {
     "Math": _math_type_env,
     "String": _string_type_env,
     "IO": _io_type_env,
     "Env": _env_type_env,
+    "Json": _json_type_env,
 }
 
 
@@ -1009,7 +1040,7 @@ def _load_prelude_tc():
     exprs = parser_mod.parse(source)
     checker = TypeChecker()
     env = initial_type_env()
-    type_defs: dict = {}
+    type_defs = _preregister_types(exprs, {})
     for expr in exprs:
         _, _, env, type_defs = checker.infer_toplevel(env, type_defs, {}, expr)
     _prelude_tc_cache = {"env": env, "type_defs": type_defs}
@@ -1025,7 +1056,7 @@ def check_program(exprs: list) -> dict:
     checker = TypeChecker()
     prelude = _load_prelude_tc()
     env = dict(prelude["env"])
-    type_defs = dict(prelude["type_defs"])
+    type_defs = _preregister_types(exprs, dict(prelude["type_defs"]))
     for expr in exprs:
         _, _, env, type_defs = checker.infer_toplevel(env, type_defs, {}, expr)
     return env

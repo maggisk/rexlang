@@ -33,13 +33,14 @@ python/
       env.py       getEnv, getEnvOr, args
     stdlib/
       Prelude.rex  auto-loaded prelude (Maybe type, Ordering type, Eq/Ord traits + instances for Int/Float/String/Bool)
-      List.rex     list stdlib (map, filter, foldl, foldr, take, drop, ...)
+      List.rex     list stdlib (map, filter, foldl, foldr, take, drop, zip, concat, concatMap, range, repeat, find, partition, intersperse, indexedMap, maximum, minimum, ...)
       Map.rex      sorted map stdlib — AVL tree using Ord trait (insert, lookup, remove, fold, ...)
       Math.rex     math stdlib (abs, min, max, pow, trig, log, exp, pi, e, clamp, degrees, radians, logBase)
-      String.rex   string stdlib (length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, isEmpty)
+      String.rex   string stdlib (length, toUpper, toLower, trim, split, join, toString, contains, charAt, substring, indexOf, replace, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, isEmpty)
       IO.rex       filesystem stdlib (readFile→Result, writeFile→Result, appendFile→Result, fileExists→Bool, listDir→Result)
       Env.rex      environment stdlib (getEnv→Maybe, getEnvOr, args)
       Result.rex   result stdlib (Ok, Err, map, mapErr, withDefault, isOk, isErr, andThen)
+      Json.rex     JSON stdlib — Json ADT (JNull/JBool/JNum/JStr/JArr/JObj), parse→Result, stringify, encode/decode helpers
   tests/
     test_lexer.py
     test_parser.py
@@ -130,15 +131,16 @@ One blank line between top-level definitions; two blank lines between sections. 
 - Package system — third-party dependencies
 
 ### Stdlib
-- [x] List — map, filter, foldl, foldr, take, drop, sum, product, any, all, …
+- [x] List — map, filter, foldl, foldr, zip, concat, concatMap, range, repeat, find, partition, intersperse, indexedMap, maximum, minimum, …
 - [x] Map — AVL tree sorted map (insert, lookup, remove, fold, …)
 - [x] Result — Ok/Err, map, mapErr, andThen, withDefault
-- [x] String — length, toUpper, toLower, trim, split, join, contains, …
+- [x] String — length, toUpper, toLower, trim, split, join, contains, charAt, substring, indexOf, replace, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, …
 - [x] Math — abs, min, max, pow, trig, log, exp, pi, e, clamp, …
 - [x] IO — readFile, writeFile, appendFile, fileExists, listDir (return Result)
 - [x] Env — getEnv (Maybe), getEnvOr, args
+- [x] Json — parse (Python-backed), stringify (pure Rex), Json ADT, encode/decode helpers
+- JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
 - Date/Time (even basic)
-- JSON parsing
 - Random numbers
 
 ### Language ergonomics
@@ -175,4 +177,8 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to `python/rexlang/stdlib/`. Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
 - **`length` name collision**: resolved via qualified imports — `import std:List as L` and `import std:String as S` then use `L.length` vs `S.length`.
 - **Traits v1**: `trait`/`impl` with Rust-style naming. Single-parameter traits only. Runtime dispatch (no type-level constraints). Prelude auto-loaded with `Ordering`, `Eq`, `Ord` and instances for `Int`, `Float`, `String`, `Bool`. Comparison operators (`<`, `>`, `<=`, `>=`) extended to String (lexicographic) and Bool (`false < true`). `where` is a keyword.
-- **Test framework**: Zig-inspired `test`/`assert` keywords. `test "name" = body` declares inline test blocks; `assert expr` checks a Bool at runtime. `--test` flag activates test runner; normal execution skips tests. Tests are type-checked in all modes but only evaluated in test mode. Test body env is isolated (bindings don't leak).
+- **Test framework**: Zig-inspired `test`/`assert` keywords. `\r` is a supported string escape.
+- **Structural equality**: `==` and `/=` work on any Rex value including lists, tuples, and ADTs (recursive structural comparison). This means `Just 42 == Just 42` works.
+- **Mutual recursion in types**: `_preregister_types` pre-pass in `check_program`, `check_module`, `_load_prelude_tc` registers all TypeDecl names before resolving constructors, enabling mutually recursive ADTs.
+- **std:Json**: `parse : String -> Result Json String` is Python-backed (`jsonParse` builtin in `builtins/json.py`). `stringify` is pure Rex. The Json ADT uses three mutually recursive types (`Json`, `JsonList`, `JsonObj`). `stringify` nests its helpers inside itself to avoid forward-reference issues. Json.rex imports `std:String (replace, toString)` for `escapeStr`.
+- **Stdlib test runner**: `run_tests` in `eval.py` accepts `_extra_type_env`/`_extra_builtins` for stdlib module context. `main.py --test` detects stdlib paths and injects module builtins automatically. `test "name" = body` declares inline test blocks; `assert expr` checks a Bool at runtime. `--test` flag activates test runner; normal execution skips tests. Tests are type-checked in all modes but only evaluated in test mode. Test body env is isolated (bindings don't leak).

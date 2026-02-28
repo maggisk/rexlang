@@ -3,12 +3,14 @@ from .math import builtins as _math_builtins
 from .string import builtins as _string_builtins
 from .io import builtins as _io_builtins
 from .env import builtins as _env_builtins
+from .json import builtins as _json_builtins
 
 _MODULE_BUILTINS = {
     "Math": _math_builtins,
     "String": _string_builtins,
     "IO": _io_builtins,
     "Env": _env_builtins,
+    "Json": _json_builtins,
 }
 
 

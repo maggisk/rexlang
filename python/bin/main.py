@@ -36,8 +36,21 @@ def run_file(path: str):
 def run_tests(path: str):
     with open(path) as f:
         source = f.read()
+    # Inject module-specific builtins when testing a stdlib file directly
+    extra_type_env = None
+    extra_builtins = None
+    stdlib_dir = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "rexlang", "stdlib")
+    )
+    norm_path = os.path.normpath(os.path.abspath(path))
+    if norm_path.startswith(stdlib_dir) and norm_path.endswith(".rex"):
+        module_name = os.path.basename(norm_path)[:-4]
+        extra_type_env = TypeCheck._type_env_for_module(module_name)
+        from rexlang.builtins import builtins_for_module
+
+        extra_builtins = builtins_for_module(module_name)
     try:
-        failures = Eval.run_tests(source)
+        failures = Eval.run_tests(source, extra_type_env, extra_builtins)
         sys.exit(1 if failures else 0)
     except Lexer.Error as e:
         print(f"Lexer error: {e}", file=sys.stderr)

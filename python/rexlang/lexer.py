@@ -86,6 +86,8 @@ def tokenize(source: str) -> list:
                 pos += 1
                 if esc == "n":
                     buf.append("\n")
+                elif esc == "r":
+                    buf.append("\r")
                 elif esc == "t":
                     buf.append("\t")
                 elif esc == "\\":

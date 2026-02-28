@@ -149,10 +149,11 @@ else
 
 | Module | Contents |
 |---|---|
-| `std:List` | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `sum`, `product`, `any`, `all`, `head`, `tail`, `length` |
-| `std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `size`, `filter`, `map`, `foldl`, `fromList`, `toList`, `keys`, `values` |
+| `std:List` | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
+| `std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
 | `std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr` |
-| `std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith` |
+| `std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT |
+| `std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat` |
 | `std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
 | `std:IO` | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`) |
 | `std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
@@ -185,10 +186,11 @@ else
 
 ```bash
 cd python
-.venv/bin/pytest tests/ -q        # Python test suite
+.venv/bin/pytest tests/ -q        # Python test suite (614 tests)
 .venv/bin/python bin/main.py --test ../python/rexlang/stdlib/List.rex   # stdlib self-tests
 .venv/bin/python bin/main.py --test ../python/rexlang/stdlib/Map.rex
 .venv/bin/python bin/main.py --test ../python/rexlang/stdlib/Result.rex
+.venv/bin/python bin/main.py --test ../python/rexlang/stdlib/Json.rex
 ```
 
 ## Roadmap
@@ -203,8 +205,9 @@ cd python
 - [ ] User modules — import your own `.rex` files
 
 ### Stdlib
+- [x] JSON — `std:Json` with ADT, `parse`/`stringify`, encode/decode helpers
+- [ ] JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
 - [ ] Date/Time
-- [ ] JSON parsing
 - [ ] Random numbers
 
 ### Tooling

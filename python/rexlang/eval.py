@@ -39,6 +39,27 @@ def _runtime_type_name(value):
     raise Error(f"no trait dispatch for {value_to_string(value)}")
 
 
+def _structural_eq(l, r) -> bool:
+    """Structural equality for any Rex value."""
+    if type(l) is not type(r):
+        return False
+    if isinstance(l, (VInt, VFloat, VString, VBool)):
+        return l.value == r.value
+    if isinstance(l, VUnit):
+        return True
+    if isinstance(l, (VList, VTuple)):
+        return len(l.items) == len(r.items) and all(
+            _structural_eq(a, b) for a, b in zip(l.items, r.items)
+        )
+    if isinstance(l, VCtor):
+        return (
+            l.name == r.name
+            and len(l.args) == len(r.args)
+            and all(_structural_eq(a, b) for a, b in zip(l.args, r.args))
+        )
+    return False
+
+
 def _eval_binop(op: str, l, r):
     if op == "Add":
         if isinstance(l, VInt) and isinstance(r, VInt):
@@ -107,11 +128,9 @@ def _eval_binop(op: str, l, r):
         if isinstance(l, VBool) and isinstance(r, VBool):
             return VBool(l.value >= r.value)
     elif op == "Eq":
-        if type(l) == type(r) and isinstance(l, (VInt, VFloat, VString, VBool)):
-            return VBool(l.value == r.value)
+        return VBool(_structural_eq(l, r))
     elif op == "Neq":
-        if type(l) == type(r) and isinstance(l, (VInt, VFloat, VString, VBool)):
-            return VBool(l.value != r.value)
+        return VBool(not _structural_eq(l, r))
     elif op == "And":
         if isinstance(l, VBool) and isinstance(r, VBool):
             return VBool(l.value and r.value)
@@ -485,13 +504,28 @@ def run_program(source: str):
     return last
 
 
-def run_tests(source: str) -> int:
+def run_tests(
+    source: str, _extra_type_env: dict = None, _extra_builtins: dict = None
+) -> int:
     """Run test blocks in source. Returns number of failures."""
     from . import typecheck
 
     exprs = parser.parse(source)
-    typecheck.check_program(exprs)
-    env = dict(_load_prelude_eval())
+
+    if _extra_type_env or _extra_builtins:
+        # Module context: use module-specific type env + builtins
+        checker = typecheck.TypeChecker()
+        prelude = typecheck._load_prelude_tc()
+        tc_env = {**prelude["env"], **(_extra_type_env or {})}
+        type_defs = typecheck._preregister_types(exprs, dict(prelude["type_defs"]))
+        for expr in exprs:
+            _, _, tc_env, type_defs = checker.infer_toplevel(
+                tc_env, type_defs, {}, expr
+            )
+    else:
+        typecheck.check_program(exprs)
+
+    env = {**dict(_load_prelude_eval()), **(_extra_builtins or {})}
     tests = []
     for expr in exprs:
         if isinstance(expr, ast.TestDecl):

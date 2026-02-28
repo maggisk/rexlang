@@ -1260,3 +1260,253 @@ class TestBuiltinTests:
         assert failures == 0
         out = capsys.readouterr().out
         assert "2 passed, 0 failed" in out
+
+
+# ---------------------------------------------------------------------------
+# Structural equality
+# ---------------------------------------------------------------------------
+
+
+class TestStructuralEquality:
+    def test_maybe_just_eq(self):
+        assert prog("Just 42 == Just 42") == VBool(True)
+
+    def test_maybe_just_neq(self):
+        assert prog("Just 42 == Just 99") == VBool(False)
+
+    def test_maybe_nothing_eq(self):
+        assert prog("Nothing == Nothing") == VBool(True)
+
+    def test_just_nothing_neq(self):
+        assert prog("Just 1 == Nothing") == VBool(False)
+
+    def test_list_eq(self):
+        assert prog("[1, 2, 3] == [1, 2, 3]") == VBool(True)
+
+    def test_list_neq(self):
+        assert prog("[1, 2] == [1, 2, 3]") == VBool(False)
+
+    def test_empty_list_eq(self):
+        assert prog("[] == []") == VBool(True)
+
+    def test_tuple_eq(self):
+        assert prog("(1, true) == (1, true)") == VBool(True)
+
+    def test_tuple_neq(self):
+        assert prog("(1, true) == (1, false)") == VBool(False)
+
+    def test_nested_ctor_eq(self):
+        src = "type Wrap = W int\nW 42 == W 42"
+        assert prog(src) == VBool(True)
+
+
+# ---------------------------------------------------------------------------
+# String builtins
+# ---------------------------------------------------------------------------
+
+
+class TestStringBuiltins:
+    def test_char_at_valid(self):
+        assert prog('import std:String (charAt)\ncharAt 0 "hello"') == VCtor(
+            "Just", [VString("h")]
+        )
+
+    def test_char_at_out_of_bounds(self):
+        assert prog('import std:String (charAt)\ncharAt 5 "hi"') == VCtor("Nothing", [])
+
+    def test_substring(self):
+        assert prog('import std:String (substring)\nsubstring 1 3 "hello"') == VString(
+            "el"
+        )
+
+    def test_index_of_found(self):
+        assert prog('import std:String (indexOf)\nindexOf "ll" "hello"') == VCtor(
+            "Just", [VInt(2)]
+        )
+
+    def test_index_of_not_found(self):
+        assert prog('import std:String (indexOf)\nindexOf "x" "hello"') == VCtor(
+            "Nothing", []
+        )
+
+    def test_replace(self):
+        assert prog('import std:String (replace)\nreplace "l" "r" "hello"') == VString(
+            "herro"
+        )
+
+    def test_str_repeat(self):
+        assert prog('import std:String (repeat)\nrepeat 3 "ab"') == VString("ababab")
+
+    def test_pad_left(self):
+        assert prog('import std:String (padLeft)\npadLeft 5 "0" "42"') == VString(
+            "00042"
+        )
+
+    def test_pad_right(self):
+        assert prog('import std:String (padRight)\npadRight 5 "." "hi"') == VString(
+            "hi..."
+        )
+
+    def test_words(self):
+        src = 'import std:String (words)\nimport std:List (length)\nlength (words "a b c")'
+        assert prog(src) == VInt(3)
+
+    def test_lines(self):
+        src = 'import std:String (lines)\nimport std:List (length)\nlength (lines "a\\nb\\nc")'
+        assert prog(src) == VInt(3)
+
+    def test_char_code(self):
+        assert prog('import std:String (charCode)\ncharCode "A"') == VInt(65)
+
+    def test_from_char_code(self):
+        assert prog("import std:String (fromCharCode)\nfromCharCode 65") == VString("A")
+
+    def test_parse_int_valid(self):
+        assert prog('import std:String (parseInt)\nparseInt "42"') == VCtor(
+            "Just", [VInt(42)]
+        )
+
+    def test_parse_int_invalid(self):
+        assert prog('import std:String (parseInt)\nparseInt "bad"') == VCtor(
+            "Nothing", []
+        )
+
+    def test_parse_float_valid(self):
+        assert prog('import std:String (parseFloat)\nparseFloat "3.14"') == VCtor(
+            "Just", [VFloat(3.14)]
+        )
+
+
+# ---------------------------------------------------------------------------
+# List stdlib extensions
+# ---------------------------------------------------------------------------
+
+
+class TestListExtensions:
+    def test_zip(self):
+        src = "import std:List (zip, head)\nhead (zip [1, 2, 3] [4, 5, 6])"
+        assert prog(src) == VTuple([VInt(1), VInt(4)])
+
+    def test_range(self):
+        src = "import std:List (range, sum)\nsum (range 1 6)"
+        assert prog(src) == VInt(15)
+
+    def test_repeat(self):
+        src = "import std:List (repeat, sum)\nsum (repeat 3 5)"
+        assert prog(src) == VInt(15)
+
+    def test_concat(self):
+        src = "import std:List (concat, sum)\nsum (concat [[1, 2], [3], [4, 5]])"
+        assert prog(src) == VInt(15)
+
+    def test_concat_map(self):
+        src = "import std:List (concatMap, length)\nlength (concatMap (fun x -> [x, x]) [1, 2, 3])"
+        assert prog(src) == VInt(6)
+
+    def test_is_empty(self):
+        src = "import std:List (isEmpty)\nisEmpty []"
+        assert prog(src) == VBool(True)
+
+    def test_last(self):
+        src = "import std:List (last)\nlast [1, 2, 3]"
+        assert prog(src) == VInt(3)
+
+    def test_init(self):
+        src = "import std:List (init, length)\nlength (init [1, 2, 3])"
+        assert prog(src) == VInt(2)
+
+    def test_nth(self):
+        src = "import std:List (nth)\nnth 1 [10, 20, 30]"
+        assert prog(src) == VCtor("Just", [VInt(20)])
+
+    def test_nth_out_of_bounds(self):
+        src = "import std:List (nth)\nnth 5 [1, 2, 3]"
+        assert prog(src) == VCtor("Nothing", [])
+
+    def test_find(self):
+        src = "import std:List (find)\nfind (fun x -> x > 2) [1, 2, 3, 4]"
+        assert prog(src) == VCtor("Just", [VInt(3)])
+
+    def test_partition(self):
+        src = "import std:List (partition, sum)\nlet (yes, no) = partition (fun x -> x > 2) [1, 2, 3, 4]\nsum yes"
+        assert prog(src) == VInt(7)
+
+    def test_intersperse(self):
+        src = "import std:List (intersperse, sum)\nsum (intersperse 0 [1, 2, 3])"
+        assert prog(src) == VInt(6)
+
+    def test_maximum(self):
+        src = "import std:List (maximum)\nmaximum [3, 1, 4, 1, 5]"
+        assert prog(src) == VCtor("Just", [VInt(5)])
+
+    def test_minimum(self):
+        src = "import std:List (minimum)\nminimum [3, 1, 4, 1, 5]"
+        assert prog(src) == VCtor("Just", [VInt(1)])
+
+    def test_maximum_empty(self):
+        src = "import std:List (maximum)\nmaximum []"
+        assert prog(src) == VCtor("Nothing", [])
+
+
+# ---------------------------------------------------------------------------
+# JSON module
+# ---------------------------------------------------------------------------
+
+
+class TestJsonModule:
+    def test_stringify_null(self):
+        assert prog("import std:Json (stringify, JNull)\nstringify JNull") == VString(
+            "null"
+        )
+
+    def test_stringify_bool(self):
+        assert prog(
+            "import std:Json (stringify, JBool)\nstringify (JBool true)"
+        ) == VString("true")
+
+    def test_stringify_num(self):
+        assert prog(
+            "import std:Json (stringify, JNum)\nstringify (JNum 3.14)"
+        ) == VString("3.14")
+
+    def test_stringify_str(self):
+        assert prog(
+            'import std:Json (stringify, JStr)\nstringify (JStr "hi")'
+        ) == VString('"hi"')
+
+    def test_stringify_empty_arr(self):
+        assert prog(
+            "import std:Json (stringify, JArr, ArrNil)\nstringify (JArr ArrNil)"
+        ) == VString("[]")
+
+    def test_stringify_empty_obj(self):
+        assert prog(
+            "import std:Json (stringify, JObj, ObjNil)\nstringify (JObj ObjNil)"
+        ) == VString("{}")
+
+    def test_parse_ok(self):
+        assert prog(
+            'import std:Json (parse)\nimport std:Result (isOk)\nisOk (parse "null")'
+        ) == VBool(True)
+
+    def test_parse_err(self):
+        assert prog(
+            'import std:Json (parse)\nimport std:Result (isErr)\nisErr (parse "!bad")'
+        ) == VBool(True)
+
+    def test_parse_round_trip(self):
+        src = 'import std:Json (parse, stringify, JNull)\nimport std:Result (withDefault)\nstringify (withDefault JNull (parse "null"))'
+        assert prog(src) == VString("null")
+
+    def test_encode_arr(self):
+        assert prog(
+            "import std:Json (encodeArr, stringify, JNull, JBool)\nstringify (encodeArr [JNull, JBool true])"
+        ) == VString("[null, true]")
+
+    def test_get_field_found(self):
+        src = 'import std:Json (getField, ObjNil, ObjCons, JNum)\ngetField "x" (ObjCons "x" (JNum 1.0) ObjNil)'
+        assert prog(src) == VCtor("Just", [VCtor("JNum", [VFloat(1.0)])])
+
+    def test_get_field_missing(self):
+        src = 'import std:Json (getField, ObjNil, ObjCons, JNum)\ngetField "z" (ObjCons "x" (JNum 1.0) ObjNil)'
+        assert prog(src) == VCtor("Nothing", [])
