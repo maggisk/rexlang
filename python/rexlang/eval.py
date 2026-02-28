@@ -17,12 +17,26 @@ from .values import (
     VUnit,
     VBuiltin,
     VModule,
+    VTraitMethod,
     Error,
     value_to_string,
     _as_bool,
 )
 
 STDLIB_DIR = os.path.join(os.path.dirname(__file__), "stdlib")
+
+
+def _runtime_type_name(value):
+    """Map a runtime value to its type name for trait dispatch."""
+    if isinstance(value, VInt):
+        return "Int"
+    elif isinstance(value, VFloat):
+        return "Float"
+    elif isinstance(value, VString):
+        return "String"
+    elif isinstance(value, VBool):
+        return "Bool"
+    raise Error(f"no trait dispatch for {value_to_string(value)}")
 
 
 def _eval_binop(op: str, l, r):
@@ -61,20 +75,36 @@ def _eval_binop(op: str, l, r):
             return VBool(l.value < r.value)
         if isinstance(l, VFloat) and isinstance(r, VFloat):
             return VBool(l.value < r.value)
+        if isinstance(l, VString) and isinstance(r, VString):
+            return VBool(l.value < r.value)
+        if isinstance(l, VBool) and isinstance(r, VBool):
+            return VBool(l.value < r.value)
     elif op == "Gt":
         if isinstance(l, VInt) and isinstance(r, VInt):
             return VBool(l.value > r.value)
         if isinstance(l, VFloat) and isinstance(r, VFloat):
+            return VBool(l.value > r.value)
+        if isinstance(l, VString) and isinstance(r, VString):
+            return VBool(l.value > r.value)
+        if isinstance(l, VBool) and isinstance(r, VBool):
             return VBool(l.value > r.value)
     elif op == "Leq":
         if isinstance(l, VInt) and isinstance(r, VInt):
             return VBool(l.value <= r.value)
         if isinstance(l, VFloat) and isinstance(r, VFloat):
             return VBool(l.value <= r.value)
+        if isinstance(l, VString) and isinstance(r, VString):
+            return VBool(l.value <= r.value)
+        if isinstance(l, VBool) and isinstance(r, VBool):
+            return VBool(l.value <= r.value)
     elif op == "Geq":
         if isinstance(l, VInt) and isinstance(r, VInt):
             return VBool(l.value >= r.value)
         if isinstance(l, VFloat) and isinstance(r, VFloat):
+            return VBool(l.value >= r.value)
+        if isinstance(l, VString) and isinstance(r, VString):
+            return VBool(l.value >= r.value)
+        if isinstance(l, VBool) and isinstance(r, VBool):
             return VBool(l.value >= r.value)
     elif op == "Eq":
         if type(l) == type(r) and isinstance(l, (VInt, VFloat, VString, VBool)):
@@ -205,6 +235,20 @@ def eval(env: dict, expr) -> Any:
                 return VCtorFn(func.name, func.remaining - 1, [arg] + func.acc_args)
             elif isinstance(func, VBuiltin):
                 return func.fn(arg)
+            elif isinstance(func, VTraitMethod):
+                type_name = _runtime_type_name(arg)
+                instances = env.get("__instances__", {})
+                key = (func.trait_name, type_name, func.method_name)
+                impl_fn = instances.get(key)
+                if impl_fn is None:
+                    raise Error(f"no {func.trait_name} instance for {type_name}")
+                if isinstance(impl_fn, VClosure):
+                    env = {**impl_fn.env, impl_fn.param: arg}
+                    expr = impl_fn.body
+                elif isinstance(impl_fn, VBuiltin):
+                    return impl_fn.fn(arg)
+                else:
+                    raise Error(f"invalid trait impl for {key}")
             else:
                 raise Error(f"cannot apply {value_to_string(func)} as a function")
 
@@ -311,7 +355,7 @@ def _load_module(module_name: str) -> tuple:
     except FileNotFoundError:
         raise Error(f"unknown module: {module_name}")
     exprs = parser.parse(source)
-    env = builtins_for_module(name)
+    env = {**_load_prelude_eval(), **builtins_for_module(name)}
     exports = set()
     for expr in exprs:
         if isinstance(expr, ast.Export):
@@ -366,6 +410,21 @@ def eval_toplevel(env: dict, expr) -> tuple:
     elif isinstance(expr, ast.Export):
         return VBool(False), env  # no-op outside module loading context
 
+    elif isinstance(expr, ast.TraitDecl):
+        new_env = dict(env)
+        for mname, _mtype in expr.methods:
+            new_env[mname] = VTraitMethod(expr.name, mname)
+        return VBool(False), new_env
+
+    elif isinstance(expr, ast.ImplDecl):
+        new_env = dict(env)
+        instances = dict(env.get("__instances__", {}))
+        for mname, mbody in expr.methods:
+            impl_val = eval(env, mbody)
+            instances[(expr.trait_name, expr.target_type, mname)] = impl_val
+        new_env["__instances__"] = instances
+        return VBool(False), new_env
+
     elif isinstance(expr, ast.LetRec) and expr.in_expr is None:
         shared_env = dict(env)
         raw = {}
@@ -388,9 +447,28 @@ def initial_env() -> dict:
     return core_builtins()
 
 
-def run_program(source: str):
+_prelude_eval_cache: dict | None = None
+
+
+def _load_prelude_eval():
+    """Evaluate the Prelude and cache the resulting env."""
+    global _prelude_eval_cache
+    if _prelude_eval_cache is not None:
+        return _prelude_eval_cache
+    path = os.path.join(STDLIB_DIR, "Prelude.rex")
+    with open(path) as f:
+        source = f.read()
     exprs = parser.parse(source)
     env = initial_env()
+    for expr in exprs:
+        _, env = eval_toplevel(env, expr)
+    _prelude_eval_cache = env
+    return _prelude_eval_cache
+
+
+def run_program(source: str):
+    exprs = parser.parse(source)
+    env = dict(_load_prelude_eval())
     last = VBool(False)
     for expr in exprs:
         last, env = eval_toplevel(env, expr)

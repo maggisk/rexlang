@@ -76,6 +76,12 @@ class VModule:
     env: dict  # exported name -> value
 
 
+@dataclass
+class VTraitMethod:
+    trait_name: str
+    method_name: str
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -129,6 +135,8 @@ def value_to_string(v) -> str:
         return "()"
     elif isinstance(v, VModule):
         return f"<module {v.name}>"
+    elif isinstance(v, VTraitMethod):
+        return f"<trait method {v.trait_name}.{v.method_name}>"
     raise Error(f"unknown value type: {type(v)}")
 
 

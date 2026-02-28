@@ -525,6 +525,9 @@ class TestExampleFiles:
     def test_maybe(self):
         assert self._run("maybe.rex") == VInt(7)
 
+    def test_traits(self):
+        assert self._run("traits.rex") == VString("less positive zero no")
+
 
 class TestMathStdlib:
     def test_abs_int(self):
@@ -976,3 +979,115 @@ class TestEnvStdlib:
             assert prog(src) == VCtor("Just", [VString("qualified")])
         finally:
             del os.environ["REX_TEST_VAR3"]
+
+
+# ---------------------------------------------------------------------------
+# Traits
+# ---------------------------------------------------------------------------
+
+
+class TestTraits:
+    def test_compare_int(self):
+        assert prog("compare 3 5") == VCtor("LT", [])
+        assert prog("compare 5 5") == VCtor("EQ", [])
+        assert prog("compare 7 3") == VCtor("GT", [])
+
+    def test_compare_float(self):
+        assert prog("compare 1.0 2.0") == VCtor("LT", [])
+
+    def test_compare_string(self):
+        assert prog('compare "abc" "xyz"') == VCtor("LT", [])
+        assert prog('compare "hello" "hello"') == VCtor("EQ", [])
+
+    def test_compare_bool(self):
+        assert prog("compare false true") == VCtor("LT", [])
+        assert prog("compare true true") == VCtor("EQ", [])
+
+    def test_eq_int(self):
+        assert prog("eq 3 3") == VBool(True)
+        assert prog("eq 3 4") == VBool(False)
+
+    def test_eq_string(self):
+        assert prog('eq "hello" "hello"') == VBool(True)
+        assert prog('eq "hello" "world"') == VBool(False)
+
+    def test_eq_bool(self):
+        assert prog("eq true true") == VBool(True)
+        assert prog("eq true false") == VBool(False)
+
+    def test_eq_float(self):
+        assert prog("eq 1.0 1.0") == VBool(True)
+
+    def test_ordering_constructors(self):
+        assert prog("LT") == VCtor("LT", [])
+        assert prog("EQ") == VCtor("EQ", [])
+        assert prog("GT") == VCtor("GT", [])
+
+    def test_custom_trait(self):
+        src = """
+trait Greet a where
+    greet : a -> String
+
+impl Greet Int where
+    greet x = "hi int"
+
+impl Greet String where
+    greet x = "hi string"
+
+greet 42
+"""
+        assert prog(src) == VString("hi int")
+
+    def test_custom_trait_string_dispatch(self):
+        src = """
+trait Greet a where
+    greet : a -> String
+
+impl Greet Int where
+    greet x = "hi int"
+
+impl Greet String where
+    greet x = "hi string"
+
+greet "world"
+"""
+        assert prog(src) == VString("hi string")
+
+    def test_missing_instance_error(self):
+        src = """
+trait Foo a where
+    foo : a -> a
+
+impl Foo Int where
+    foo x = x
+
+foo "oops"
+"""
+        with pytest.raises(Error, match="no Foo instance for String"):
+            prog(src)
+
+    def test_trait_in_higher_order(self):
+        src = """
+let apply f x = f x
+apply compare 3
+"""
+        # compare 3 returns a closure waiting for second arg
+        result = prog(src)
+        assert isinstance(result, VClosure)
+
+    def test_trait_method_in_let(self):
+        src = """
+let result = compare 1 2
+result
+"""
+        assert prog(src) == VCtor("LT", [])
+
+    def test_string_ordering_operators(self):
+        assert prog('"a" < "b"') == VBool(True)
+        assert prog('"z" > "a"') == VBool(True)
+        assert prog('"a" <= "a"') == VBool(True)
+        assert prog('"b" >= "a"') == VBool(True)
+
+    def test_bool_ordering_operators(self):
+        assert prog("false < true") == VBool(True)
+        assert prog("true > false") == VBool(True)

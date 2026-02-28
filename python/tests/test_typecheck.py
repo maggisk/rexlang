@@ -20,8 +20,9 @@ def ty(source: str) -> str:
     """Infer the type of the last top-level expression and return as string."""
     exprs = parse(source)
     checker = TypeCheck.TypeChecker()
-    env = TypeCheck.initial_type_env()
-    type_defs: dict = {}
+    prelude = TypeCheck._load_prelude_tc()
+    env = dict(prelude["env"])
+    type_defs = dict(prelude["type_defs"])
     last_ty = None
     for expr in exprs:
         _, t, env, type_defs = checker.infer_toplevel(env, type_defs, {}, expr)
@@ -659,3 +660,74 @@ class TestEnvStdlib:
 
     def test_qualified_import(self):
         assert ty('import std:Env as Env\nEnv.getEnv "PATH"') == "(Maybe String)"
+
+
+# ---------------------------------------------------------------------------
+# Traits
+# ---------------------------------------------------------------------------
+
+
+class TestTraits:
+    def test_trait_registers_method_type(self):
+        assert ty("eq 1 2") == "Bool"
+
+    def test_compare_returns_ordering(self):
+        assert ty("compare 1 2") == "Ordering"
+
+    def test_trait_method_is_polymorphic(self):
+        assert ty("eq") == "a -> a -> Bool"
+
+    def test_compare_polymorphic(self):
+        assert ty("compare") == "a -> a -> Ordering"
+
+    def test_ordering_constructors(self):
+        assert ty("LT") == "Ordering"
+        assert ty("EQ") == "Ordering"
+        assert ty("GT") == "Ordering"
+
+    def test_custom_trait_typechecks(self):
+        src = """
+trait Greet a where
+    greet : a -> String
+
+impl Greet Int where
+    greet x = "hello"
+
+greet 42
+"""
+        assert ty(src) == "String"
+
+    def test_unknown_trait_error(self):
+        assert raises_type_error("""
+impl Bogus Int where
+    foo x = x
+""")
+
+    def test_missing_method_error(self):
+        assert raises_type_error("""
+trait Foo a where
+    bar : a -> a
+    baz : a -> a
+
+impl Foo Int where
+    bar x = x
+""")
+
+    def test_wrong_method_type_error(self):
+        assert raises_type_error("""
+trait Foo a where
+    bar : a -> a
+
+impl Foo Int where
+    bar x = "hello"
+""")
+
+    def test_extra_method_error(self):
+        assert raises_type_error("""
+trait Foo a where
+    bar : a -> a
+
+impl Foo Int where
+    bar x = x
+    baz x = x
+""")

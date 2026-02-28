@@ -36,9 +36,10 @@ def run_file(path: str):
 def repl():
     print("RexLang v0.1.0")
     print("Press Enter on a blank line to evaluate. Ctrl-D to exit.\n")
-    env = Eval.initial_env()
-    type_env = TypeCheck.initial_type_env()
-    type_defs: dict = {}
+    prelude_tc = TypeCheck._load_prelude_tc()
+    env = dict(Eval._load_prelude_eval())
+    type_env = dict(prelude_tc["env"])
+    type_defs = dict(prelude_tc["type_defs"])
     checker = TypeCheck.TypeChecker()
     buf = []
     try:
@@ -78,8 +79,11 @@ def repl():
                     print(f"Runtime error: {e}")
                     break
 
-                # Display — skip TypeDecl/Import/Export (no interesting value)
-                if isinstance(expr, (Ast.TypeDecl, Ast.Import, Ast.Export)):
+                # Display — skip TypeDecl/Import/Export/TraitDecl/ImplDecl (no interesting value)
+                if isinstance(
+                    expr,
+                    (Ast.TypeDecl, Ast.Import, Ast.Export, Ast.TraitDecl, Ast.ImplDecl),
+                ):
                     continue
 
                 ty_str = type_to_string(ty)

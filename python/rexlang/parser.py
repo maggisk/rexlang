@@ -463,6 +463,115 @@ def parse_tokens(tokens: list) -> list:
             names.append(expect_ident())
         return ast.Export(names)
 
+    # --- type signature parsing (for trait method signatures) ---
+    def parse_type_sig():
+        """Parse a type expression: a -> a -> Bool, [a], (a, b), Maybe a, ()."""
+        ty = parse_type_sig_atom()
+        if peek().kind == "->":
+            advance()
+            ret = parse_type_sig()
+            return ast.TyFun(ty, ret)
+        return ty
+
+    def parse_type_sig_atom():
+        tok = peek()
+        if tok.kind == "(":
+            advance()
+            if peek().kind == ")":
+                advance()
+                return ast.TyUnit()
+            first = parse_type_sig()
+            if peek().kind == ",":
+                elems = [first]
+                while peek().kind == ",":
+                    advance()
+                    elems.append(parse_type_sig())
+                expect(")")
+                return ast.TyTuple(elems)
+            expect(")")
+            return first
+        elif tok.kind == "[":
+            advance()
+            elem = parse_type_sig()
+            expect("]")
+            return ast.TyList(elem)
+        elif tok.kind == "ident":
+            advance()
+            name = tok.value
+            if _is_uppercase(name):
+                # Check for type application: Maybe a, Result a b
+                args = []
+                while peek().kind == "ident" and peek().kind != "->":
+                    arg_tok = peek()
+                    if arg_tok.value in ("where",):
+                        break
+                    # Only consume simple atoms as args (not further applications)
+                    if _is_uppercase(arg_tok.value):
+                        # Uppercase alone: could be a nullary type, check if it looks
+                        # like an arg (not followed by lowercase that would make it an app)
+                        advance()
+                        args.append(ast.TyName(arg_tok.value))
+                    else:
+                        advance()
+                        args.append(ast.TyName(arg_tok.value))
+                if args:
+                    return ast.TyApp(name, args)
+                return ast.TyName(name)
+            return ast.TyName(name)
+        else:
+            raise Error(
+                f"expected type, got '{tok}' at line {tok.line}, col {tok.col + 1}"
+            )
+
+    # --- trait declaration ---
+    def parse_trait_decl():
+        advance()  # consume 'trait'
+        trait_name = expect_ident()
+        if not _is_uppercase(trait_name):
+            raise Error(f"trait name must start with uppercase, got '{trait_name}'")
+        param = expect_ident()
+        expect("where")
+        # Parse indented method signatures: name : type
+        methods = []
+        method_col = peek().col
+        while peek().kind == "ident" and peek().col >= method_col:
+            if peek().col < method_col:
+                break
+            mname = expect_ident()
+            expect(":")
+            mtype = parse_type_sig()
+            methods.append((mname, mtype))
+        if not methods:
+            raise Error(f"trait '{trait_name}' must have at least one method")
+        return ast.TraitDecl(trait_name, param, methods)
+
+    # --- impl declaration ---
+    def parse_impl():
+        nonlocal case_arm_col
+        advance()  # consume 'impl'
+        trait_name = expect_ident()
+        target_type = expect_ident()
+        expect("where")
+        # Parse indented method implementations: name params = body
+        methods = []
+        method_col = peek().col
+        saved = case_arm_col
+        case_arm_col = method_col
+        while peek().kind == "ident" and peek().col >= method_col:
+            if peek().col < method_col:
+                break
+            mname = expect_ident()
+            params = []
+            while peek().kind == "ident" and peek().kind != "=":
+                params.append(expect_ident())
+            expect("=")
+            body = parse_expr()
+            for p in reversed(params):
+                body = ast.Fun(p, body)
+            methods.append((mname, body))
+        case_arm_col = saved
+        return ast.ImplDecl(trait_name, target_type, methods)
+
     # --- top-level dispatch ---
     def parse_expr():
         k = peek().kind
@@ -480,6 +589,10 @@ def parse_tokens(tokens: list) -> list:
             return parse_import()
         elif k == "export":
             return parse_export()
+        elif k == "trait":
+            return parse_trait_decl()
+        elif k == "impl":
+            return parse_impl()
         else:
             return parse_pipe()
 

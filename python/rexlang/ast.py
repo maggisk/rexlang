@@ -219,6 +219,62 @@ class Export:
 
 
 # ---------------------------------------------------------------------------
+# Type syntax nodes (for trait method signatures)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TyName:
+    name: str  # "Int", "a", "Ordering"
+
+
+@dataclass
+class TyApp:
+    name: str  # "Maybe", "Result"
+    args: list  # list of type syntax nodes
+
+
+@dataclass
+class TyFun:
+    arg: Any  # type syntax node
+    ret: Any  # type syntax node
+
+
+@dataclass
+class TyList:
+    elem: Any  # type syntax node
+
+
+@dataclass
+class TyTuple:
+    elems: list  # type syntax nodes
+
+
+@dataclass
+class TyUnit:
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Trait declarations
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TraitDecl:
+    name: str  # "Ord"
+    param: str  # "a"
+    methods: list  # [(method_name: str, type_node: TyFun/TyName/...)]
+
+
+@dataclass
+class ImplDecl:
+    trait_name: str  # "Ord"
+    target_type: str  # "Int"
+    methods: list  # [(method_name: str, body: Expr)]
+
+
+# ---------------------------------------------------------------------------
 # Pretty-printing
 # ---------------------------------------------------------------------------
 

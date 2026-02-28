@@ -114,6 +114,9 @@ def tokenize(source: str) -> list:
         "import",
         "export",
         "as",
+        "trait",
+        "impl",
+        "where",
     }
 
     def read_ident():

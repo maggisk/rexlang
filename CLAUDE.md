@@ -30,6 +30,7 @@ python/
       io.py        readFile, writeFile, appendFile, fileExists, listDir
       env.py       getEnv, getEnvOr, args
     stdlib/
+      Prelude.rex  auto-loaded prelude (Ordering type, Eq/Ord traits + instances for Int/Float/String/Bool)
       List.rex     list stdlib (map, filter, foldl, foldr, take, drop, ...)
       Math.rex     math stdlib (abs, min, max, pow, trig, log, exp, pi, e, clamp, degrees, radians, logBase)
       String.rex   string stdlib (length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, isEmpty)
@@ -68,11 +69,12 @@ All commands run from `python/`:
 
 - **Pipeline**: source → `lexer.tokenize()` → `parser.parse()` → `typecheck.check_program()` → `eval.eval_program()`
 - **Type inference**: `typecheck.py` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types live in `types.py` (`TVar`, `TCon`, `Scheme`). Arithmetic operators (`+` `-` `*` `/`) require `Int` or `Float`; free type variables in arithmetic expressions default to `Int`. Use `toFloat` to convert before Float arithmetic. REPL shows `name : type` after each binding.
-- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin` — all are plain dataclasses with `__eq__`
+- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod` — all are plain dataclasses with `__eq__`
 - **Environment**: plain `dict` passed through eval; closures capture a snapshot
 - **Tail calls**: the evaluator uses a trampoline loop for tail-recursive functions
 - **ADTs**: `type Foo = A | B int` registers constructors (no `of`; type name must be uppercase); `type Foo a = …` for parametric ADTs; `TypeDecl.params` holds type parameter names; `TypeDecl.ctors` is `list[(ctor_name: str, arg_type_names: list[str])]`
 - **Pipe** `|>`: left-associative, desugars to function application at eval time
+- **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch based on first argument's type. `Prelude.rex` loaded automatically before user code — defines `Ordering` type, `Eq`/`Ord` traits, and instances for `Int`, `Float`, `String`, `Bool`. Trait methods are `VTraitMethod` values; instances stored in `env["__instances__"]`. Typecheck stores trait metadata in `__traits__` and `__trait_instances__`.
 
 ## Conventions
 
@@ -129,7 +131,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 ### Language ergonomics
 - Type annotations — optional `let f : Int -> Int`, documentation aid
 - Where clauses — `expr where x = ...` (syntactic sugar)
-- Typeclasses/traits — `Eq`, `Ord`, `Show` for ad-hoc polymorphism (maybe — experiment later, may be too complex)
+- Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`), `Show` trait
 
 ### Error experience
 - Better error messages — source locations, span info
@@ -157,3 +159,4 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **No guards in pattern matching** (not planned)
 - **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to `python/rexlang/stdlib/`. Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
 - **`length` name collision**: resolved via qualified imports — `import std:List as L` and `import std:String as S` then use `L.length` vs `S.length`.
+- **Traits v1**: `trait`/`impl` with Rust-style naming. Single-parameter traits only. Runtime dispatch (no type-level constraints). Prelude auto-loaded with `Ordering`, `Eq`, `Ord` and instances for `Int`, `Float`, `String`, `Bool`. Comparison operators (`<`, `>`, `<=`, `>=`) extended to String (lexicographic) and Bool (`false < true`). `where` is a keyword.

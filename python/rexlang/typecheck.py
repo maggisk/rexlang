@@ -25,6 +25,7 @@ from .types import (
     apply_subst_scheme,
     apply_subst_env,
     compose_subst,
+    free_vars,
     unify,
     generalize,
     type_to_string,
@@ -291,7 +292,9 @@ class TypeChecker:
                 )
             return subst, self.instantiate(mod_env[expr.field_name])
 
-        elif isinstance(expr, (ast.TypeDecl, ast.Import, ast.Export)):
+        elif isinstance(
+            expr, (ast.TypeDecl, ast.Import, ast.Export, ast.TraitDecl, ast.ImplDecl)
+        ):
             # Should be handled by infer_toplevel; treat as no-op here
             return subst, TUnit
 
@@ -574,6 +577,45 @@ class TypeChecker:
                 raise TypeError("constructor applied to too many arguments")
         return arg_tys, ty
 
+    def _resolve_type_sig(self, node, type_defs: dict):
+        """Convert a type syntax AST node to a types.py type."""
+        if isinstance(node, ast.TyName):
+            name = node.name
+            # Lowercase → TVar
+            if name[0].islower():
+                return TVar(name)
+            # Primitives
+            primitives = {
+                "Int": TInt,
+                "Float": TFloat,
+                "String": TString,
+                "Bool": TBool,
+                "Unit": TUnit,
+            }
+            if name in primitives:
+                return primitives[name]
+            # Known type defs
+            if name in type_defs:
+                return type_defs[name]
+            # Nullary ADT
+            return TCon(name, [])
+        elif isinstance(node, ast.TyFun):
+            arg = self._resolve_type_sig(node.arg, type_defs)
+            ret = self._resolve_type_sig(node.ret, type_defs)
+            return TFun(arg, ret)
+        elif isinstance(node, ast.TyList):
+            elem = self._resolve_type_sig(node.elem, type_defs)
+            return TList(elem)
+        elif isinstance(node, ast.TyTuple):
+            elems = [self._resolve_type_sig(e, type_defs) for e in node.elems]
+            return TTuple(elems)
+        elif isinstance(node, ast.TyUnit):
+            return TUnit
+        elif isinstance(node, ast.TyApp):
+            args = [self._resolve_type_sig(a, type_defs) for a in node.args]
+            return TCon(node.name, args)
+        raise TypeError(f"unknown type syntax node: {type(node)}")
+
     def _resolve_type(self, name: str, type_defs: dict, param_env: dict = None):
         """Resolve a type name to a type. Raises TypeError if unknown."""
         if param_env and name in param_env:
@@ -655,6 +697,8 @@ class TypeChecker:
             mod_result = check_module(expr.module)
             mod_env = mod_result["env"]
             mod_ctor_families = mod_result.get("ctor_families", {})
+            mod_traits = mod_result.get("traits", {})
+            mod_instances = mod_result.get("trait_instances", {})
             if expr.alias:
                 modules = dict(env.get("__modules__", {}))
                 modules[expr.alias] = mod_env
@@ -662,14 +706,20 @@ class TypeChecker:
                     **env.get("__ctor_families__", {}),
                     **mod_ctor_families,
                 }
+                traits = {**env.get("__traits__", {}), **mod_traits}
+                instances = {**env.get("__trait_instances__", {}), **mod_instances}
                 new_env = {
                     **env,
                     "__modules__": modules,
                     "__ctor_families__": ctor_families,
+                    "__traits__": traits,
+                    "__trait_instances__": instances,
                 }
                 return subst, TUnit, new_env, type_defs
             new_env = dict(env)
             ctor_families = dict(env.get("__ctor_families__", {}))
+            traits = {**env.get("__traits__", {}), **mod_traits}
+            instances = {**env.get("__trait_instances__", {}), **mod_instances}
             for name in expr.names:
                 if name not in mod_env:
                     raise TypeError(
@@ -679,10 +729,73 @@ class TypeChecker:
                 if name in mod_ctor_families:
                     ctor_families[name] = mod_ctor_families[name]
             new_env["__ctor_families__"] = ctor_families
+            new_env["__traits__"] = traits
+            new_env["__trait_instances__"] = instances
             return subst, TUnit, new_env, type_defs
 
         elif isinstance(expr, ast.Export):
             return subst, TUnit, env, type_defs
+
+        elif isinstance(expr, ast.TraitDecl):
+            traits = dict(env.get("__traits__", {}))
+            methods_dict = {}
+            new_env = dict(env)
+            for mname, mtype_node in expr.methods:
+                ty = self._resolve_type_sig(mtype_node, type_defs)
+                # Collect free vars that match the trait param
+                fv = free_vars(ty)
+                # Quantify over the trait param
+                qvars = [expr.param] if expr.param in fv else []
+                scheme = Scheme(qvars, ty)
+                methods_dict[mname] = scheme
+                new_env[mname] = scheme
+            traits[expr.name] = {"param": expr.param, "methods": methods_dict}
+            new_env["__traits__"] = traits
+            return subst, TUnit, new_env, type_defs
+
+        elif isinstance(expr, ast.ImplDecl):
+            traits = env.get("__traits__", {})
+            if expr.trait_name not in traits:
+                raise TypeError(f"unknown trait: {expr.trait_name}")
+            trait_info = traits[expr.trait_name]
+            trait_param = trait_info["param"]
+            trait_methods = trait_info["methods"]
+            # Resolve target type
+            target_ty = self._resolve_type_sig(ast.TyName(expr.target_type), type_defs)
+            # Check all trait methods are implemented
+            impl_names = {mname for mname, _ in expr.methods}
+            trait_names = set(trait_methods.keys())
+            missing = trait_names - impl_names
+            if missing:
+                raise TypeError(
+                    f"impl {expr.trait_name} {expr.target_type} is missing: "
+                    f"{', '.join(sorted(missing))}"
+                )
+            # Type-check each method body against expected type
+            for mname, mbody in expr.methods:
+                if mname not in trait_methods:
+                    raise TypeError(
+                        f"'{mname}' is not a method of trait {expr.trait_name}"
+                    )
+                trait_scheme = trait_methods[mname]
+                # Substitute trait param with target type
+                param_subst = {trait_param: target_ty}
+                expected_ty = apply_subst(param_subst, trait_scheme.ty)
+                # Type-check the impl body
+                s1, actual_ty = self.infer(env, type_defs, subst, mbody)
+                try:
+                    s2 = unify(apply_subst(s1, actual_ty), apply_subst(s1, expected_ty))
+                except TypeError as e:
+                    raise TypeError(
+                        f"in impl {expr.trait_name} {expr.target_type}, "
+                        f"method '{mname}': {e}"
+                    )
+            # Register instance
+            instances = dict(env.get("__trait_instances__", {}))
+            instances[(expr.trait_name, expr.target_type)] = impl_names
+            new_env = dict(env)
+            new_env["__trait_instances__"] = instances
+            return subst, TUnit, new_env, type_defs
 
         else:
             # Regular expression
@@ -744,8 +857,9 @@ def check_module(module_name: str) -> dict:
 
     exprs = parser_mod.parse(source)
     checker = TypeChecker()
-    env = _type_env_for_module(name)
-    type_defs: dict = {}
+    prelude = _load_prelude_tc()
+    env = {**prelude["env"], **_type_env_for_module(name)}
+    type_defs = dict(prelude["type_defs"])
     exports: set = set()
 
     for expr in exprs:
@@ -758,6 +872,8 @@ def check_module(module_name: str) -> dict:
     result = {
         "env": exported_env,
         "ctor_families": env.get("__ctor_families__", {}),
+        "traits": env.get("__traits__", {}),
+        "trait_instances": env.get("__trait_instances__", {}),
     }
     _module_cache[module_name] = result
     return result
@@ -857,6 +973,27 @@ def initial_type_env() -> dict:
 # ---------------------------------------------------------------------------
 
 
+_prelude_tc_cache: dict | None = None
+
+
+def _load_prelude_tc():
+    """Type-check the Prelude and cache the result."""
+    global _prelude_tc_cache
+    if _prelude_tc_cache is not None:
+        return _prelude_tc_cache
+    path = os.path.join(STDLIB_DIR, "Prelude.rex")
+    with open(path) as f:
+        source = f.read()
+    exprs = parser_mod.parse(source)
+    checker = TypeChecker()
+    env = initial_type_env()
+    type_defs: dict = {}
+    for expr in exprs:
+        _, _, env, type_defs = checker.infer_toplevel(env, type_defs, {}, expr)
+    _prelude_tc_cache = {"env": env, "type_defs": type_defs}
+    return _prelude_tc_cache
+
+
 def check_program(exprs: list) -> dict:
     """
     Type-check a list of top-level expressions.
@@ -864,8 +1001,9 @@ def check_program(exprs: list) -> dict:
     Raises TypeError on type errors.
     """
     checker = TypeChecker()
-    env = initial_type_env()
-    type_defs: dict = {}
+    prelude = _load_prelude_tc()
+    env = dict(prelude["env"])
+    type_defs = dict(prelude["type_defs"])
     for expr in exprs:
         _, _, env, type_defs = checker.infer_toplevel(env, type_defs, {}, expr)
     return env
