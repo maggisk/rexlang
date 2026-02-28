@@ -193,7 +193,14 @@ class LetRec:
 @dataclass
 class Import:
     module: str  # e.g., "std:List"
-    names: list  # list of str — names to bring into scope
+    names: list  # list of str — names to bring into scope (empty when alias form)
+    alias: str | None = None  # e.g. "L" from "import std:List as L"
+
+
+@dataclass
+class DotAccess:
+    module_name: str  # e.g. "L"
+    field_name: str  # e.g. "length"
 
 
 @dataclass

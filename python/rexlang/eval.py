@@ -1,5 +1,6 @@
 import math
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -72,6 +73,12 @@ class VBuiltin:
     fn: Any
 
 
+@dataclass
+class VModule:
+    name: str
+    env: dict  # exported name → value
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -121,6 +128,8 @@ def value_to_string(v) -> str:
         return "[" + ", ".join(value_to_string(i) for i in v.items) + "]"
     elif isinstance(v, VTuple):
         return "(" + ", ".join(value_to_string(i) for i in v.items) + ")"
+    elif isinstance(v, VModule):
+        return f"<module {v.name}>"
     raise Error(f"unknown value type: {type(v)}")
 
 
@@ -315,6 +324,88 @@ def _builtin_readline(v):
         return VString(input(prompt))
     except EOFError:
         return VString("")
+
+
+# ---------------------------------------------------------------------------
+# IO builtin helpers
+# ---------------------------------------------------------------------------
+
+
+def _builtin_read_file(v):
+    path = _check_str("readFile", v)
+    try:
+        with open(path) as f:
+            return VString(f.read())
+    except FileNotFoundError:
+        raise Error(f"readFile: file not found: {path}")
+    except OSError as e:
+        raise Error(f"readFile: {e}")
+
+
+def _builtin_write_file(path_v):
+    path = _check_str("writeFile", path_v)
+
+    def inner(content_v):
+        content = _check_str("writeFile", content_v)
+        try:
+            with open(path, "w") as f:
+                f.write(content)
+            return VString(path)
+        except OSError as e:
+            raise Error(f"writeFile: {e}")
+
+    return VBuiltin("writeFile$1", inner)
+
+
+def _builtin_append_file(path_v):
+    path = _check_str("appendFile", path_v)
+
+    def inner(content_v):
+        content = _check_str("appendFile", content_v)
+        try:
+            with open(path, "a") as f:
+                f.write(content)
+            return VString(path)
+        except OSError as e:
+            raise Error(f"appendFile: {e}")
+
+    return VBuiltin("appendFile$1", inner)
+
+
+def _builtin_file_exists(v):
+    path = _check_str("fileExists", v)
+    return VBool(os.path.exists(path))
+
+
+def _builtin_list_dir(v):
+    path = _check_str("listDir", v)
+    try:
+        return VList([VString(e) for e in sorted(os.listdir(path))])
+    except OSError as e:
+        raise Error(f"listDir: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Env builtin helpers
+# ---------------------------------------------------------------------------
+
+
+def _builtin_get_env(v):
+    name = _check_str("getEnv", v)
+    val = os.environ.get(name)
+    if val is None:
+        raise Error(f"getEnv: environment variable not set: {name}")
+    return VString(val)
+
+
+def _builtin_get_env_or(name_v):
+    name = _check_str("getEnvOr", name_v)
+
+    def inner(default_v):
+        default = _check_str("getEnvOr", default_v)
+        return VString(os.environ.get(name, default))
+
+    return VBuiltin("getEnvOr$1", inner)
 
 
 def _eval_binop(op: str, l, r):
@@ -565,6 +656,16 @@ def eval(env: dict, expr) -> Any:
             else:
                 return value  # top-level: fallthrough to eval_toplevel
 
+        elif isinstance(expr, ast.DotAccess):
+            val = env.get(expr.module_name)
+            if not isinstance(val, VModule):
+                raise Error(f"'{expr.module_name}' is not a module")
+            if expr.field_name not in val.env:
+                raise Error(
+                    f"module '{expr.module_name}' does not export '{expr.field_name}'"
+                )
+            return val.env[expr.field_name]
+
         elif isinstance(expr, ast.TypeDecl):
             return VBool(False)  # handled properly in eval_toplevel
 
@@ -664,8 +765,16 @@ def eval_toplevel(env: dict, expr) -> tuple:
 
     elif isinstance(expr, ast.Import):
         module_env, module_exports = _load_module(expr.module)
-        new_bindings = {}
         module_types = module_env.get("__types__", {})
+        if expr.alias:
+            mod_bindings = {n: module_env[n] for n in module_exports if n in module_env}
+            types = {**env.get("__types__", {}), **module_types}
+            return VBool(False), {
+                **env,
+                expr.alias: VModule(expr.alias, mod_bindings),
+                "__types__": types,
+            }
+        new_bindings = {}
         types = dict(env.get("__types__", {}))
         imported_ctor = False
         for name in expr.names:
@@ -738,6 +847,16 @@ def initial_env() -> dict:
         "print": VBuiltin("print", _builtin_print),
         "println": VBuiltin("println", _builtin_println),
         "readLine": VBuiltin("readLine", _builtin_readline),
+        # Filesystem (std:IO)
+        "readFile": VBuiltin("readFile", _builtin_read_file),
+        "writeFile": VBuiltin("writeFile", _builtin_write_file),
+        "appendFile": VBuiltin("appendFile", _builtin_append_file),
+        "fileExists": VBuiltin("fileExists", _builtin_file_exists),
+        "listDir": VBuiltin("listDir", _builtin_list_dir),
+        # Environment (std:Env)
+        "getEnv": VBuiltin("getEnv", _builtin_get_env),
+        "getEnvOr": VBuiltin("getEnvOr", _builtin_get_env_or),
+        "args": VList([VString(a) for a in sys.argv[1:]]),
     }
 
 

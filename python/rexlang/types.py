@@ -118,8 +118,11 @@ def apply_subst_scheme(subst: dict, scheme: Scheme) -> Scheme:
 
 
 def apply_subst_env(subst: dict, env: dict) -> dict:
-    """Apply subst to every scheme in env."""
-    return {k: apply_subst_scheme(subst, v) for k, v in env.items()}
+    """Apply subst to every scheme in env; non-Scheme values are passed through."""
+    return {
+        k: apply_subst_scheme(subst, v) if isinstance(v, Scheme) else v
+        for k, v in env.items()
+    }
 
 
 def compose_subst(s1: dict, s2: dict) -> dict:

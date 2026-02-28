@@ -511,3 +511,53 @@ class TestMaybeStdlib:
     def test_andThen_type(self):
         result = ty('import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) (Just 5)')
         assert result == "(Maybe Int)"
+
+
+class TestQualifiedImports:
+    def test_length_type(self):
+        result = ty("import std:List as L\nL.length [1,2,3]")
+        assert result == "Int"
+
+    def test_map_type(self):
+        result = ty("import std:List as L\nL.map (fun x -> x * 2) [1,2,3]")
+        assert result == "[Int]"
+
+    def test_nonexported_raises(self):
+        assert raises_type_error("import std:List as L\nL.nonexistent")
+
+    def test_unimported_alias_raises(self):
+        assert raises_type_error("Z.length [1,2,3]")
+
+
+class TestIOStdlib:
+    def test_read_file_type(self):
+        assert ty('import std:IO (readFile)\nreadFile "x"') == "String"
+
+    def test_write_file_type(self):
+        assert ty('import std:IO (writeFile)\nwriteFile "x" "y"') == "String"
+
+    def test_append_file_type(self):
+        assert ty('import std:IO (appendFile)\nappendFile "x" "y"') == "String"
+
+    def test_file_exists_type(self):
+        assert ty('import std:IO (fileExists)\nfileExists "x"') == "Bool"
+
+    def test_list_dir_type(self):
+        assert ty('import std:IO (listDir)\nlistDir "."') == "[String]"
+
+    def test_qualified_import(self):
+        assert ty('import std:IO as IO\nIO.readFile "x"') == "String"
+
+
+class TestEnvStdlib:
+    def test_get_env_type(self):
+        assert ty('import std:Env (getEnv)\ngetEnv "PATH"') == "String"
+
+    def test_get_env_or_type(self):
+        assert ty('import std:Env (getEnvOr)\ngetEnvOr "HOME" "/tmp"') == "String"
+
+    def test_args_type(self):
+        assert ty('import std:Env (args)\nargs') == "[String]"
+
+    def test_qualified_import(self):
+        assert ty('import std:Env as Env\nEnv.getEnv "PATH"') == "String"

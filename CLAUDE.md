@@ -25,6 +25,8 @@ python/
       List.rex     list stdlib (map, filter, foldl, foldr, take, drop, ...)
       Math.rex     math stdlib (abs, min, max, pow, trig, log, exp, pi, e, clamp, degrees, radians, logBase)
       String.rex   string stdlib (length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, isEmpty)
+      IO.rex       filesystem stdlib (readFile, writeFile, appendFile, fileExists, listDir)
+      Env.rex      environment stdlib (getEnv, getEnvOr, args)
   tests/
     test_lexer.py
     test_parser.py
@@ -104,7 +106,6 @@ One blank line between top-level definitions; two blank lines between sections. 
 - Full module system (`module Foo` declarations, third-party namespaces)
 
 ### Can land any time
-- Qualified module imports: `import std:List as L` then `L.length [1,2,3]`; optional `as` alias (`import std:List` → module name `List` used as qualifier). Requires `VModule` value wrapping env, dot-access syntax in parser, and lookup in eval. Fixes name collisions between modules (e.g. `length` in `std:List` and `std:String`).
 
 ### Before going public
 - `pyproject.toml` + installable CLI (`rexlang` command)
@@ -119,5 +120,5 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **Concurrency**: actors are a stdlib library, not a language feature. Start with a single-threaded cooperative scheduler (spawn/send/receive backed by message queues). Swap internals for real WASI threads when the spec matures — API stays the same.
 - **No hot reloading** for now
 - **No guards in pattern matching** (not planned)
-- **Import system**: `import std:List (map, filter)` — file-based selective import; `std:` namespace resolves to `python/rexlang/stdlib/`. Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
-- **`length` name collision**: `std:String` exports `length` (string length builtin) and `std:List` exports `length` (Rex recursive function). Whichever is imported last wins. Fix: qualified module imports (see Planned work).
+- **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to `python/rexlang/stdlib/`. Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
+- **`length` name collision**: resolved via qualified imports — `import std:List as L` and `import std:String as S` then use `L.length` vs `S.length`.

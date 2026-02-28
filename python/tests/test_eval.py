@@ -1,5 +1,5 @@
 import pytest
-import sys, os
+import sys, os, tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -17,6 +17,7 @@ from rexlang.eval import (
     VBuiltin,
     VList,
     VTuple,
+    VModule,
     Error,
     value_to_string,
 )
@@ -813,3 +814,154 @@ class TestMaybeStdlib:
         )
         with pytest.raises(Error, match="non-exhaustive"):
             prog(src)
+
+
+class TestQualifiedImports:
+    def test_length_via_alias(self):
+        src = "import std:List as L\nL.length [1,2,3]"
+        assert prog(src) == VInt(3)
+
+    def test_map_via_alias(self):
+        src = "import std:List as L\nL.map (fun x -> x * 2) [1,2,3]"
+        assert prog(src) == VList([VInt(2), VInt(4), VInt(6)])
+
+    def test_collision_resolved(self):
+        # L.length = list length, S.length = string length — no collision
+        src = (
+            "import std:List as L\n"
+            "import std:String as S\n"
+            "L.length [1,2]"
+        )
+        assert prog(src) == VInt(2)
+        src2 = (
+            "import std:List as L\n"
+            "import std:String as S\n"
+            'S.length "hi"'
+        )
+        assert prog(src2) == VInt(2)
+
+    def test_nonexistent_field_raises(self):
+        src = "import std:List as L\nL.nonexistent"
+        with pytest.raises(Error, match="does not export"):
+            prog(src)
+
+    def test_non_module_value_raises(self):
+        src = "let x = 42\nx.foo"
+        with pytest.raises(Error, match="is not a module"):
+            prog(src)
+
+    def test_unimported_alias_raises(self):
+        src = "Z.length [1,2,3]"
+        with pytest.raises(Error, match="is not a module"):
+            prog(src)
+
+
+class TestIOStdlib:
+    def test_read_file(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("hello")
+            path = f.name
+        try:
+            src = f'import std:IO (readFile)\nreadFile "{path}"'
+            assert prog(src) == VString("hello")
+        finally:
+            os.unlink(path)
+
+    def test_write_file(self):
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            path = f.name
+        try:
+            src = f'import std:IO (writeFile)\nwriteFile "{path}" "world"'
+            assert prog(src) == VString(path)
+            with open(path) as f:
+                assert f.read() == "world"
+        finally:
+            os.unlink(path)
+
+    def test_append_file(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("hello")
+            path = f.name
+        try:
+            src = f'import std:IO (appendFile)\nappendFile "{path}" " world"'
+            assert prog(src) == VString(path)
+            with open(path) as f:
+                assert f.read() == "hello world"
+        finally:
+            os.unlink(path)
+
+    def test_file_exists_true(self):
+        with tempfile.NamedTemporaryFile(delete=False) as f:
+            path = f.name
+        try:
+            src = f'import std:IO (fileExists)\nfileExists "{path}"'
+            assert prog(src) == VBool(True)
+        finally:
+            os.unlink(path)
+
+    def test_file_exists_false(self):
+        src = 'import std:IO (fileExists)\nfileExists "/nonexistent/rexlang_xyz123"'
+        assert prog(src) == VBool(False)
+
+    def test_list_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "a.txt"), "w").close()
+            open(os.path.join(d, "b.txt"), "w").close()
+            src = f'import std:IO (listDir)\nlistDir "{d}"'
+            assert prog(src) == VList([VString("a.txt"), VString("b.txt")])
+
+    def test_read_file_not_found(self):
+        src = 'import std:IO (readFile)\nreadFile "/nonexistent/rexlang_xyz.txt"'
+        with pytest.raises(Error, match="readFile"):
+            prog(src)
+
+    def test_qualified_import(self):
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            f.write("data")
+            path = f.name
+        try:
+            src = f'import std:IO as IO\nIO.readFile "{path}"'
+            assert prog(src) == VString("data")
+        finally:
+            os.unlink(path)
+
+
+class TestEnvStdlib:
+    def test_get_env_existing(self):
+        os.environ["REX_TEST_VAR"] = "hello"
+        try:
+            src = 'import std:Env (getEnv)\ngetEnv "REX_TEST_VAR"'
+            assert prog(src) == VString("hello")
+        finally:
+            del os.environ["REX_TEST_VAR"]
+
+    def test_get_env_missing(self):
+        src = 'import std:Env (getEnv)\ngetEnv "REX_NONEXISTENT_XYZ_123"'
+        with pytest.raises(Error, match="getEnv"):
+            prog(src)
+
+    def test_get_env_or_existing(self):
+        os.environ["REX_TEST_VAR2"] = "found"
+        try:
+            src = 'import std:Env (getEnvOr)\ngetEnvOr "REX_TEST_VAR2" "default"'
+            assert prog(src) == VString("found")
+        finally:
+            del os.environ["REX_TEST_VAR2"]
+
+    def test_get_env_or_missing(self):
+        src = 'import std:Env (getEnvOr)\ngetEnvOr "REX_NONEXISTENT_XYZ_123" "fallback"'
+        assert prog(src) == VString("fallback")
+
+    def test_args_is_list_of_strings(self):
+        src = 'import std:Env (args)\nargs'
+        result = prog(src)
+        assert isinstance(result, VList)
+        assert all(isinstance(v, VString) for v in result.items)
+
+    def test_qualified_import(self):
+        os.environ["REX_TEST_VAR3"] = "qualified"
+        try:
+            src = 'import std:Env as Env\nEnv.getEnv "REX_TEST_VAR3"'
+            assert prog(src) == VString("qualified")
+        finally:
+            del os.environ["REX_TEST_VAR3"]

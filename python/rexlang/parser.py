@@ -76,6 +76,10 @@ def parse_tokens(tokens: list) -> list:
             return ast.Bool(tok.value)
         elif tok.kind == "ident":
             advance()
+            if peek().kind == ".":
+                advance()
+                field = expect_ident()
+                return ast.DotAccess(tok.value, field)
             return ast.Var(tok.value)
         elif tok.kind == "(":
             advance()
@@ -431,13 +435,18 @@ def parse_tokens(tokens: list) -> list:
             module = ns_or_name + ":" + expect_ident()
         else:
             module = ns_or_name
-        expect("(")
-        names = [expect_ident()]
-        while peek().kind == ",":
+        if peek().kind == "as":
             advance()
-            names.append(expect_ident())
-        expect(")")
-        return ast.Import(module, names)
+            alias = expect_ident()
+            return ast.Import(module, [], alias)
+        else:
+            expect("(")
+            names = [expect_ident()]
+            while peek().kind == ",":
+                advance()
+                names.append(expect_ident())
+            expect(")")
+            return ast.Import(module, names, None)
 
     # --- export statement ---
     def parse_export():

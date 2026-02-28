@@ -113,6 +113,7 @@ def tokenize(source: str) -> list:
         "of",
         "import",
         "export",
+        "as",
     }
 
     def read_ident():
@@ -242,6 +243,9 @@ def tokenize(source: str) -> list:
                 tokens.append(Token("::", line=token_line, col=token_col))
             else:
                 tokens.append(Token(":", line=token_line, col=token_col))
+        elif c == ".":
+            pos += 1
+            tokens.append(Token(".", line=token_line, col=token_col))
         elif c == ";":
             raise Error(
                 f"unexpected character: ; at line {token_line}, col {token_col + 1}"

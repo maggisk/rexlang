@@ -272,6 +272,17 @@ class TypeChecker:
                 item_types.append(ti)
             return s, TTuple([apply_subst(s, t) for t in item_types])
 
+        elif isinstance(expr, ast.DotAccess):
+            modules = env.get("__modules__", {})
+            if expr.module_name not in modules:
+                raise TypeError(f"'{expr.module_name}' is not a qualified module")
+            mod_env = modules[expr.module_name]
+            if expr.field_name not in mod_env:
+                raise TypeError(
+                    f"module '{expr.module_name}' does not export '{expr.field_name}'"
+                )
+            return subst, self.instantiate(mod_env[expr.field_name])
+
         elif isinstance(expr, (ast.TypeDecl, ast.Import, ast.Export)):
             # Should be handled by infer_toplevel; treat as no-op here
             return subst, TUnit
@@ -582,6 +593,10 @@ class TypeChecker:
 
         elif isinstance(expr, ast.Import):
             mod_env = check_module(expr.module)
+            if expr.alias:
+                modules = dict(env.get("__modules__", {}))
+                modules[expr.alias] = mod_env
+                return subst, TUnit, {**env, "__modules__": modules}, type_defs
             new_env = dict(env)
             for name in expr.names:
                 if name not in mod_env:
@@ -716,6 +731,16 @@ def initial_type_env() -> dict:
         "println": Scheme(["a"], TFun(TVar("a"), TVar("a"))),
         "readLine": Scheme([], TFun(TString, TString)),
         "error": Scheme(["a"], TFun(TString, TVar("a"))),
+        # Filesystem (std:IO)
+        "readFile": Scheme([], TFun(TString, TString)),
+        "writeFile": Scheme([], TFun(TString, TFun(TString, TString))),
+        "appendFile": Scheme([], TFun(TString, TFun(TString, TString))),
+        "fileExists": Scheme([], TFun(TString, TBool)),
+        "listDir": Scheme([], TFun(TString, TList(TString))),
+        # Environment (std:Env)
+        "getEnv": Scheme([], TFun(TString, TString)),
+        "getEnvOr": Scheme([], TFun(TString, TFun(TString, TString))),
+        "args": Scheme([], TList(TString)),
     }
 
 
