@@ -106,12 +106,38 @@ One blank line between top-level definitions; two blank lines between sections. 
 
 ## Planned work (ordered by dependency)
 
-### Requires HM inference
+### Data structures & types
+- Records — `{ name : String, age : Int }`, field access, update syntax
+- Map/Dict — key-value data structure (stdlib or built-in)
+- String interpolation — `"hello ${name}"` or similar
+- Type aliases — `type Name = String` (lightweight, distinct from ADTs)
+- Multi-line strings
+- Number literals — hex, underscores (`1_000_000`)
+- Char type vs expanded String — decide later
+
+### Module system
+- User modules — import your own `.rex` files
+- Package system — third-party dependencies
+
+### Stdlib
+- Dict/Map module
+- Date/Time (even basic)
+- JSON parsing
+- Random numbers
+- Expand String/Char utilities
+
+### Language ergonomics
+- Type annotations — optional `let f : Int -> Int`, documentation aid
+- Where clauses — `expr where x = ...` (syntactic sugar)
+- Typeclasses/traits — `Eq`, `Ord`, `Show` for ad-hoc polymorphism (maybe — experiment later, may be too complex)
+
+### Error experience
+- Better error messages — source locations, span info
+- Stack traces on runtime errors (maybe)
+
+### Compilation
 - IR design (A-normal form; ADTs map to WasmGC `struct` subtypes)
 - WasmGC backend: emit WAT (WebAssembly Text) → `wasm-tools` assemble → `.wasm`
-- Full module system (`module Foo` declarations, third-party namespaces)
-
-### Can land any time
 
 ### Before going public
 - `pyproject.toml` + installable CLI (`rexlang` command)
