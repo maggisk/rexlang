@@ -30,8 +30,9 @@ python/
       io.py        readFile, writeFile, appendFile, fileExists, listDir
       env.py       getEnv, getEnvOr, args
     stdlib/
-      Prelude.rex  auto-loaded prelude (Ordering type, Eq/Ord traits + instances for Int/Float/String/Bool)
+      Prelude.rex  auto-loaded prelude (Maybe type, Ordering type, Eq/Ord traits + instances for Int/Float/String/Bool)
       List.rex     list stdlib (map, filter, foldl, foldr, take, drop, ...)
+      Map.rex      sorted map stdlib — AVL tree using Ord trait (insert, lookup, remove, fold, ...)
       Math.rex     math stdlib (abs, min, max, pow, trig, log, exp, pi, e, clamp, degrees, radians, logBase)
       String.rex   string stdlib (length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, isEmpty)
       IO.rex       filesystem stdlib (readFile→Result, writeFile→Result, appendFile→Result, fileExists→Bool, listDir→Result)
@@ -122,7 +123,6 @@ One blank line between top-level definitions; two blank lines between sections. 
 - Package system — third-party dependencies
 
 ### Stdlib
-- Dict/Map module
 - Date/Time (even basic)
 - JSON parsing
 - Random numbers

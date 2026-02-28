@@ -528,6 +528,9 @@ class TestExampleFiles:
     def test_traits(self):
         assert self._run("traits.rex") == VString("less positive zero no")
 
+    def test_map(self):
+        assert self._run("map.rex") == VInt(60)
+
 
 class TestMathStdlib:
     def test_abs_int(self):
@@ -1091,3 +1094,113 @@ result
     def test_bool_ordering_operators(self):
         assert prog("false < true") == VBool(True)
         assert prog("true > false") == VBool(True)
+
+
+# ---------------------------------------------------------------------------
+# Map stdlib
+# ---------------------------------------------------------------------------
+
+
+class TestMapStdlib:
+    def test_empty_is_empty(self):
+        assert prog("import std:Map (empty, isEmpty)\nisEmpty empty") == VBool(True)
+
+    def test_singleton(self):
+        assert prog("import std:Map (singleton, size)\nsize (singleton 1 10)") == VInt(
+            1
+        )
+
+    def test_insert_lookup(self):
+        src = "import std:Map (empty, insert, lookup)\nlet m = insert 1 10 empty\nlookup 1 m"
+        assert prog(src) == VCtor("Just", [VInt(10)])
+
+    def test_lookup_missing(self):
+        src = "import std:Map (empty, insert, lookup)\nlet m = insert 1 10 empty\nlookup 2 m"
+        assert prog(src) == VCtor("Nothing", [])
+
+    def test_insert_overwrite(self):
+        src = "import std:Map (empty, insert, lookup)\nlet m = insert 1 99 (insert 1 10 empty)\nlookup 1 m"
+        assert prog(src) == VCtor("Just", [VInt(99)])
+
+    def test_member_true(self):
+        src = "import std:Map (empty, insert, member)\nmember 1 (insert 1 10 empty)"
+        assert prog(src) == VBool(True)
+
+    def test_member_false(self):
+        src = "import std:Map (empty, insert, member)\nmember 2 (insert 1 10 empty)"
+        assert prog(src) == VBool(False)
+
+    def test_size(self):
+        src = "import std:Map (empty, insert, size)\nsize (insert 3 30 (insert 2 20 (insert 1 10 empty)))"
+        assert prog(src) == VInt(3)
+
+    def test_isEmpty_nonempty(self):
+        src = "import std:Map (singleton, isEmpty)\nisEmpty (singleton 1 10)"
+        assert prog(src) == VBool(False)
+
+    def test_remove(self):
+        src = "import std:Map (empty, insert, remove, member)\nlet m = insert 2 20 (insert 1 10 empty)\nmember 1 (remove 1 m)"
+        assert prog(src) == VBool(False)
+
+    def test_remove_missing(self):
+        src = "import std:Map (empty, insert, remove, size)\nlet m = insert 1 10 empty\nsize (remove 99 m)"
+        assert prog(src) == VInt(1)
+
+    def test_update(self):
+        src = "import std:Map (empty, insert, update, lookup)\nlet m = insert 1 10 empty\nlookup 1 (update 1 (fun x -> x + 5) m)"
+        assert prog(src) == VCtor("Just", [VInt(15)])
+
+    def test_update_missing(self):
+        src = "import std:Map (empty, update, size)\nsize (update 1 (fun x -> x + 1) empty)"
+        assert prog(src) == VInt(0)
+
+    def test_fromList(self):
+        src = "import std:Map (fromList, size)\nsize (fromList [(1, 10), (2, 20), (3, 30)])"
+        assert prog(src) == VInt(3)
+
+    def test_toList(self):
+        src = "import std:Map (fromList, toList)\ntoList (fromList [(3, 30), (1, 10), (2, 20)])"
+        assert prog(src) == VList(
+            [
+                VTuple([VInt(1), VInt(10)]),
+                VTuple([VInt(2), VInt(20)]),
+                VTuple([VInt(3), VInt(30)]),
+            ]
+        )
+
+    def test_keys(self):
+        src = "import std:Map (fromList, keys)\nkeys (fromList [(3, 30), (1, 10), (2, 20)])"
+        assert prog(src) == VList([VInt(1), VInt(2), VInt(3)])
+
+    def test_values(self):
+        src = "import std:Map (fromList, values)\nvalues (fromList [(3, 30), (1, 10), (2, 20)])"
+        assert prog(src) == VList([VInt(10), VInt(20), VInt(30)])
+
+    def test_map(self):
+        src = "import std:Map (fromList, map, toList)\ntoList (map (fun x -> x * 2) (fromList [(1, 10), (2, 20)]))"
+        assert prog(src) == VList(
+            [
+                VTuple([VInt(1), VInt(20)]),
+                VTuple([VInt(2), VInt(40)]),
+            ]
+        )
+
+    def test_filter(self):
+        src = "import std:Map (fromList, filter, keys)\nkeys (filter (fun k v -> v > 15) (fromList [(1, 10), (2, 20), (3, 30)]))"
+        assert prog(src) == VList([VInt(2), VInt(3)])
+
+    def test_foldl(self):
+        src = "import std:Map (fromList, foldl)\nfoldl (fun k v acc -> acc + v) 0 (fromList [(1, 10), (2, 20), (3, 30)])"
+        assert prog(src) == VInt(60)
+
+    def test_foldr(self):
+        src = "import std:Map (fromList, foldr)\nfoldr (fun k v acc -> acc + v) 0 (fromList [(1, 10), (2, 20), (3, 30)])"
+        assert prog(src) == VInt(60)
+
+    def test_string_keys(self):
+        src = 'import std:Map (fromList, lookup)\nlookup "b" (fromList [("a", 1), ("b", 2), ("c", 3)])'
+        assert prog(src) == VCtor("Just", [VInt(2)])
+
+    def test_qualified_import(self):
+        src = "import std:Map as M\nM.size (M.fromList [(1, 10), (2, 20)])"
+        assert prog(src) == VInt(2)

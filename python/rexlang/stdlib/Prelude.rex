@@ -1,6 +1,11 @@
 -- # Prelude — loaded automatically before user code
 
 
+-- ## Maybe type
+
+type Maybe a = Nothing | Just a
+
+
 -- ## Ordering type
 
 type Ordering = LT | EQ | GT

@@ -495,6 +495,9 @@ class TestHMExamples:
     def test_maybe(self):
         self._typecheck("maybe.rex")
 
+    def test_map(self):
+        self._typecheck("map.rex")
+
 
 class TestMaybeStdlib:
     def test_import_just_type(self):
@@ -731,3 +734,64 @@ impl Foo Int where
     bar x = x
     baz x = x
 """)
+
+
+# ---------------------------------------------------------------------------
+# Map stdlib
+# ---------------------------------------------------------------------------
+
+
+class TestMapStdlib:
+    def test_empty_type(self):
+        result = ty("import std:Map (empty)\nempty")
+        assert result == "(Map a b)"
+
+    def test_singleton_type(self):
+        result = ty("import std:Map (singleton)\nsingleton 1 10")
+        assert result == "(Map Int Int)"
+
+    def test_insert_type(self):
+        result = ty("import std:Map (empty, insert)\ninsert 1 10 empty")
+        assert result == "(Map Int Int)"
+
+    def test_lookup_type(self):
+        result = ty(
+            "import std:Map (empty, insert, lookup)\nlookup 1 (insert 1 10 empty)"
+        )
+        assert result == "(Maybe Int)"
+
+    def test_member_type(self):
+        result = ty("import std:Map (empty, member)\nmember 1 empty")
+        assert result == "Bool"
+
+    def test_size_type(self):
+        result = ty("import std:Map (empty, size)\nsize empty")
+        assert result == "Int"
+
+    def test_isEmpty_type(self):
+        result = ty("import std:Map (empty, isEmpty)\nisEmpty empty")
+        assert result == "Bool"
+
+    def test_foldl_type(self):
+        result = ty(
+            "import std:Map (fromList, foldl)\nfoldl (fun k v acc -> acc + v) 0 (fromList [(1, 10)])"
+        )
+        assert result == "Int"
+
+    def test_toList_type(self):
+        result = ty("import std:Map (fromList, toList)\ntoList (fromList [(1, 10)])")
+        assert result == "[(Int, Int)]"
+
+    def test_keys_type(self):
+        result = ty("import std:Map (fromList, keys)\nkeys (fromList [(1, 10)])")
+        assert result == "[Int]"
+
+    def test_map_type(self):
+        result = ty(
+            "import std:Map (singleton, map)\nmap (fun x -> x + 1) (singleton 1 10)"
+        )
+        assert result == "(Map Int Int)"
+
+    def test_qualified_import(self):
+        result = ty("import std:Map as M\nM.size (M.fromList [(1, 10)])")
+        assert result == "Int"
