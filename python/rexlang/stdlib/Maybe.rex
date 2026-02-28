@@ -1,4 +1,4 @@
-export Nothing, Just, isNothing, isSome, fromMaybe, map
+export Nothing, Just, isNothing, isSome, fromMaybe, map, andThen
 
 
 type Maybe a = Nothing | Just a
@@ -63,3 +63,18 @@ let map f x =
             Nothing
         Just v ->
             Just (f v)
+
+
+-- | Chain Maybe-returning functions (flatMap/bind).
+--   The function receives the unwrapped value and returns a Maybe.
+--
+--     andThen (\x -> Just (x * 2)) (Just 5) == Just 10
+--     andThen (\x -> Nothing) (Just 5) == Nothing
+--     andThen (\x -> Just (x * 2)) Nothing == Nothing
+--
+let andThen f x =
+    case x of
+        Nothing ->
+            Nothing
+        Just v ->
+            f v

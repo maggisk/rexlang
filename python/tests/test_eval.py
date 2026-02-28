@@ -792,6 +792,18 @@ class TestMaybeStdlib:
         src = 'import std:Maybe (Nothing, Just, map)\nmap (fun x -> x * 2) (Just 5)'
         assert prog(src) == VCtor("Just", [VInt(10)])
 
+    def test_andThen_just(self):
+        src = 'import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) (Just 5)'
+        assert prog(src) == VCtor("Just", [VInt(10)])
+
+    def test_andThen_returns_nothing(self):
+        src = 'import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Nothing) (Just 5)'
+        assert prog(src) == VCtor("Nothing", [])
+
+    def test_andThen_nothing_input(self):
+        src = 'import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) Nothing'
+        assert prog(src) == VCtor("Nothing", [])
+
     def test_exhaustive_check_works(self):
         # exhaustiveness check should work for imported constructors
         src = (

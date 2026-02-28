@@ -144,6 +144,7 @@ cd python
 - [ ] `pyproject.toml` and installable CLI
 - [ ] Ruff linting
 - [ ] REPL history persistence
+- [ ] Qualified module imports (`import std:List as L` → `L.length`) with optional alias
 - [ ] Module system (`module Foo`, `import Bar`)
 
 ### Compilation
