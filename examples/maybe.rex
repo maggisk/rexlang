@@ -1,17 +1,6 @@
-type Maybe a = Nothing | Just a
+import std:Maybe (Nothing, Just, isNothing, fromMaybe, map)
 
-let isNothing x =
-    case x of
-        Nothing ->
-            true
-        Just _ ->
-            false
 
-let fromMaybe default x =
-    case x of
-        Nothing ->
-            default
-        Just v ->
-            v
+let double x = x * 2
 
 print (fromMaybe 0 (Just 7))

@@ -665,10 +665,18 @@ def eval_toplevel(env: dict, expr) -> tuple:
     elif isinstance(expr, ast.Import):
         module_env, module_exports = _load_module(expr.module)
         new_bindings = {}
+        module_types = module_env.get("__types__", {})
+        types = dict(env.get("__types__", {}))
+        imported_ctor = False
         for name in expr.names:
             if name not in module_exports:
                 raise Error(f"'{name}' is not exported by module '{expr.module}'")
             new_bindings[name] = module_env[name]
+            if name in module_types:
+                types[name] = module_types[name]
+                imported_ctor = True
+        if imported_ctor:
+            new_bindings["__types__"] = types
         return VBool(False), {**env, **new_bindings}
 
     elif isinstance(expr, ast.Export):

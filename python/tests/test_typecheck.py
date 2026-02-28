@@ -480,3 +480,17 @@ class TestHMExamples:
 
     def test_maybe(self):
         self._typecheck("maybe.rex")
+
+
+class TestMaybeStdlib:
+    def test_import_just_type(self):
+        result = ty('import std:Maybe (Nothing, Just)\nJust 5')
+        assert result == "(Maybe Int)"
+
+    def test_import_fromMaybe_type(self):
+        result = ty('import std:Maybe (Nothing, Just, fromMaybe)\nfromMaybe 0 (Just 7)')
+        assert result == "Int"
+
+    def test_import_map_type(self):
+        result = ty('import std:Maybe (Nothing, Just, map)\nmap (fun x -> x * 2) (Just 5)')
+        assert result == "(Maybe Int)"

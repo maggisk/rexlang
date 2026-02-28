@@ -769,3 +769,35 @@ class TestIO:
         monkeypatch.setattr("builtins.input", raise_eof)
         result = ev('readLine ""')
         assert result == VString("")
+
+
+class TestMaybeStdlib:
+    def test_import_nothing(self):
+        src = 'import std:Maybe (Nothing, Just)\nNothing'
+        assert prog(src) == VCtor("Nothing", [])
+
+    def test_import_just(self):
+        src = 'import std:Maybe (Nothing, Just)\nJust 42'
+        assert prog(src) == VCtor("Just", [VInt(42)])
+
+    def test_import_fromMaybe(self):
+        src = 'import std:Maybe (Nothing, Just, fromMaybe)\nfromMaybe 0 (Just 7)'
+        assert prog(src) == VInt(7)
+
+    def test_import_isNothing(self):
+        src = 'import std:Maybe (Nothing, Just, isNothing)\nisNothing Nothing'
+        assert prog(src) == VBool(True)
+
+    def test_import_map(self):
+        src = 'import std:Maybe (Nothing, Just, map)\nmap (fun x -> x * 2) (Just 5)'
+        assert prog(src) == VCtor("Just", [VInt(10)])
+
+    def test_exhaustive_check_works(self):
+        # exhaustiveness check should work for imported constructors
+        src = (
+            'import std:Maybe (Nothing, Just)\n'
+            'case Just 5 of\n'
+            '  Just n -> n'
+        )
+        with pytest.raises(Error, match="non-exhaustive"):
+            prog(src)
