@@ -1,17 +1,15 @@
 # RexLang
 
-A functional programming language with algebraic data types, pattern matching, and Hindley-Milner type inference. Currently implemented as a tree-walking interpreter in Python; the long-term target is **WebAssembly (WasmGC)** — producing `.wasm` binaries that run natively in browsers and on servers via WASI with no runtime installation required.
+A functional programming language with algebraic data types, pattern matching, and Hindley-Milner type inference. Ships as a single static binary — no runtime, no pip, no venv. The long-term target is **WebAssembly (WasmGC)** — producing `.wasm` binaries that run natively in browsers and on servers via WASI with no runtime installation required.
 
 ## Quick start
 
 ```bash
-cd python
-python -m venv .venv && source .venv/bin/activate
-pip install pytest
+go build -o rex ./cmd/rex/
 
-.venv/bin/python bin/main.py ../examples/factorial.rex   # run a file
-.venv/bin/python bin/main.py --test ../examples/testing.rex  # run tests
-.venv/bin/python bin/main.py                             # start the REPL
+./rex examples/factorial.rex      # run a file
+./rex --test examples/testing.rex # run tests
+./rex                             # start the REPL
 ```
 
 ## Language
@@ -112,7 +110,7 @@ test "double works" =
 Run with `--test`:
 
 ```bash
-.venv/bin/python bin/main.py --test myfile.rex
+./rex --test myfile.rex
 ```
 
 Tests are parsed and type-checked in normal mode but only executed with `--test`. Test bodies are isolated — bindings don't leak.
@@ -185,12 +183,12 @@ else
 ## Running tests
 
 ```bash
-cd python
-.venv/bin/pytest tests/ -q        # Python test suite (614 tests)
-.venv/bin/python bin/main.py --test ../python/rexlang/stdlib/List.rex   # stdlib self-tests
-.venv/bin/python bin/main.py --test ../python/rexlang/stdlib/Map.rex
-.venv/bin/python bin/main.py --test ../python/rexlang/stdlib/Result.rex
-.venv/bin/python bin/main.py --test ../python/rexlang/stdlib/Json.rex
+./rex --test examples/testing.rex
+./rex --test stdlib/List.rex
+./rex --test stdlib/Map.rex
+./rex --test stdlib/Result.rex
+./rex --test stdlib/Json.rex
+go test ./...
 ```
 
 ## Roadmap
@@ -211,7 +209,7 @@ cd python
 - [ ] Random numbers
 
 ### Tooling
-- [ ] `pyproject.toml` + installable `rexlang` CLI
+- [ ] Installable `rex` CLI (`go install`)
 - [ ] REPL history (`readline`)
 - [ ] Better error messages with source locations
 

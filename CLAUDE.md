@@ -6,83 +6,79 @@
 
 ## Project overview
 
-RexLang is a functional language with algebraic data types and pattern matching. The current implementation is a Python tree-walking interpreter. The long-term plan is Hindley-Milner type inference and a **WasmGC compilation backend** — producing `.wasm` binaries that run in browsers (native) and on servers via WASI (Wasmtime/Wasmer/WasmEdge, no runtime install required).
+RexLang is a functional language with algebraic data types and pattern matching. The implementation is a Go tree-walking interpreter that ships as a single static binary — no runtime, no pip, no venv. The long-term plan is a **WasmGC compilation backend** — producing `.wasm` binaries that run in browsers (native) and on servers via WASI (Wasmtime/Wasmer/WasmEdge, no runtime install required).
 
 ## Repository layout
 
 ```
 examples/          .rex example programs (one per feature)
-python/
-  bin/main.py      entry point: file runner + REPL (shows inferred types)
-  rexlang/
-    token.py       Token dataclass
-    lexer.py       tokenizer → list[Token]
-    ast.py         AST node dataclasses
-    parser.py      recursive-descent parser → list[Expr]
-    types.py       HM type representation (TVar, TCon, Scheme, unify, generalize, …)
-    typecheck.py   Algorithm W inference; runs after parse, before eval; errors fatal
-    values.py      value types (VInt, VFloat, …), Error, value_to_string, helpers
-    eval.py        tree-walking evaluator (imports values + builtins)
-    __init__.py    re-exports run(), run_program(), eval_toplevel()
-    builtins/
-      __init__.py  all_builtins() — assembles the full builtin dict
-      core.py      not, error, print, println, readLine, toFloat, round, floor, ceiling, truncate
-      math.py      abs, min, max, pow, sqrt, trig, log, exp, pi, e
-      string.py    length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith
-      io.py        readFile, writeFile, appendFile, fileExists, listDir
-      env.py       getEnv, getEnvOr, args
-    stdlib/
-      Prelude.rex  auto-loaded prelude (Maybe type, Ordering type, Eq/Ord traits + instances for Int/Float/String/Bool)
-      List.rex     list stdlib (map, filter, foldl, foldr, take, drop, zip, concat, concatMap, range, repeat, find, partition, intersperse, indexedMap, maximum, minimum, ...)
-      Map.rex      sorted map stdlib — AVL tree using Ord trait (insert, lookup, remove, fold, ...)
-      Math.rex     math stdlib (abs, min, max, pow, trig, log, exp, pi, e, clamp, degrees, radians, logBase)
-      String.rex   string stdlib (length, toUpper, toLower, trim, split, join, toString, contains, charAt, substring, indexOf, replace, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, isEmpty)
-      IO.rex       filesystem stdlib (readFile→Result, writeFile→Result, appendFile→Result, fileExists→Bool, listDir→Result)
-      Env.rex      environment stdlib (getEnv→Maybe, getEnvOr, args)
-      Result.rex   result stdlib (Ok, Err, map, mapErr, withDefault, isOk, isErr, andThen)
-      Json.rex     JSON stdlib — Json ADT (JNull/JBool/JNum/JStr/JArr/JObj), parse→Result, stringify, encode/decode helpers
-  tests/
-    test_lexer.py
-    test_parser.py
-    test_eval.py   includes TestExampleFiles which runs examples/*.rex
-    test_typecheck.py  HM inference tests (primitives, ADTs, polymorphism, errors, examples)
+stdlib/            .rex stdlib files (embedded in the binary via //go:embed)
+  Prelude.rex      auto-loaded prelude (Maybe type, Ordering type, Eq/Ord traits + instances for Int/Float/String/Bool)
+  List.rex         list stdlib
+  Map.rex          sorted map stdlib — AVL tree using Ord trait
+  Math.rex         math stdlib
+  String.rex       string stdlib
+  IO.rex           filesystem stdlib
+  Env.rex          environment stdlib
+  Result.rex       result stdlib
+  Json.rex         JSON stdlib
+go.mod             module github.com/maggisk/rexlang
+cmd/
+  rex/main.go      CLI: run file, --test, REPL
+internal/
+  lexer/           Token + Tokenize()
+  ast/             All AST node types (Expr, Pattern, TySyntax interfaces)
+  parser/          Recursive-descent parser; offside rule via caseArmCol
+  types/           TVar, TCon, Scheme; Unify, Generalize, ApplySubst, etc.
+  typechecker/     Algorithm W (check_program, check_module, prelude cache)
+  eval/
+    values.go      Value interface + all value types; StructuralEq, ValueToString
+    eval.go        Eval(), EvalToplevel(), RunProgram(), RunTests(), REPL helpers
+    builtins_core.go  All builtins: core, math, string, IO, env, JSON
+  stdlib/
+    embed.go       //go:embed rexfiles/*.rex; Source(name) string
+    rexfiles/      .rex files for embedding
+python/            Python reference implementation (kept for reference)
 ```
 
 ## Development commands
 
-All commands run from `python/`:
+All commands run from the repo root:
 
 ```bash
+# build
+go build -o rex ./cmd/rex/
+
 # run a file
-.venv/bin/python bin/main.py ../examples/factorial.rex
+./rex examples/factorial.rex
 
 # run tests in a .rex file
-.venv/bin/python bin/main.py --test ../examples/testing.rex
+./rex --test examples/testing.rex
+./rex --test stdlib/List.rex
 
 # REPL (blank line to eval, Ctrl-D to exit)
-.venv/bin/python bin/main.py
+./rex
 
-# tests
-.venv/bin/pytest tests/ -q
+# run all Go tests
+go test ./...
 
 # format
-.venv/bin/ruff format .
-
-# lint
-.venv/bin/ruff check .
+gofmt -w .
 ```
 
 ## Architecture notes
 
-- **Pipeline**: source → `lexer.tokenize()` → `parser.parse()` → `typecheck.check_program()` → `eval.eval_program()`
-- **Type inference**: `typecheck.py` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types live in `types.py` (`TVar`, `TCon`, `Scheme`). Arithmetic operators (`+` `-` `*` `/`) require `Int` or `Float`; free type variables in arithmetic expressions default to `Int`. Use `toFloat` to convert before Float arithmetic. REPL shows `name : type` after each binding.
-- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod` — all are plain dataclasses with `__eq__`
-- **Environment**: plain `dict` passed through eval; closures capture a snapshot
-- **Tail calls**: the evaluator uses a trampoline loop for tail-recursive functions
-- **ADTs**: `type Foo = A | B int` registers constructors (no `of`; type name must be uppercase); `type Foo a = …` for parametric ADTs; `TypeDecl.params` holds type parameter names; `TypeDecl.ctors` is `list[(ctor_name: str, arg_type_names: list[str])]`
-- **Pipe** `|>`: left-associative, desugars to function application at eval time
-- **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch based on first argument's type. `Prelude.rex` loaded automatically before user code — defines `Ordering` type, `Eq`/`Ord` traits, and instances for `Int`, `Float`, `String`, `Bool`. Trait methods are `VTraitMethod` values; instances stored in `env["__instances__"]`. Typecheck stores trait metadata in `__traits__` and `__trait_instances__`.
-- **Test framework**: `test "name" = body` blocks (Zig-inspired). `assert expr` checks a Bool, returns `()`. Normal mode skips tests; `--test` flag runs them. Tests are type-checked but not evaluated in normal mode, REPL, or imported modules. `run_tests(source)` in `eval.py` is the test runner.
+- **Pipeline**: source → `lexer.Tokenize()` → `parser.Parse()` → `typechecker.CheckProgram()` → `eval.RunProgram()`
+- **Language**: Go 1.24+. Single binary, no runtime dependency.
+- **Type inference**: `internal/typechecker` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types in `internal/types` (`TVar`, `TCon`, `Scheme`). Arithmetic operators (`+` `-` `*` `/`) require `Int` or `Float`; free type variables in arithmetic expressions default to `Int`. Use `toFloat` to convert before Float arithmetic. REPL shows `name : type` after each binding.
+- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod`, `VInstances`, `VModule` — all implement `Value` interface via `valueKind()`.
+- **Environment**: `Env = map[string]Value`; `Clone()` and `Extend()` for closure snapshots.
+- **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
+- **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
+- **Pipe** `|>`: left-associative, desugars to function application at eval time.
+- **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
+- **Test framework**: `test "name" = body` / `assert expr`. `--test` flag runs them.
+- **Stdlib embedding**: `.rex` files embedded via `//go:embed` in `internal/stdlib/embed.go`.
 
 ## Conventions
 
