@@ -149,46 +149,6 @@ def _match_pattern(pat, value) -> Optional[dict]:
     return None
 
 
-def _check_exhaustive(arms, type_registry):
-    pats = [pat for pat, _ in arms]
-
-    if any(isinstance(p, (ast.PWild, ast.PVar)) for p in pats):
-        return
-
-    if any(isinstance(p, ast.PBool) for p in pats):
-        covered = {p.value for p in pats if isinstance(p, ast.PBool)}
-        missing = []
-        if True not in covered:
-            missing.append("true")
-        if False not in covered:
-            missing.append("false")
-        if missing:
-            raise Error(f"non-exhaustive patterns: missing {', '.join(missing)}")
-        return
-
-    has_nil = any(isinstance(p, ast.PNil) for p in pats)
-    has_cons = any(isinstance(p, ast.PCons) for p in pats)
-    if has_nil or has_cons:
-        missing = []
-        if not has_nil:
-            missing.append("[]")
-        if not has_cons:
-            missing.append("[h|t]")
-        if missing:
-            raise Error(f"non-exhaustive patterns: missing {', '.join(missing)}")
-        return
-
-    ctor_pats = [p for p in pats if isinstance(p, ast.PCtor)]
-    if ctor_pats:
-        first_name = ctor_pats[0].name
-        if first_name in type_registry:
-            all_ctors = type_registry[first_name]
-            covered = {p.name for p in ctor_pats}
-            missing = sorted(all_ctors - covered)
-            if missing:
-                raise Error(f"non-exhaustive patterns: missing {', '.join(missing)}")
-
-
 # ---------------------------------------------------------------------------
 # Evaluator
 # ---------------------------------------------------------------------------
@@ -250,7 +210,6 @@ def eval(env: dict, expr) -> Any:
 
         elif isinstance(expr, ast.Match):
             value = eval(env, expr.scrutinee)
-            _check_exhaustive(expr.arms, env.get("__types__", {}))
             for pat, body in expr.arms:
                 bindings = _match_pattern(pat, value)
                 if bindings is not None:
@@ -376,11 +335,7 @@ def eval_toplevel(env: dict, expr) -> tuple:
             )
             for cname, arg_types in expr.ctors
         }
-        types = dict(env.get("__types__", {}))
-        all_ctors = frozenset(cname for cname, _ in expr.ctors)
-        for cname, _ in expr.ctors:
-            types[cname] = all_ctors
-        return VBool(False), {**env, **ctor_env, "__types__": types}
+        return VBool(False), {**env, **ctor_env}
 
     elif isinstance(expr, ast.Let) and expr.in_expr is None:
         value = eval(env, expr)
@@ -395,27 +350,17 @@ def eval_toplevel(env: dict, expr) -> tuple:
 
     elif isinstance(expr, ast.Import):
         module_env, module_exports = _load_module(expr.module)
-        module_types = module_env.get("__types__", {})
         if expr.alias:
             mod_bindings = {n: module_env[n] for n in module_exports if n in module_env}
-            types = {**env.get("__types__", {}), **module_types}
             return VBool(False), {
                 **env,
                 expr.alias: VModule(expr.alias, mod_bindings),
-                "__types__": types,
             }
         new_bindings = {}
-        types = dict(env.get("__types__", {}))
-        imported_ctor = False
         for name in expr.names:
             if name not in module_exports:
                 raise Error(f"'{name}' is not exported by module '{expr.module}'")
             new_bindings[name] = module_env[name]
-            if name in module_types:
-                types[name] = module_types[name]
-                imported_ctor = True
-        if imported_ctor:
-            new_bindings["__types__"] = types
         return VBool(False), {**env, **new_bindings}
 
     elif isinstance(expr, ast.Export):

@@ -106,9 +106,6 @@ One blank line between top-level definitions; two blank lines between sections. 
 
 ## Planned work (ordered by dependency)
 
-### Big milestone — blocks compilation
-- Move exhaustiveness checking to a static pass (post-HM); remove `_check_exhaustive` from `eval.py` and the `__types__` registry from env
-
 ### Requires HM inference
 - IR design (A-normal form; ADTs map to WasmGC `struct` subtypes)
 - WasmGC backend: emit WAT (WebAssembly Text) → `wasm-tools` assemble → `.wasm`
@@ -130,6 +127,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **Compilation target**: WasmGC — emit WAT, assemble with `wasm-tools`. Runs in browsers natively and on servers via WASI (no runtime install). ADTs map to WasmGC `struct` subtypes; TCO via `return_call`.
 - **Concurrency**: actors are a stdlib library, not a language feature. Start with a single-threaded cooperative scheduler (spawn/send/receive backed by message queues). Swap internals for real WASI threads when the spec matures — API stays the same.
 - **No hot reloading** for now
+- **Exhaustiveness checking**: static pass in `typecheck.py` (post-HM); `__ctor_families__` registry in type env tracks constructor siblings; `eval.py` has no `__types__` registry
 - **No guards in pattern matching** (not planned)
 - **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to `python/rexlang/stdlib/`. Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
 - **`length` name collision**: resolved via qualified imports — `import std:List as L` and `import std:String as S` then use `L.length` vs `S.length`.

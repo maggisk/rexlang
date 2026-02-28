@@ -595,6 +595,58 @@ class TestIOStdlib:
         assert ty('import std:IO as IO\nIO.readFile "x"') == "(Result String String)"
 
 
+class TestExhaustiveness:
+    def test_wildcard_is_exhaustive(self):
+        tc("case 42 of _ -> 0")
+
+    def test_var_is_exhaustive(self):
+        tc("case 42 of n -> n")
+
+    def test_bool_missing_false(self):
+        assert raises_type_error("case true of\n  true -> 1")
+
+    def test_bool_missing_true(self):
+        assert raises_type_error("case false of\n  false -> 0")
+
+    def test_bool_exhaustive(self):
+        tc("case true of\n  true -> 1\n  false -> 0")
+
+    def test_list_missing_cons(self):
+        assert raises_type_error("case [] of\n  [] -> 0")
+
+    def test_list_missing_nil(self):
+        assert raises_type_error("case [1, 2] of\n  [h|t] -> h")
+
+    def test_list_exhaustive(self):
+        tc("case [] of\n  [] -> 0\n  [h|t] -> h")
+
+    def test_adt_missing_ctor(self):
+        assert raises_type_error(
+            "type Color = Red | Green | Blue\ncase Red of\n  Red -> 1\n  Green -> 2"
+        )
+
+    def test_adt_exhaustive(self):
+        tc(
+            "type Color = Red | Green | Blue\ncase Red of\n  Red -> 1\n  Green -> 2\n  Blue -> 3"
+        )
+
+    def test_adt_wildcard_exhaustive(self):
+        tc("type Color = Red | Green | Blue\ncase Red of\n  Red -> 1\n  _ -> 0")
+
+    def test_adt_missing_in_function(self):
+        assert raises_type_error(
+            "type Option = None | Some int\n"
+            "let f x = case x of\n"
+            "    Some n -> n\n"
+            "f (Some 42)"
+        )
+
+    def test_imported_adt_exhaustive_check(self):
+        assert raises_type_error(
+            "import std:Maybe (Nothing, Just)\ncase Just 5 of\n  Just n -> n"
+        )
+
+
 class TestEnvStdlib:
     def test_get_env_type(self):
         assert ty('import std:Env (getEnv)\ngetEnv "PATH"') == "(Maybe String)"

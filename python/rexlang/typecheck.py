@@ -478,6 +478,52 @@ class TypeChecker:
             last_name = expr.bindings[-1][0]
             return s, apply_subst(s, gen_env[last_name].ty)
 
+    @staticmethod
+    def _check_exhaustive(arms, ctor_families):
+        pats = [pat for pat, _ in arms]
+
+        if any(isinstance(p, (ast.PWild, ast.PVar)) for p in pats):
+            return
+
+        if any(isinstance(p, ast.PBool) for p in pats):
+            covered = {p.value for p in pats if isinstance(p, ast.PBool)}
+            missing = []
+            if True not in covered:
+                missing.append("true")
+            if False not in covered:
+                missing.append("false")
+            if missing:
+                raise TypeError(
+                    f"non-exhaustive patterns: missing {', '.join(missing)}"
+                )
+            return
+
+        has_nil = any(isinstance(p, ast.PNil) for p in pats)
+        has_cons = any(isinstance(p, ast.PCons) for p in pats)
+        if has_nil or has_cons:
+            missing = []
+            if not has_nil:
+                missing.append("[]")
+            if not has_cons:
+                missing.append("[h|t]")
+            if missing:
+                raise TypeError(
+                    f"non-exhaustive patterns: missing {', '.join(missing)}"
+                )
+            return
+
+        ctor_pats = [p for p in pats if isinstance(p, ast.PCtor)]
+        if ctor_pats:
+            first_name = ctor_pats[0].name
+            if first_name in ctor_families:
+                all_ctors = ctor_families[first_name]
+                covered = {p.name for p in ctor_pats}
+                missing = sorted(all_ctors - covered)
+                if missing:
+                    raise TypeError(
+                        f"non-exhaustive patterns: missing {', '.join(missing)}"
+                    )
+
     def _infer_match(self, env, type_defs, subst, expr):
         s0, ts = self.infer(env, type_defs, subst, expr.scrutinee)
         result_tv = self.fresh()
@@ -509,6 +555,7 @@ class TypeChecker:
                     f"{type_to_string(apply_subst(s, body_ty))}"
                 )
             s = compose_subst(s4, s)
+        self._check_exhaustive(expr.arms, env.get("__ctor_families__", {}))
         return s, apply_subst(s, result_tv)
 
     # -----------------------------------------------------------------------
@@ -570,6 +617,11 @@ class TypeChecker:
                     for a in reversed(arg_types):
                         ctor_ty = TFun(a, ctor_ty)
                 new_env[cname] = Scheme(expr.params, ctor_ty)
+            ctor_families = dict(new_env.get("__ctor_families__", {}))
+            all_ctors = frozenset(cname for cname, _ in expr.ctors)
+            for cname, _ in expr.ctors:
+                ctor_families[cname] = all_ctors
+            new_env["__ctor_families__"] = ctor_families
             return subst, TUnit, new_env, new_type_defs
 
         elif isinstance(expr, ast.Let) and expr.in_expr is None:
@@ -600,18 +652,33 @@ class TypeChecker:
             return s_final, apply_subst(s_final, t_body), new_env, type_defs
 
         elif isinstance(expr, ast.Import):
-            mod_env = check_module(expr.module)
+            mod_result = check_module(expr.module)
+            mod_env = mod_result["env"]
+            mod_ctor_families = mod_result.get("ctor_families", {})
             if expr.alias:
                 modules = dict(env.get("__modules__", {}))
                 modules[expr.alias] = mod_env
-                return subst, TUnit, {**env, "__modules__": modules}, type_defs
+                ctor_families = {
+                    **env.get("__ctor_families__", {}),
+                    **mod_ctor_families,
+                }
+                new_env = {
+                    **env,
+                    "__modules__": modules,
+                    "__ctor_families__": ctor_families,
+                }
+                return subst, TUnit, new_env, type_defs
             new_env = dict(env)
+            ctor_families = dict(env.get("__ctor_families__", {}))
             for name in expr.names:
                 if name not in mod_env:
                     raise TypeError(
                         f"'{name}' is not exported by module '{expr.module}'"
                     )
                 new_env[name] = mod_env[name]
+                if name in mod_ctor_families:
+                    ctor_families[name] = mod_ctor_families[name]
+            new_env["__ctor_families__"] = ctor_families
             return subst, TUnit, new_env, type_defs
 
         elif isinstance(expr, ast.Export):
@@ -653,7 +720,7 @@ _module_cache: dict = {}
 
 
 def check_module(module_name: str) -> dict:
-    """Type-check a stdlib module; return dict of exported name → Scheme."""
+    """Type-check a stdlib module; return dict with 'env' and 'ctor_families'."""
     if module_name in _module_cache:
         return _module_cache[module_name]
 
@@ -687,7 +754,11 @@ def check_module(module_name: str) -> dict:
         else:
             _, _, env, type_defs = checker.infer_toplevel(env, type_defs, {}, expr)
 
-    result = {name: env[name] for name in exports if name in env}
+    exported_env = {name: env[name] for name in exports if name in env}
+    result = {
+        "env": exported_env,
+        "ctor_families": env.get("__ctor_families__", {}),
+    }
     _module_cache[module_name] = result
     return result
 

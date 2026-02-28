@@ -315,6 +315,11 @@ class TestPatternMatching:
     def test_first_arm_wins(self):
         assert ev("case 1 of\n  1 -> 10\n  1 -> 20") == VInt(10)
 
+    def test_int_literals_no_check(self):
+        # int-only patterns: no exhaustiveness check (infinite domain)
+        with pytest.raises(Error, match="match failure"):
+            ev("case 5 of\n  1 -> 0")
+
 
 class TestADTs:
     def test_nullary_ctor(self):
@@ -667,64 +672,6 @@ class TestTuple:
         assert ev("let (a, _) = (10, 99) in a") == VInt(10)
 
 
-class TestExhaustiveness:
-    def test_wildcard_is_exhaustive(self):
-        ev("case 42 of _ -> 0")
-
-    def test_var_is_exhaustive(self):
-        ev("case 42 of n -> n")
-
-    def test_bool_missing_false(self):
-        with pytest.raises(Error, match="non-exhaustive"):
-            ev("case true of\n  true -> 1")
-
-    def test_bool_missing_true(self):
-        with pytest.raises(Error, match="non-exhaustive"):
-            ev("case false of\n  false -> 0")
-
-    def test_bool_exhaustive(self):
-        ev("case true of\n  true -> 1\n  false -> 0")
-
-    def test_list_missing_cons(self):
-        with pytest.raises(Error, match="non-exhaustive"):
-            ev("case [] of\n  [] -> 0")
-
-    def test_list_missing_nil(self):
-        with pytest.raises(Error, match="non-exhaustive"):
-            ev("case [1, 2] of\n  [h|t] -> h")
-
-    def test_list_exhaustive(self):
-        ev("case [] of\n  [] -> 0\n  [h|t] -> h")
-
-    def test_adt_missing_ctor(self):
-        src = "type Color = Red | Green | Blue\ncase Red of\n  Red -> 1\n  Green -> 2"
-        with pytest.raises(Error, match="non-exhaustive"):
-            prog(src)
-
-    def test_adt_exhaustive(self):
-        src = "type Color = Red | Green | Blue\ncase Red of\n  Red -> 1\n  Green -> 2\n  Blue -> 3"
-        assert prog(src) == VInt(1)
-
-    def test_adt_wildcard_exhaustive(self):
-        src = "type Color = Red | Green | Blue\ncase Red of\n  Red -> 1\n  _ -> 0"
-        assert prog(src) == VInt(1)
-
-    def test_adt_missing_in_function(self):
-        src = (
-            "type Option = None | Some int\n"
-            "let f x = case x of\n"
-            "    Some n -> n\n"
-            "f (Some 42)"
-        )
-        with pytest.raises(Error, match="non-exhaustive"):
-            prog(src)
-
-    def test_int_literals_no_check(self):
-        # int-only patterns: no exhaustiveness check (infinite domain)
-        with pytest.raises(Error, match="match failure"):
-            ev("case 5 of\n  1 -> 0")
-
-
 class TestIO:
     def test_print_string(self, capsys):
         result = prog('import std:IO (print)\nprint "hello"')
@@ -805,12 +752,6 @@ class TestMaybeStdlib:
     def test_andThen_nothing_input(self):
         src = "import std:Maybe (Nothing, Just, andThen)\nandThen (fun x -> Just (x * 2)) Nothing"
         assert prog(src) == VCtor("Nothing", [])
-
-    def test_exhaustive_check_works(self):
-        # exhaustiveness check should work for imported constructors
-        src = "import std:Maybe (Nothing, Just)\ncase Just 5 of\n  Just n -> n"
-        with pytest.raises(Error, match="non-exhaustive"):
-            prog(src)
 
 
 class TestQualifiedImports:
