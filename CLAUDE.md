@@ -70,6 +70,7 @@ gofmt -w .
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
 - **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded with `Eq`, `Ord`, `Show`. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
 - **String interpolation**: `"hello ${expr}"` — lexer emits `TokInterp` with `[]InterpPart`; parser produces `ast.StringInterp{Parts}`; eval dispatches `Show` trait for conversion. `\$` escapes literal `$`. Nested interpolation (`"${f "inner ${x}"}"`) supported via mutual recursion in lexer (`skipInterp`/`skipString`).
+- **Multi-line strings**: `"""..."""` triple-quoted strings. Lexer-only feature — produces same `TokString`/`TokInterp` tokens. First newline after opening `"""` stripped. Lone `"` or `""` inside allowed; only `"""` closes.
 - **Type annotations**: `name : TypeSig` on a separate line before `let`. Parser detects lowercase ident + `:` in `ParseTokens`. Typechecker stores annotation as `__ann:name` in env; `toplevelLet` checks inferred type against annotation via `checkAnnotation()` (instantiate both, unify). If annotation exists and matches, it replaces the generalized type in env (constraining polymorphism). Eval ignores annotations (`VUnit`).
 - **Test framework**: `test "name" = body` / `assert expr`. `--test` flag runs them.
 - **Stdlib embedding**: `.rex` files embedded via `//go:embed` in `internal/stdlib/embed.go`.
@@ -110,7 +111,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Records — `type Person = { name : String, age : Int }`, field access, pattern matching, update syntax `{ rec | field = val }` with nested dot-paths
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - [x] Type aliases — `type Name = String` (lightweight, distinct from ADTs)
-- Multi-line strings
+- [x] Multi-line strings — `"""..."""` triple-quoted, first newline stripped, escapes and interpolation work as normal
 - Number literals — hex, underscores (`1_000_000`)
 - Char type vs expanded String — decide later
 
@@ -168,6 +169,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **`length` name collision**: resolved via qualified imports — `import std:List as L` and `import std:String as S` then use `L.length` vs `S.length`.
 - **Traits v1**: `trait`/`impl` with Rust-style naming. Single-parameter traits only. Runtime dispatch (no type-level constraints). Prelude auto-loaded with `Ordering`, `Eq`, `Ord`, `Show` and instances for `Int`, `Float`, `String`, `Bool`. Comparison operators (`<`, `>`, `<=`, `>=`) extended to String (lexicographic) and Bool (`false < true`). `where` is a keyword.
 - **String interpolation**: `"hello ${expr}"` syntax. Lexer scans `${...}` with mutual recursion (`skipInterp`/`skipString`) to handle nested strings; emits `TokInterp` containing `[]InterpPart`. Parser produces `ast.StringInterp{Parts []Expr}`. Typechecker allows any type per part, returns `TString`. Eval dispatches `Show:TypeName:show` from `__instances__` for each part (short-circuits VString). `\$` produces literal `$`. Strings without `${` produce normal `TokString` (backward compatible). `showInt`/`showFloat` builtins in CoreBuiltins + InitialTypeEnv for Prelude's Show instances.
+- **Multi-line strings**: `"""..."""` triple-quoted strings. Handled entirely in the lexer — no new token types, parser/typechecker/eval unchanged. Opening `"""` detected by checking the two chars after the initial `"`. First newline after opening `"""` is stripped. Closing `"""` is three consecutive unescaped `"`. Lone `"` and `""` inside the string body are allowed. Escapes and `${expr}` interpolation work identically to regular strings. `skipString` also handles triple-quoted strings inside interpolation expressions. Produces the same `TokString`/`TokInterp` tokens. Line numbers tracked through the string body for correct error reporting.
 - **Test framework**: Zig-inspired `test`/`assert` keywords. `\r` is a supported string escape.
 - **Structural equality**: `==` and `!=` work on any Rex value including lists, tuples, ADTs, and records (recursive structural comparison). This means `Just 42 == Just 42` works.
 - **Mutual recursion in types**: `_preregister_types` pre-pass in `check_program`, `check_module`, `_load_prelude_tc` registers all TypeDecl names before resolving constructors, enabling mutually recursive ADTs.

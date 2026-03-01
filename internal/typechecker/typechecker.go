@@ -1764,6 +1764,8 @@ func stringTypeEnv() TypeEnv {
 		"substring":    types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TFun(types.TString, types.TString)))},
 		"indexOf":      types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TMaybe(types.TInt)))},
 		"replace":      types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
+		"take":         types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TString))},
+		"drop":         types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TString))},
 		"repeat":       types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TString))},
 		"padLeft":      types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
 		"padRight":     types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},

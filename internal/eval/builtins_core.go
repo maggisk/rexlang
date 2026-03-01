@@ -502,6 +502,32 @@ func StringBuiltins() map[string]Value {
 			}
 			return VString{V: strings.ReplaceAll(s, find, repl)}, nil
 		}),
+		"take": curried2("take", func(nV, strV Value) (Value, error) {
+			n, err := AsInt(nV)
+			if err != nil {
+				return nil, err
+			}
+			s, err := CheckStr("take", strV)
+			if err != nil {
+				return nil, err
+			}
+			runes := []rune(s)
+			end := clampInt(n, 0, len(runes))
+			return VString{V: string(runes[:end])}, nil
+		}),
+		"drop": curried2("drop", func(nV, strV Value) (Value, error) {
+			n, err := AsInt(nV)
+			if err != nil {
+				return nil, err
+			}
+			s, err := CheckStr("drop", strV)
+			if err != nil {
+				return nil, err
+			}
+			runes := []rune(s)
+			start := clampInt(n, 0, len(runes))
+			return VString{V: string(runes[start:])}, nil
+		}),
 		"repeat": curried2("repeat", func(nV, strV Value) (Value, error) {
 			n, err := AsInt(nV)
 			if err != nil {

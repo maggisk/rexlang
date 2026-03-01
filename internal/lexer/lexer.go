@@ -125,18 +125,47 @@ func Tokenize(source string) ([]Token, error) {
 
 		case c == '"':
 			pos++ // skip opening '"'
+			// Check for triple-quote
+			tripleQuote := pos+1 < n && runes[pos] == '"' && runes[pos+1] == '"'
+			if tripleQuote {
+				pos += 2 // skip the other two quotes
+				// Strip first newline if present
+				if pos < n && runes[pos] == '\n' {
+					pos++
+					line++
+					lineStart = pos
+				} else if pos+1 < n && runes[pos] == '\r' && runes[pos+1] == '\n' {
+					pos += 2
+					line++
+					lineStart = pos
+				}
+			}
 			var buf []rune
 			var parts []InterpPart
 			hasInterp := false
 			for {
 				if pos >= n {
+					if tripleQuote {
+						return nil, lexErr("unterminated multi-line string")
+					}
 					return nil, lexErr("unterminated string")
 				}
 				ch := runes[pos]
 				pos++
+				// Check for closing delimiter
 				if ch == '"' {
+					if tripleQuote {
+						if pos+1 < n && runes[pos] == '"' && runes[pos+1] == '"' {
+							pos += 2
+							break
+						}
+						// lone " or "" inside triple-quoted string
+						buf = append(buf, '"')
+						continue
+					}
 					break
-				} else if ch == '\\' {
+				}
+				if ch == '\\' {
 					if pos >= n {
 						return nil, lexErr("unterminated string escape")
 					}
@@ -177,6 +206,16 @@ func Tokenize(source string) ([]Token, error) {
 						return nil, err
 					}
 					parts = append(parts, InterpPart{Literal: false, Tokens: exprTokens})
+				} else if tripleQuote && ch == '\n' {
+					buf = append(buf, '\n')
+					line++
+					lineStart = pos
+				} else if tripleQuote && ch == '\r' {
+					// normalize \r\n to \n; lone \r kept as-is
+					if pos < n && runes[pos] == '\n' {
+						continue // skip \r, \n handled next iteration
+					}
+					buf = append(buf, '\r')
 				} else {
 					buf = append(buf, ch)
 				}
@@ -372,6 +411,36 @@ func skipInterp(runes []rune, pos *int, n int) error {
 
 // skipString advances pos past a string literal (pos is right after the opening '"').
 func skipString(runes []rune, pos *int, n int) error {
+	// Check for triple-quote
+	if *pos+1 < n && runes[*pos] == '"' && runes[*pos+1] == '"' {
+		*pos += 2 // skip past the opening """
+		for {
+			if *pos >= n {
+				return fmt.Errorf("unterminated multi-line string in interpolation")
+			}
+			ch := runes[*pos]
+			*pos++
+			switch ch {
+			case '"':
+				if *pos+1 < n && runes[*pos] == '"' && runes[*pos+1] == '"' {
+					*pos += 2
+					return nil
+				}
+			case '\\':
+				if *pos < n {
+					*pos++
+				}
+			case '$':
+				if *pos < n && runes[*pos] == '{' {
+					*pos++
+					if err := skipInterp(runes, pos, n); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	// Regular single-line string
 	for {
 		if *pos >= n {
 			return fmt.Errorf("unterminated string in interpolation")
