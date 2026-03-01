@@ -63,6 +63,14 @@ type Person = { name : String, age : Int }
 let alice = Person { name = "Alice", age = 30 }
 alice.name    -- "Alice"
 
+-- update (creates a new record)
+let bob = { alice | name = "Bob", age = 25 }
+
+-- nested update via dot-path
+type Address = { city : String, zip : String }
+type PersonFull = { name : String, addr : Address }
+let p2 = { person | addr.city = "LA" }
+
 -- pattern matching
 case alice of
     Person { name = n } ->
@@ -74,7 +82,7 @@ let p = Pair { fst = 1, snd = "hello" }
 p.fst    -- 1
 ```
 
-Records are nominal — tied to a `type` declaration. The type name is required for construction and pattern matching.
+Records are nominal — tied to a `type` declaration. The type name is required for construction and pattern matching. Updates with `{ rec | field = val }` are immutable — they return a new record. Nested dot-paths (`addr.city`) recursively update inner records.
 
 ### Lists and tuples
 
@@ -255,7 +263,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | `examples/floats.rex`           | Float arithmetic                         |
 | `examples/modulo.rex`           | Modulo operator                          |
 | `examples/annotations.rex`      | Optional type annotations                |
-| `examples/records.rex`          | Nominal records with field access        |
+| `examples/records.rex`          | Records: creation, access, update, nested dot-paths |
 | `examples/actors.rex`           | Actor-model concurrency with `std:Process` |
 | `examples/testing.rex`          | Built-in test framework                  |
 
@@ -270,7 +278,7 @@ go test ./...
 
 ### Language
 
-- [x] Records — nominal records with field access, pattern matching
+- [x] Records — nominal records with field access, pattern matching, update syntax with nested dot-paths
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - [ ] Type aliases — `type Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation

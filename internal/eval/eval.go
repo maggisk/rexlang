@@ -359,6 +359,40 @@ func showValue(env Env, v Value) (string, error) {
 }
 
 // ---------------------------------------------------------------------------
+// Record update helpers
+// ---------------------------------------------------------------------------
+
+func cloneRecord(r VRecord) VRecord {
+	fields := make(map[string]Value, len(r.Fields))
+	for k, v := range r.Fields {
+		fields[k] = v
+	}
+	return VRecord{TypeName: r.TypeName, Fields: fields}
+}
+
+func applyRecordUpdate(rec VRecord, path []string, value Value) (VRecord, error) {
+	if len(path) == 1 {
+		rec.Fields[path[0]] = value
+		return rec, nil
+	}
+	nested, ok := rec.Fields[path[0]]
+	if !ok {
+		return rec, runtimeErr("record '%s' has no field '%s'", rec.TypeName, path[0])
+	}
+	nestedRec, ok := nested.(VRecord)
+	if !ok {
+		return rec, runtimeErr("field '%s' is not a record", path[0])
+	}
+	updated := cloneRecord(nestedRec)
+	updated, err := applyRecordUpdate(updated, path[1:], value)
+	if err != nil {
+		return rec, err
+	}
+	rec.Fields[path[0]] = updated
+	return rec, nil
+}
+
+// ---------------------------------------------------------------------------
 // Evaluator
 // ---------------------------------------------------------------------------
 
@@ -583,6 +617,28 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 				return nil, runtimeErr("record '%s' has no field '%s'", rec.TypeName, e.Field)
 			}
 			return fv, nil
+
+		case ast.RecordUpdate:
+			recVal, err := Eval(env, e.Record)
+			if err != nil {
+				return nil, err
+			}
+			rec, ok := recVal.(VRecord)
+			if !ok {
+				return nil, runtimeErr("record update requires a record, got %s", ValueToString(recVal))
+			}
+			result := cloneRecord(rec)
+			for _, upd := range e.Updates {
+				valV, err := Eval(env, upd.Value)
+				if err != nil {
+					return nil, err
+				}
+				result, err = applyRecordUpdate(result, upd.Path, valV)
+				if err != nil {
+					return nil, err
+				}
+			}
+			return result, nil
 
 		case ast.DotAccess:
 			v := env[e.ModuleName]

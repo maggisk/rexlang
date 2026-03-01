@@ -145,15 +145,67 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 				}
 				return ast.DotAccess{ModuleName: name, FieldName: field}, nil
 			}
-			// Record field access: expr.field
-			p.advance()
-			field, err := p.expectIdent()
+			// Record field access: expr.field (with chaining: expr.field.field2)
+			var result ast.Expr = ast.Var{Name: name}
+			for p.peek().Kind == lexer.TokDot {
+				p.advance()
+				field, err := p.expectIdent()
+				if err != nil {
+					return nil, err
+				}
+				result = ast.FieldAccess{Record: result, Field: field}
+			}
+			return result, nil
+		}
+		return ast.Var{Name: name}, nil
+	case lexer.TokLBrace:
+		// Record update: { expr | field = val, ... }
+		p.advance() // consume '{'
+		savedCAC := p.caseArmCol
+		p.caseArmCol = -1
+		recExpr, err := p.parseExpr()
+		if err != nil {
+			p.caseArmCol = savedCAC
+			return nil, err
+		}
+		p.caseArmCol = savedCAC
+		if err := p.expect(lexer.TokPipe); err != nil {
+			return nil, err
+		}
+		var updates []ast.RecordFieldUpdate
+		for {
+			fname, err := p.expectIdent()
 			if err != nil {
 				return nil, err
 			}
-			return ast.FieldAccess{Record: ast.Var{Name: name}, Field: field}, nil
+			path := []string{fname}
+			for p.peek().Kind == lexer.TokDot {
+				p.advance() // consume '.'
+				next, err := p.expectIdent()
+				if err != nil {
+					return nil, err
+				}
+				path = append(path, next)
+			}
+			if err := p.expect(lexer.TokEq); err != nil {
+				return nil, err
+			}
+			val, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			updates = append(updates, ast.RecordFieldUpdate{Path: path, Value: val})
+			if p.peek().Kind == lexer.TokComma {
+				p.advance()
+			} else {
+				break
+			}
 		}
-		return ast.Var{Name: name}, nil
+		if err := p.expect(lexer.TokRBrace); err != nil {
+			return nil, err
+		}
+		return ast.RecordUpdate{Record: recExpr, Updates: updates}, nil
+
 	case lexer.TokLParen:
 		p.advance()
 		if p.peek().Kind == lexer.TokRParen {
@@ -223,7 +275,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 func isAtomStart(kind string) bool {
 	switch kind {
 	case lexer.TokInt, lexer.TokFloat, lexer.TokString, lexer.TokInterp, lexer.TokBool,
-		lexer.TokIdent, lexer.TokLParen, lexer.TokLBrack:
+		lexer.TokIdent, lexer.TokLParen, lexer.TokLBrack, lexer.TokLBrace:
 		return true
 	}
 	return false

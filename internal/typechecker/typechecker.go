@@ -578,6 +578,54 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		}
 		return nil, nil, &types.TypeError{Msg: fmt.Sprintf("record '%s' has no field '%s'", con.Name, e.Field)}
 
+	case ast.RecordUpdate:
+		s1, recTy, err := tc.infer(env, typeDefs, subst, e.Record)
+		if err != nil {
+			return nil, nil, err
+		}
+		resolved := types.ApplySubst(s1, recTy)
+		con, ok := resolved.(types.TCon)
+		if !ok {
+			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("record update requires a record type, got %s", types.TypeToString(resolved))}
+		}
+		recordFields, _ := env["__record_fields__"]
+		rfMap, _ := recordFields.(map[string]types.RecordInfo)
+		if rfMap == nil {
+			return nil, nil, &types.TypeError{Msg: "no record types defined"}
+		}
+		ri, ok := rfMap[con.Name]
+		if !ok {
+			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("'%s' is not a record type", con.Name)}
+		}
+		paramSubst := make(types.Subst, len(ri.Params))
+		for i, p := range ri.Params {
+			if i < len(con.Args) {
+				paramSubst[p] = con.Args[i]
+			}
+		}
+		s := s1
+		for _, upd := range e.Updates {
+			leafTy, err := tc.resolveFieldPath(rfMap, con.Name, upd.Path, paramSubst)
+			if err != nil {
+				return nil, nil, err
+			}
+			s2, valTy, err := tc.infer(applySubstEnv(s, env), typeDefs, s, upd.Value)
+			if err != nil {
+				return nil, nil, err
+			}
+			s = types.ComposeSubst(s2, s)
+			s3, err := types.Unify(types.ApplySubst(s, valTy), types.ApplySubst(s, leafTy))
+			if err != nil {
+				return nil, nil, &types.TypeError{Msg: fmt.Sprintf("record update field '%s': %s", dotPathString(upd.Path), err.Error())}
+			}
+			s = types.ComposeSubst(s3, s)
+		}
+		resultArgs := make([]types.Type, len(con.Args))
+		for i, a := range con.Args {
+			resultArgs[i] = types.ApplySubst(s, a)
+		}
+		return s, types.TCon{Name: con.Name, Args: resultArgs}, nil
+
 	case ast.Assert:
 		s1, t, err := tc.infer(env, typeDefs, subst, e.Expr)
 		if err != nil {
@@ -593,6 +641,54 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		return subst, types.TUnit, nil
 	}
 	return nil, nil, &types.TypeError{Msg: fmt.Sprintf("unknown AST node: %T", expr)}
+}
+
+// resolveFieldPath walks a dot-path through record types and returns the leaf field type.
+func (tc *TypeChecker) resolveFieldPath(rfMap map[string]types.RecordInfo, recTypeName string, path []string, paramSubst types.Subst) (types.Type, error) {
+	ri, ok := rfMap[recTypeName]
+	if !ok {
+		return nil, &types.TypeError{Msg: fmt.Sprintf("'%s' is not a record type", recTypeName)}
+	}
+	fieldName := path[0]
+	var fieldType types.Type
+	found := false
+	for _, fi := range ri.Fields {
+		if fi.Name == fieldName {
+			fieldType = types.ApplySubst(paramSubst, fi.Type)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, &types.TypeError{Msg: fmt.Sprintf("record '%s' has no field '%s'", recTypeName, fieldName)}
+	}
+	if len(path) == 1 {
+		return fieldType, nil
+	}
+	// Nested: fieldType must be a record TCon
+	con, ok := fieldType.(types.TCon)
+	if !ok {
+		return nil, &types.TypeError{Msg: fmt.Sprintf("field '%s' in '%s' is not a record type, cannot access '%s'", fieldName, recTypeName, path[1])}
+	}
+	nestedRI, ok := rfMap[con.Name]
+	if !ok {
+		return nil, &types.TypeError{Msg: fmt.Sprintf("field '%s' type '%s' is not a record type", fieldName, con.Name)}
+	}
+	nestedParamSubst := make(types.Subst, len(nestedRI.Params))
+	for i, p := range nestedRI.Params {
+		if i < len(con.Args) {
+			nestedParamSubst[p] = con.Args[i]
+		}
+	}
+	return tc.resolveFieldPath(rfMap, con.Name, path[1:], nestedParamSubst)
+}
+
+func dotPathString(path []string) string {
+	result := path[0]
+	for _, p := range path[1:] {
+		result += "." + p
+	}
+	return result
 }
 
 func (tc *TypeChecker) inferBinop(env TypeEnv, typeDefs map[string]types.Type, subst types.Subst, e ast.Binop) (types.Subst, types.Type, error) {

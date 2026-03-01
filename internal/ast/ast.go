@@ -155,6 +155,16 @@ type FieldAccess struct {
 	Field  string
 }
 
+type RecordUpdate struct {
+	Record  Expr
+	Updates []RecordFieldUpdate
+}
+
+type RecordFieldUpdate struct {
+	Path  []string // ["name"] for flat, ["user", "name"] for nested
+	Value Expr
+}
+
 type CtorDef struct {
 	Name     string
 	ArgTypes []TySyntax
@@ -267,6 +277,7 @@ func (Assert) exprNode()         {}
 func (TypeAnnotation) exprNode() {}
 func (RecordCreate) exprNode()   {}
 func (FieldAccess) exprNode()    {}
+func (RecordUpdate) exprNode()   {}
 
 // ---------------------------------------------------------------------------
 // Type syntax nodes

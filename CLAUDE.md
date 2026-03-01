@@ -65,7 +65,7 @@ gofmt -w .
 - **Environment**: `Env = map[string]Value`; `Clone()` and `Extend()` for closure snapshots.
 - **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
 - **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
-- **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }`. Field access: `p.name` (lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`).
+- **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }`. Field access: `p.name` (chained: `p.addr.city`; lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Update: `{ alice | name = "Bob" }` — creates a new record with changed fields. Nested dot-path updates: `{ model | user.name = "Alice" }` — recursively clones and updates nested records. Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`).
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
 - **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded with `Eq`, `Ord`, `Show`. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
 - **String interpolation**: `"hello ${expr}"` — lexer emits `TokInterp` with `[]InterpPart`; parser produces `ast.StringInterp{Parts}`; eval dispatches `Show` trait for conversion. `\$` escapes literal `$`. Nested interpolation (`"${f "inner ${x}"}"`) supported via mutual recursion in lexer (`skipInterp`/`skipString`).
@@ -106,7 +106,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 
 ### Data structures & types
 - [x] Map/Dict — `std:Map` AVL tree, sorted by `Ord` trait
-- [x] Records — `type Person = { name : String, age : Int }`, field access, pattern matching (no update syntax yet)
+- [x] Records — `type Person = { name : String, age : Int }`, field access, pattern matching, update syntax `{ rec | field = val }` with nested dot-paths
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - Type aliases — `type Name = String` (lightweight, distinct from ADTs)
 - Multi-line strings

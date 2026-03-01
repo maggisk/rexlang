@@ -44,4 +44,47 @@ test "parametric record pattern" =
             show x ++ " " ++ y
     assert (result == "1 hello")
 
+-- Record update syntax
+test "record update" =
+    let bob = { alice | name = "Bob" }
+    assert (bob.name == "Bob")
+    assert (bob.age == 30)
+
+test "record update multiple fields" =
+    let bob = { alice | name = "Bob", age = 25 }
+    assert (bob.name == "Bob")
+    assert (bob.age == 25)
+
+test "record update preserves original" =
+    let bob = { alice | name = "Bob" }
+    assert (alice.name == "Alice")
+    assert (bob.name == "Bob")
+
+test "record update with expression" =
+    let older = { alice | age = alice.age + 1 }
+    assert (older.age == 31)
+
+test "parametric record update" =
+    let p2 = { p | fst = 99 }
+    assert (p2.fst == 99)
+    assert (p2.snd == "hello")
+
+-- Nested record update
+type Address = { city : String, zip : String }
+type PersonFull = { name : String, addr : Address }
+
+test "nested record update" =
+    let person = PersonFull { name = "Alice", addr = Address { city = "NYC", zip = "10001" } }
+    let p2 = { person | addr.city = "LA" }
+    assert (p2.addr.city == "LA")
+    assert (p2.addr.zip == "10001")
+    assert (p2.name == "Alice")
+
+test "nested update multiple fields" =
+    let person = PersonFull { name = "Alice", addr = Address { city = "NYC", zip = "10001" } }
+    let p2 = { person | name = "Bob", addr.city = "LA" }
+    assert (p2.name == "Bob")
+    assert (p2.addr.city == "LA")
+    assert (p2.addr.zip == "10001")
+
 p.fst
