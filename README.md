@@ -101,8 +101,8 @@ case xs of
 
 ```
 [1, 2, 3, 4, 5]
-    |> filter (fun x -> x > 2)
-    |> map (fun x -> x * 10)
+    |> filter (fn x -> x > 2)
+    |> map (fn x -> x * 10)
     |> sum
 ```
 

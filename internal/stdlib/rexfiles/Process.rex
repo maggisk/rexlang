@@ -2,16 +2,16 @@ export spawn, send, receive, self, call
 
 
 test "spawn and call" =
-    let pid = spawn (fun _ ->
+    let pid = spawn (fn _ ->
             let caller = receive () in
             send caller 42)
-    let n = call pid (fun me -> me)
+    let n = call pid (fn me -> me)
     assert (n == 42)
 
 test "send and receive" =
     -- Capture self before spawning so the goroutine can reply to us.
     let me = self
-    let pid = spawn (fun _ ->
+    let pid = spawn (fn _ ->
             let msg = receive () in
             send me msg)
     let _ = send pid 99

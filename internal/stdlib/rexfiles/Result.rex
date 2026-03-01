@@ -54,8 +54,8 @@ let withDefault default r =
 
 -- | Apply a function to the Ok value; pass Err through unchanged.
 --
---     map (fun x -> x * 2) (Ok 5) == Ok 10
---     map (fun x -> x * 2) (Err "oops") == Err "oops"
+--     map (fn x -> x * 2) (Ok 5) == Ok 10
+--     map (fn x -> x * 2) (Err "oops") == Err "oops"
 --
 let map f r =
     case r of
@@ -67,8 +67,8 @@ let map f r =
 
 -- | Apply a function to the Err value; pass Ok through unchanged.
 --
---     mapErr (fun e -> "error: " ++ e) (Err "oops") == Err "error: oops"
---     mapErr (fun e -> "error: " ++ e) (Ok 5) == Ok 5
+--     mapErr (fn e -> "error: " ++ e) (Err "oops") == Err "error: oops"
+--     mapErr (fn e -> "error: " ++ e) (Ok 5) == Ok 5
 --
 let mapErr f r =
     case r of
@@ -80,9 +80,9 @@ let mapErr f r =
 
 -- | Chain Result-returning functions (flatMap/bind).
 --
---     andThen (fun x -> Ok (x * 2)) (Ok 5) == Ok 10
---     andThen (fun x -> Ok (x * 2)) (Err "oops") == Err "oops"
---     andThen (fun x -> Err "nope") (Ok 5) == Err "nope"
+--     andThen (fn x -> Ok (x * 2)) (Ok 5) == Ok 10
+--     andThen (fn x -> Ok (x * 2)) (Err "oops") == Err "oops"
+--     andThen (fn x -> Err "nope") (Ok 5) == Err "nope"
 --
 let andThen f r =
     case r of
@@ -106,14 +106,14 @@ test "withDefault" =
     assert (withDefault 0 (Err "oops") == 0)
 
 test "map" =
-    assert (withDefault 0 (map (fun x -> x * 2) (Ok 5)) == 10)
-    assert (isErr (map (fun x -> x * 2) (Err "oops")))
+    assert (withDefault 0 (map (fn x -> x * 2) (Ok 5)) == 10)
+    assert (isErr (map (fn x -> x * 2) (Err "oops")))
 
 test "mapErr" =
-    assert (isOk (mapErr (fun e -> e ++ "!") (Ok 5)))
-    assert (isErr (mapErr (fun e -> e ++ "!") (Err "oops")))
+    assert (isOk (mapErr (fn e -> e ++ "!") (Ok 5)))
+    assert (isErr (mapErr (fn e -> e ++ "!") (Err "oops")))
 
 test "andThen" =
-    assert (withDefault 0 (andThen (fun x -> Ok (x * 2)) (Ok 5)) == 10)
-    assert (isErr (andThen (fun x -> Ok (x * 2)) (Err "oops")))
-    assert (isErr (andThen (fun _ -> Err "nope") (Ok 5)))
+    assert (withDefault 0 (andThen (fn x -> Ok (x * 2)) (Ok 5)) == 10)
+    assert (isErr (andThen (fn x -> Ok (x * 2)) (Err "oops")))
+    assert (isErr (andThen (fn _ -> Err "nope") (Ok 5)))

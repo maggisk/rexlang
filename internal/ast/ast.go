@@ -69,7 +69,7 @@ var BinopSym = map[string]string{
 	"Gt":     ">",
 	"Leq":    "<=",
 	"Geq":    ">=",
-	"Neq":    "/=",
+	"Neq":    "!=",
 	"Concat": "++",
 	"And":    "&&",
 	"Or":     "||",

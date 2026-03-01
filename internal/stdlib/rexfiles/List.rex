@@ -342,7 +342,7 @@ let partition pred lst =
 --     sum [1, 2, 3, 4, 5] == 15
 --
 let sum lst =
-    foldl (fun acc x -> acc + x) 0 lst
+    foldl (fn acc x -> acc + x) 0 lst
 
 
 -- | Multiply all numbers in a list.
@@ -350,7 +350,7 @@ let sum lst =
 --     product [1, 2, 3, 4] == 24
 --
 let product lst =
-    foldl (fun acc x -> acc * x) 1 lst
+    foldl (fn acc x -> acc * x) 1 lst
 
 
 -- | Determine if any elements satisfy the predicate.
@@ -358,7 +358,7 @@ let product lst =
 --     any (\x -> x > 3) [1, 2, 3, 4] == true
 --
 let any pred lst =
-    foldl (fun acc x -> acc || pred x) false lst
+    foldl (fn acc x -> acc || pred x) false lst
 
 
 -- | Determine if all elements satisfy the predicate.
@@ -366,7 +366,7 @@ let any pred lst =
 --     all (\x -> x > 0) [1, 2, 3] == true
 --
 let all pred lst =
-    foldl (fun acc x -> acc && pred x) true lst
+    foldl (fn acc x -> acc && pred x) true lst
 
 
 -- | Return the largest element, or Nothing for empty lists. Requires Ord.
@@ -378,7 +378,7 @@ let maximum lst =
         [] ->
             Nothing
         [h|t] ->
-            Just (foldl (fun a b ->
+            Just (foldl (fn a b ->
                 case compare a b of
                     GT ->
                         a
@@ -395,7 +395,7 @@ let minimum lst =
         [] ->
             Nothing
         [h|t] ->
-            Just (foldl (fun a b ->
+            Just (foldl (fn a b ->
                 case compare a b of
                     LT ->
                         a
@@ -433,15 +433,15 @@ test "nth" =
     assert (nth 5 [10, 20, 30] == Nothing)
 
 test "map and filter" =
-    assert (sum (map (fun x -> x * 2) [1, 2, 3]) == 12)
-    assert (length (filter (fun x -> x > 2) [1, 2, 3, 4, 5]) == 3)
+    assert (sum (map (fn x -> x * 2) [1, 2, 3]) == 12)
+    assert (length (filter (fn x -> x > 2) [1, 2, 3, 4, 5]) == 3)
 
 test "indexedMap" =
-    assert (sum (indexedMap (fun i x -> i) [10, 20, 30]) == 3)
+    assert (sum (indexedMap (fn i x -> i) [10, 20, 30]) == 3)
 
 test "foldl and foldr" =
-    assert (foldl (fun acc x -> acc + x) 0 [1, 2, 3] == 6)
-    assert (head (foldr (fun x acc -> x :: acc) [] [1, 2, 3]) == 1)
+    assert (foldl (fn acc x -> acc + x) 0 [1, 2, 3] == 6)
+    assert (head (foldr (fn x acc -> x :: acc) [] [1, 2, 3]) == 1)
 
 test "append and reverse" =
     assert (length (append [1, 2] [3, 4]) == 4)
@@ -455,30 +455,30 @@ test "take and drop" =
 test "zip" =
     let pairs = zip [1, 2, 3] [4, 5, 6]
     assert (length pairs == 3)
-    assert (foldl (fun acc pair -> let (a, b) = pair in acc + a + b) 0 pairs == 21)
+    assert (foldl (fn acc pair -> let (a, b) = pair in acc + a + b) 0 pairs == 21)
 
 test "concat and concatMap" =
     assert (sum (concat [[1, 2], [3], [4, 5]]) == 15)
-    assert (length (concatMap (fun x -> [x, x]) [1, 2, 3]) == 6)
+    assert (length (concatMap (fn x -> [x, x]) [1, 2, 3]) == 6)
 
 test "intersperse" =
     assert (sum (intersperse 0 [1, 2, 3]) == 6)
     assert (length (intersperse 0 [1, 2, 3]) == 5)
 
 test "find and partition" =
-    assert (find (fun x -> x > 2) [1, 2, 3, 4] == Just 3)
-    assert (find (fun x -> x > 10) [1, 2, 3] == Nothing)
-    let (yes, no) = partition (fun x -> x > 2) [1, 2, 3, 4]
+    assert (find (fn x -> x > 2) [1, 2, 3, 4] == Just 3)
+    assert (find (fn x -> x > 10) [1, 2, 3] == Nothing)
+    let (yes, no) = partition (fn x -> x > 2) [1, 2, 3, 4]
     assert (sum yes == 7)
     assert (sum no == 3)
 
 test "sum, product, any, all" =
     assert (sum [1, 2, 3, 4, 5] == 15)
     assert (product [1, 2, 3, 4] == 24)
-    assert (any (fun x -> x > 3) [1, 2, 3, 4])
-    assert (not (any (fun x -> x > 10) [1, 2, 3]))
-    assert (all (fun x -> x > 0) [1, 2, 3])
-    assert (not (all (fun x -> x > 2) [1, 2, 3]))
+    assert (any (fn x -> x > 3) [1, 2, 3, 4])
+    assert (not (any (fn x -> x > 10) [1, 2, 3]))
+    assert (all (fn x -> x > 0) [1, 2, 3])
+    assert (not (all (fn x -> x > 2) [1, 2, 3]))
 
 test "maximum and minimum" =
     assert (maximum [3, 1, 4, 1, 5] == Just 5)

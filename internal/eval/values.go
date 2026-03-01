@@ -287,7 +287,7 @@ func ValueToString(v Value) string {
 	case VUnit:
 		return "()"
 	case VClosure:
-		return "<fun>"
+		return "<fn>"
 	case VBuiltin:
 		return fmt.Sprintf("<builtin %s>", val.Name)
 	case VCtor:

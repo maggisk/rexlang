@@ -405,12 +405,12 @@ func (p *parser) parseCompare() (ast.Expr, error) {
 		return nil, err
 	}
 	opMap := map[string]string{
-		lexer.TokLt:      "Lt",
-		lexer.TokGt:      "Gt",
-		lexer.TokLtEq:    "Leq",
-		lexer.TokGtEq:    "Geq",
-		lexer.TokEqEq:    "Eq",
-		lexer.TokSlashEq: "Neq",
+		lexer.TokLt:     "Lt",
+		lexer.TokGt:     "Gt",
+		lexer.TokLtEq:   "Leq",
+		lexer.TokGtEq:   "Geq",
+		lexer.TokEqEq:   "Eq",
+		lexer.TokBangEq: "Neq",
 	}
 	k := p.peek().Kind
 	if op, ok := opMap[k]; ok {
@@ -536,7 +536,7 @@ func (p *parser) parseLet() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Desugar parameters: let f x y = body => let f = fun x -> fun y -> body
+	// Desugar parameters: let f x y = body => let f = fn x -> fn y -> body
 	for i := len(params) - 1; i >= 0; i-- {
 		body = ast.Fun{Param: params[i], Body: body}
 	}
@@ -624,7 +624,7 @@ func (p *parser) parseIf() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseFun() (ast.Expr, error) {
-	p.advance() // consume 'fun'
+	p.advance() // consume 'fn'
 	var params []string
 	for p.peek().Kind != lexer.TokArrow {
 		if p.peek().Kind == lexer.TokIdent {
@@ -646,7 +646,7 @@ func (p *parser) parseFun() (ast.Expr, error) {
 	p.advance() // consume '->'
 	if len(params) == 0 {
 		return nil, &ParseError{
-			Msg:  fmt.Sprintf("fun requires at least one parameter at line %d, col %d", arrow.Line, arrow.Col+1),
+			Msg:  fmt.Sprintf("fn requires at least one parameter at line %d, col %d", arrow.Line, arrow.Col+1),
 			Line: arrow.Line,
 			Col:  arrow.Col,
 		}
@@ -1316,7 +1316,7 @@ func (p *parser) parseExpr() (ast.Expr, error) {
 		return p.parseLet()
 	case lexer.TokIf:
 		return p.parseIf()
-	case lexer.TokFun:
+	case lexer.TokFn:
 		return p.parseFun()
 	case lexer.TokCase:
 		return p.parseCase()

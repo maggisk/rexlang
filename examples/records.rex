@@ -21,7 +21,7 @@ test "record equality" =
     let bob = Person { name = "Alice", age = 30 }
     assert (alice == bob)
     let carol = Person { name = "Carol", age = 25 }
-    assert (alice /= carol)
+    assert (alice != carol)
 
 test "partial pattern matching" =
     let justName = case alice of

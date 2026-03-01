@@ -233,17 +233,17 @@ let rec foldr f acc m =
 
 -- | Convert to a sorted list of (key, value) pairs.
 let toList m =
-    foldr (fun k v acc -> (k, v) :: acc) [] m
+    foldr (fn k v acc -> (k, v) :: acc) [] m
 
 
 -- | Get all keys in sorted order.
 let keys m =
-    foldr (fun k v acc -> k :: acc) [] m
+    foldr (fn k v acc -> k :: acc) [] m
 
 
 -- | Get all values in key order.
 let values m =
-    foldr (fun k v acc -> v :: acc) [] m
+    foldr (fn k v acc -> v :: acc) [] m
 
 
 -- | Build a map from a list of (key, value) pairs.
@@ -273,7 +273,7 @@ let rec map f m =
 
 -- | Keep only entries where the predicate returns true.
 let filter pred m =
-    foldl (fun k v acc ->
+    foldl (fn k v acc ->
         if pred k v then
             insert k v acc
         else
@@ -322,7 +322,7 @@ test "remove" =
 
 test "update" =
     let m = insert 1 10 empty
-    let m2 = update 1 (fun v -> v + 5) m
+    let m2 = update 1 (fn v -> v + 5) m
     assert (unwrap (lookup 1 m2) == 15)
 
 test "fromList and size" =
@@ -332,20 +332,20 @@ test "fromList and size" =
 
 test "map values" =
     let m = fromList [(1, 10), (2, 20)]
-    let m2 = map (fun v -> v * 2) m
+    let m2 = map (fn v -> v * 2) m
     assert (unwrap (lookup 1 m2) == 20)
     assert (unwrap (lookup 2 m2) == 40)
 
 test "filter" =
     let m = fromList [(1, 10), (2, 20), (3, 30)]
-    let m2 = filter (fun k v -> v > 15) m
+    let m2 = filter (fn k v -> v > 15) m
     assert (size m2 == 2)
     assert (not (member 1 m2))
     assert (member 2 m2)
 
 test "foldl sums values" =
     let m = fromList [(1, 10), (2, 20), (3, 30)]
-    assert (foldl (fun k v acc -> acc + v) 0 m == 60)
+    assert (foldl (fn k v acc -> acc + v) 0 m == 60)
 
 test "keys and values" =
     import std:List (length)

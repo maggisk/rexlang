@@ -19,7 +19,7 @@ func (e *LexError) Error() string {
 
 var keywords = map[string]bool{
 	"let": true, "rec": true, "and": true, "in": true,
-	"if": true, "then": true, "else": true, "fun": true,
+	"if": true, "then": true, "else": true, "fn": true,
 	"case": true, "type": true, "of": true, "import": true,
 	"export": true, "as": true, "trait": true, "impl": true,
 	"where": true, "test": true, "assert": true,
@@ -226,11 +226,15 @@ func Tokenize(source string) ([]Token, error) {
 
 		case c == '/':
 			pos++
+			tokens = append(tokens, Token{Kind: TokSlash, Line: tokLine, Col: tokCol})
+
+		case c == '!':
+			pos++
 			if pos < n && runes[pos] == '=' {
 				pos++
-				tokens = append(tokens, Token{Kind: TokSlashEq, Line: tokLine, Col: tokCol})
+				tokens = append(tokens, Token{Kind: TokBangEq, Line: tokLine, Col: tokCol})
 			} else {
-				tokens = append(tokens, Token{Kind: TokSlash, Line: tokLine, Col: tokCol})
+				return nil, lexErr("unexpected character: !")
 			}
 
 		case c == '=':

@@ -18,7 +18,7 @@ test "list operations" =
     let xs = [1, 2, 3]
     assert (length xs == 3)
     assert (length (map double xs) == 3)
-    assert (foldl (fun a b -> a + b) 0 (map double xs) == 12)
+    assert (foldl (fn a b -> a + b) 0 (map double xs) == 12)
 
 test "boolean logic" =
     assert (true && true)
