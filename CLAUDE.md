@@ -82,6 +82,7 @@ gofmt -w .
 - Example files in `examples/` end with a single expression whose value is asserted in `TestExampleFiles`
 - `gofmt -w .` before committing
 - Comments use `--` in `.rex` files
+- **Never commit or push unless explicitly asked** — each request is one-off, not a standing instruction
 
 ### `.rex` formatting style (Elm-inspired)
 
