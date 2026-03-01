@@ -1048,6 +1048,9 @@ func RunTests(source string, programArgs []string, extraBuiltins map[string]Valu
 			env = newEnv
 		}
 	}
+	if len(tests) == 0 {
+		return 0, 0, nil
+	}
 	passed, failed := 0, 0
 	for _, test := range tests {
 		testEnv := env.Clone()
@@ -1069,7 +1072,9 @@ func RunTests(source string, programArgs []string, extraBuiltins map[string]Valu
 			fmt.Printf("PASS  %s\n", test.Name)
 		}
 	}
-	fmt.Printf("%d passed, %d failed\n\n", passed, failed)
+	if len(tests) > 0 {
+		fmt.Printf("%d passed, %d failed\n", passed, failed)
+	}
 	return passed, failed, nil
 }
 
