@@ -127,7 +127,7 @@ type TypeDecl struct {
 
 type CtorDef struct {
 	Name     string
-	ArgTypes []string
+	ArgTypes []TySyntax
 }
 
 type ListLit struct{ Items []Expr }

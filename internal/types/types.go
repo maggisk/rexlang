@@ -85,6 +85,10 @@ func TResult(a, e Type) Type {
 	return TCon{Name: "Result", Args: []Type{a, e}}
 }
 
+func TPid(a Type) Type {
+	return TCon{Name: "Pid", Args: []Type{a}}
+}
+
 // ---------------------------------------------------------------------------
 // Substitution — map from TVar name to Type
 // ---------------------------------------------------------------------------

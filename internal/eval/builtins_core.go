@@ -725,6 +725,76 @@ func jsonValToRex(v interface{}) (Value, error) {
 	return nil, &RuntimeError{Msg: fmt.Sprintf("jsonParse: unexpected type %T", v)}
 }
 
+// ---------------------------------------------------------------------------
+// Process / actor builtins
+// ---------------------------------------------------------------------------
+
+func makeReceiveBuiltin(mb *Mailbox) Value {
+	return makeBuiltin("receive", func(_ Value) (Value, error) {
+		return <-mb.ch, nil
+	})
+}
+
+// ProcessBuiltins returns the five process primitives bound to the given process pid.
+func ProcessBuiltins(selfPid VPid) map[string]Value {
+	return map[string]Value{
+		"self":    selfPid,
+		"receive": makeReceiveBuiltin(selfPid.Mailbox),
+		"send": curried2("send", func(pidV, msgV Value) (Value, error) {
+			pid, ok := pidV.(VPid)
+			if !ok {
+				return nil, runtimeErr("send: expected Pid, got %s", ValueToString(pidV))
+			}
+			select {
+			case pid.Mailbox.ch <- msgV:
+			default:
+				return nil, runtimeErr("send: mailbox full (capacity %d)", cap(pid.Mailbox.ch))
+			}
+			return VUnit{}, nil
+		}),
+		"spawn": makeBuiltin("spawn", func(fnV Value) (Value, error) {
+			cl, ok := fnV.(VClosure)
+			if !ok {
+				return nil, runtimeErr("spawn: expected closure, got %s", ValueToString(fnV))
+			}
+			mb := newMailbox()
+			pid := VPid{Mailbox: mb, ID: mb.id}
+			procEnv := cl.Env.
+				Extend("self", pid).
+				Extend("receive", makeReceiveBuiltin(mb)).
+				Extend(cl.Param, VUnit{})
+			go func() {
+				Eval(procEnv, cl.Body) //nolint:errcheck
+			}()
+			return pid, nil
+		}),
+		"call": curried2("call", func(pidV, makeMsgV Value) (Value, error) {
+			pid, ok := pidV.(VPid)
+			if !ok {
+				return nil, runtimeErr("call: expected Pid, got %s", ValueToString(pidV))
+			}
+			msg, err := ApplyValue(makeMsgV, selfPid)
+			if err != nil {
+				return nil, err
+			}
+			select {
+			case pid.Mailbox.ch <- msg:
+			default:
+				return nil, runtimeErr("call: target mailbox full")
+			}
+			return <-selfPid.Mailbox.ch, nil
+		}),
+	}
+}
+
+// WithProcessBuiltins creates a fresh main-process mailbox and injects process
+// builtins into env, returning the extended env.
+func WithProcessBuiltins(env Env) Env {
+	mb := newMailbox()
+	pid := VPid{Mailbox: mb, ID: mb.id}
+	return env.ExtendMany(ProcessBuiltins(pid))
+}
+
 // BuiltinsForModule returns all builtins for a stdlib module.
 func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 	result := make(map[string]Value)
@@ -745,6 +815,13 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 	}
 	if name == "Json" {
 		for k, v := range JsonBuiltins() {
+			result[k] = v
+		}
+	}
+	if name == "Process" {
+		mb := newMailbox()
+		pid := VPid{Mailbox: mb, ID: mb.id}
+		for k, v := range ProcessBuiltins(pid) {
 			result[k] = v
 		}
 	}

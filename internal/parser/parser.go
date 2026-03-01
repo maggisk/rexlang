@@ -784,10 +784,24 @@ func (p *parser) parseTypeDecl() (ast.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		var argTypes []string
-		for p.peek().Kind == lexer.TokIdent && (p.caseArmCol < 0 || p.peek().Col > p.caseArmCol) {
-			argTypes = append(argTypes, p.peek().Value.(string))
-			p.advance()
+		var argTypes []ast.TySyntax
+		for {
+			if p.caseArmCol >= 0 && p.peek().Col <= p.caseArmCol {
+				break
+			}
+			tok := p.peek()
+			if tok.Kind == lexer.TokLParen || tok.Kind == lexer.TokLBrack {
+				ty, err := p.parseTypeSigAtom()
+				if err != nil {
+					return nil, err
+				}
+				argTypes = append(argTypes, ty)
+			} else if tok.Kind == lexer.TokIdent {
+				p.advance()
+				argTypes = append(argTypes, ast.TyName{Name: tok.Value.(string)})
+			} else {
+				break
+			}
 		}
 		ctors = append(ctors, ast.CtorDef{Name: ctorName, ArgTypes: argTypes})
 		if p.peek().Kind == lexer.TokPipe {

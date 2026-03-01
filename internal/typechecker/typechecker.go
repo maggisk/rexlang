@@ -787,6 +787,13 @@ func (tc *TypeChecker) resolveTypeSig(node ast.TySyntax, typeDefs map[string]typ
 	switch n := node.(type) {
 	case ast.TyName:
 		name := n.Name
+		lowercasePrims := map[string]types.Type{
+			"int": types.TInt, "float": types.TFloat,
+			"string": types.TString, "bool": types.TBool,
+		}
+		if t, ok := lowercasePrims[name]; ok {
+			return t, nil
+		}
 		if len(name) > 0 && name[0] >= 'a' && name[0] <= 'z' {
 			return types.TVar{Name: name}, nil
 		}
@@ -895,8 +902,8 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		newEnv := env.clone()
 		for _, ctor := range e.Ctors {
 			argTypes := make([]types.Type, len(ctor.ArgTypes))
-			for i, n := range ctor.ArgTypes {
-				t, err := tc.resolveType(n, newTypeDefs, paramEnv)
+			for i, argAST := range ctor.ArgTypes {
+				t, err := tc.resolveTypeSig(argAST, newTypeDefs)
 				if err != nil {
 					return InferToplevelResult{}, err
 				}
@@ -1382,11 +1389,32 @@ func jsonTypeEnv() TypeEnv {
 }
 
 // InitialTypeEnv returns the type environment with only globally available builtins.
-func InitialTypeEnv() TypeEnv {
+func processTypeEnv() TypeEnv {
+	a := types.TVar{Name: "a"}
+	b := types.TVar{Name: "b"}
 	return TypeEnv{
+		// spawn : (() -> b) -> Pid a
+		"spawn": types.Scheme{Vars: []string{"a", "b"}, Ty: types.TFun(types.TFun(types.TUnit, b), types.TPid(a))},
+		// send : Pid a -> a -> ()
+		"send": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TPid(a), types.TFun(a, types.TUnit))},
+		// receive : () -> a
+		"receive": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TUnit, a)},
+		// self : Pid a
+		"self": types.Scheme{Vars: []string{"a"}, Ty: types.TPid(a)},
+		// call : Pid b -> (Pid a -> b) -> a
+		"call": types.Scheme{Vars: []string{"a", "b"}, Ty: types.TFun(types.TPid(b), types.TFun(types.TFun(types.TPid(a), b), a))},
+	}
+}
+
+func InitialTypeEnv() TypeEnv {
+	env := TypeEnv{
 		"not":   types.Scheme{Ty: types.TFun(types.TBool, types.TBool)},
 		"error": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TString, types.TVar{Name: "a"})},
 	}
+	for k, v := range processTypeEnv() {
+		env[k] = v
+	}
+	return env
 }
 
 func typeEnvForModule(name string) TypeEnv {
@@ -1410,6 +1438,10 @@ func typeEnvForModule(name string) TypeEnv {
 		}
 	case "Json":
 		for k, v := range jsonTypeEnv() {
+			result[k] = v
+		}
+	case "Process":
+		for k, v := range processTypeEnv() {
 			result[k] = v
 		}
 	}
@@ -1463,6 +1495,8 @@ func loadPreludeTC() (*preludeTC, error) {
 		env = res.Env
 		typeDefs = res.TypeDefs
 	}
+	// Register Pid as a builtin parameterized type so type annotations can reference it.
+	typeDefs["Pid"] = types.TCon{Name: "Pid", Args: []types.Type{types.TVar{Name: "a"}}}
 	preludeTCCache = &preludeTC{Env: env, TypeDefs: typeDefs}
 	return preludeTCCache, nil
 }

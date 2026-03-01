@@ -22,6 +22,7 @@ stdlib/            .rex stdlib files (embedded in the binary via //go:embed)
   Env.rex          environment stdlib
   Result.rex       result stdlib
   Json.rex         JSON stdlib
+  Process.rex      actor-model concurrency stdlib
 go.mod             module github.com/maggisk/rexlang
 cmd/
   rex/main.go      CLI: run file, --test, REPL
@@ -71,7 +72,8 @@ gofmt -w .
 - **Pipeline**: source → `lexer.Tokenize()` → `parser.Parse()` → `typechecker.CheckProgram()` → `eval.RunProgram()`
 - **Language**: Go 1.24+. Single binary, no runtime dependency.
 - **Type inference**: `internal/typechecker` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types in `internal/types` (`TVar`, `TCon`, `Scheme`). Arithmetic operators (`+` `-` `*` `/`) require `Int` or `Float`; free type variables in arithmetic expressions default to `Int`. Use `toFloat` to convert before Float arithmetic. REPL shows `name : type` after each binding.
-- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod`, `VInstances`, `VModule` — all implement `Value` interface via `valueKind()`.
+- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod`, `VInstances`, `VModule`, `VPid` — all implement `Value` interface via `valueKind()`.
+- **Actors**: `VPid{Mailbox *Mailbox, ID int64}` is the process handle. `Mailbox.ch` is a buffered Go channel (capacity 1024). Five builtins: `spawn : (() -> b) -> Pid a`, `send : Pid a -> a -> ()`, `receive : () -> a`, `self : Pid a`, `call : Pid b -> (Pid a -> b) -> a`. Injected into every program's initial env automatically (no import required). `ProcessBuiltins(selfPid VPid)` returns them keyed to a specific mailbox. `WithProcessBuiltins(env Env) Env` creates a fresh main-process mailbox and injects them.
 - **Environment**: `Env = map[string]Value`; `Clone()` and `Extend()` for closure snapshots.
 - **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
 - **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
@@ -135,6 +137,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] IO — readFile, writeFile, appendFile, fileExists, listDir (return Result)
 - [x] Env — getEnv (Maybe), getEnvOr, args
 - [x] Json — parse (Python-backed), stringify (pure Rex), Json ADT, encode/decode helpers
+- [x] Process — actor model: `spawn`, `send`, `receive`, `self`, `call`; FIFO mailboxes (Go channels, cap 1024); `Pid a` opaque type; builtins injected into every program env automatically
 - JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
 - Date/Time (even basic)
 - Random numbers
@@ -165,7 +168,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **Error handling**: IO functions return `Result ok String` instead of raising; `getEnv` returns `Maybe String`; use `std:Result` or `std:Maybe` to handle failures
 - **Type system**: full Hindley-Milner inference, no annotations required
 - **Compilation target**: WasmGC — emit WAT, assemble with `wasm-tools`. Runs in browsers natively and on servers via WASI (no runtime install). ADTs map to WasmGC `struct` subtypes; TCO via `return_call`.
-- **Concurrency**: actors are a stdlib library, not a language feature. Start with a single-threaded cooperative scheduler (spawn/send/receive backed by message queues). Swap internals for real WASI threads when the spec matures — API stays the same.
+- **Concurrency**: actors are a stdlib library / set of builtins, not a language feature. `std:Process` ships five primitives (`spawn`, `send`, `receive`, `self`, `call`) as Go builtins injected into every program's env. `spawn` runs a Rex closure in a new goroutine with its own mailbox; `call` implements synchronous request-reply. API stable; internals could swap for WASI threads later.
 - **No hot reloading** for now
 - **Exhaustiveness checking**: static pass in `typecheck.py` (post-HM); `__ctor_families__` registry in type env tracks constructor siblings; `eval.py` has no `__types__` registry
 - **No guards in pattern matching** (not planned)
@@ -177,3 +180,4 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **Mutual recursion in types**: `_preregister_types` pre-pass in `check_program`, `check_module`, `_load_prelude_tc` registers all TypeDecl names before resolving constructors, enabling mutually recursive ADTs.
 - **std:Json**: `parse : String -> Result Json String` is Python-backed (`jsonParse` builtin in `builtins/json.py`). `stringify` is pure Rex. The Json ADT uses three mutually recursive types (`Json`, `JsonList`, `JsonObj`). `stringify` nests its helpers inside itself to avoid forward-reference issues. Json.rex imports `std:String (replace, toString)` for `escapeStr`.
 - **Stdlib test runner**: `run_tests` in `eval.py` accepts `_extra_type_env`/`_extra_builtins` for stdlib module context. `main.py --test` detects stdlib paths and injects module builtins automatically. `test "name" = body` declares inline test blocks; `assert expr` checks a Bool at runtime. `--test` flag activates test runner; normal execution skips tests. Tests are type-checked in all modes but only evaluated in test mode. Test body env is isolated (bindings don't leak).
+- **std:Process**: Five builtins (`spawn`, `send`, `receive`, `self`, `call`) implemented entirely in Go (`ProcessBuiltins(selfPid VPid)`). `call` is Go-only because it needs to close over the caller's `selfPid` — a Rex implementation would capture the module-load-time mailbox instead. `spawn` injects per-goroutine `self` and `receive` into the spawned closure's env. `call` is `Pid b -> (Pid a -> b) -> a` — the message construction function receives the caller's pid. **Important**: recursive loops inside `spawn` must use `in` syntax (`let rec loop n = ... in loop 0`) so the loop body doesn't greedily consume the initial call. Capture `self` before `spawn` if the goroutine needs to reply to the spawning process.

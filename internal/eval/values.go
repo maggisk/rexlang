@@ -4,6 +4,7 @@ package eval
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/maggisk/rexlang/internal/ast"
 )
@@ -61,6 +62,29 @@ type VInstances struct {
 	M map[string]Value // key: "TraitName:TypeName:MethodName"
 }
 
+// ---------------------------------------------------------------------------
+// Process / actor types
+// ---------------------------------------------------------------------------
+
+var pidCounter int64
+
+// Mailbox is a buffered channel used as an actor's message queue.
+type Mailbox struct {
+	ch chan Value
+	id int64
+}
+
+func newMailbox() *Mailbox {
+	id := atomic.AddInt64(&pidCounter, 1)
+	return &Mailbox{ch: make(chan Value, 1024), id: id}
+}
+
+// VPid is a process identifier (an opaque handle to an actor mailbox).
+type VPid struct {
+	Mailbox *Mailbox
+	ID      int64
+}
+
 func (VInt) valueKind()         {}
 func (VInstances) valueKind()   {}
 func (VFloat) valueKind()       {}
@@ -73,8 +97,9 @@ func (VCtor) valueKind()        {}
 func (VCtorFn) valueKind()      {}
 func (VClosure) valueKind()     {}
 func (VBuiltin) valueKind()     {}
-func (VModule) valueKind()      { }
-func (VTraitMethod) valueKind() { }
+func (VModule) valueKind()      {}
+func (VTraitMethod) valueKind() {}
+func (VPid) valueKind()         {}
 
 // RuntimeError is a runtime error.
 type RuntimeError struct{ Msg string }
@@ -182,6 +207,10 @@ func StructuralEq(l, r Value) bool {
 			}
 		}
 		return true
+	case VPid:
+		if b, ok := r.(VPid); ok {
+			return a.ID == b.ID
+		}
 	}
 	return false
 }
@@ -269,6 +298,8 @@ func ValueToString(v Value) string {
 		return fmt.Sprintf("<module %s>", val.Name)
 	case VTraitMethod:
 		return fmt.Sprintf("<trait method %s.%s>", val.TraitName, val.MethodName)
+	case VPid:
+		return fmt.Sprintf("<pid %d>", val.ID)
 	}
 	panic(fmt.Sprintf("unknown value type: %T", v))
 }

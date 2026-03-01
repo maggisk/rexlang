@@ -10,6 +10,36 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// ApplyValue — apply a function value to an argument (used by call builtin)
+// ---------------------------------------------------------------------------
+
+// ApplyValue applies fn to arg, handling closures, builtins, and constructors.
+func ApplyValue(fn, arg Value) (Value, error) {
+	switch f := fn.(type) {
+	case VClosure:
+		return Eval(f.Env.Extend(f.Param, arg), f.Body)
+	case VBuiltin:
+		return f.Fn(arg)
+	case VCtorFn:
+		if f.Remaining == 1 {
+			combined := make([]Value, 1+len(f.AccArgs))
+			combined[0] = arg
+			copy(combined[1:], f.AccArgs)
+			for i, j := 0, len(combined)-1; i < j; i, j = i+1, j-1 {
+				combined[i], combined[j] = combined[j], combined[i]
+			}
+			return VCtor{Name: f.Name, Args: combined}, nil
+		}
+		return VCtorFn{
+			Name:      f.Name,
+			Remaining: f.Remaining - 1,
+			AccArgs:   append([]Value{arg}, f.AccArgs...),
+		}, nil
+	}
+	return nil, runtimeErr("cannot apply %s as a function", ValueToString(fn))
+}
+
+// ---------------------------------------------------------------------------
 // Binop evaluation
 // ---------------------------------------------------------------------------
 
@@ -790,7 +820,7 @@ func initialEnvForPrelude() Env {
 	return env
 }
 
-// InitialEnv returns the full env with all builtins.
+// InitialEnv returns the full env with all builtins (including a fresh main-process mailbox).
 func InitialEnv(programArgs []string) Env {
 	env := Env{}
 	for k, v := range CoreBuiltins() {
@@ -808,7 +838,7 @@ func InitialEnv(programArgs []string) Env {
 	for k, v := range EnvBuiltins(programArgs) {
 		env[k] = v
 	}
-	return env
+	return WithProcessBuiltins(env)
 }
 
 // ---------------------------------------------------------------------------
@@ -825,6 +855,7 @@ func RunProgram(source string, programArgs []string) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
+	env = WithProcessBuiltins(env)
 	var last Value = VBool{V: false}
 	for _, expr := range exprs {
 		val, newEnv, err := EvalToplevel(env, expr, programArgs)
@@ -847,6 +878,7 @@ func RunTests(source string, programArgs []string, extraBuiltins map[string]Valu
 	if err != nil {
 		return 0, 0, err
 	}
+	env = WithProcessBuiltins(env)
 	for k, v := range extraBuiltins {
 		env[k] = v
 	}

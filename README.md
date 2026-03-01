@@ -8,7 +8,7 @@ A functional programming language with algebraic data types, pattern matching, a
 go build -o rex ./cmd/rex/
 
 ./rex examples/factorial.rex      # run a file
-./rex --test examples/testing.rex # run tests
+./rex --test examples/*.rex # run tests
 ./rex                             # start the REPL
 ```
 
@@ -183,11 +183,6 @@ else
 ## Running tests
 
 ```bash
-./rex --test examples/testing.rex
-./rex --test stdlib/List.rex
-./rex --test stdlib/Map.rex
-./rex --test stdlib/Result.rex
-./rex --test stdlib/Json.rex
 ./rex --test stdlib/*.rex
 go test ./...
 ```
