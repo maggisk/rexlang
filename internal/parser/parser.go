@@ -971,6 +971,9 @@ func (p *parser) parseTypeSigAtom() (ast.TySyntax, error) {
 		if isUppercase(name) {
 			var args []ast.TySyntax
 			for p.peek().Kind == lexer.TokIdent && p.peek().Kind != lexer.TokArrow {
+				if p.caseArmCol >= 0 && p.peek().Col <= p.caseArmCol {
+					break
+				}
 				argTok := p.peek()
 				argName := argTok.Value.(string)
 				if argName == "where" {
@@ -1176,6 +1179,22 @@ func (p *parser) parseExpr() (ast.Expr, error) {
 // Public API
 // ---------------------------------------------------------------------------
 
+// parseTypeAnnotation parses "name : TypeSig" at the top level.
+func (p *parser) parseTypeAnnotation() (ast.Expr, error) {
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(lexer.TokColon); err != nil {
+		return nil, err
+	}
+	ty, err := p.parseTypeSig()
+	if err != nil {
+		return nil, err
+	}
+	return ast.TypeAnnotation{Name: name, Type: ty}, nil
+}
+
 // ParseTokens parses a token list into a list of top-level expressions.
 func ParseTokens(tokens []lexer.Token) ([]ast.Expr, error) {
 	p := &parser{tokens: tokens, pos: 0, caseArmCol: -1}
@@ -1185,6 +1204,16 @@ func ParseTokens(tokens []lexer.Token) ([]ast.Expr, error) {
 			break
 		}
 		p.caseArmCol = 0
+		// Check for type annotation: lowercase ident followed by ':'
+		if p.peek().Kind == lexer.TokIdent && !isUppercase(p.peek().Value.(string)) &&
+			p.pos+1 < len(p.tokens) && p.tokens[p.pos+1].Kind == lexer.TokColon {
+			ann, err := p.parseTypeAnnotation()
+			if err != nil {
+				return nil, err
+			}
+			exprs = append(exprs, ann)
+			continue
+		}
 		e, err := p.parseExpr()
 		if err != nil {
 			return nil, err

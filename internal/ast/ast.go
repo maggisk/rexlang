@@ -200,6 +200,13 @@ type Assert struct {
 	Line int
 }
 
+// Type annotations (optional, for documentation / checking)
+
+type TypeAnnotation struct {
+	Name string
+	Type TySyntax
+}
+
 // Implement exprNode for all expression types
 func (IntLit) exprNode()       {}
 func (FloatLit) exprNode()     {}
@@ -226,7 +233,8 @@ func (Export) exprNode()       {}
 func (TraitDecl) exprNode()    {}
 func (ImplDecl) exprNode()     {}
 func (TestDecl) exprNode()     {}
-func (Assert) exprNode()       {}
+func (Assert) exprNode()          {}
+func (TypeAnnotation) exprNode() {}
 
 // ---------------------------------------------------------------------------
 // Type syntax nodes

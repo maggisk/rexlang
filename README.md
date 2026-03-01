@@ -87,6 +87,27 @@ let version = 1
 
 Expressions inside `${...}` are converted to strings via the `Show` trait. Strings without `${` are unchanged. Use `\$` to produce a literal `$`.
 
+### Type annotations
+
+Type annotations are optional — RexLang has full type inference. But they serve as documentation and catch mistakes early:
+
+```
+double : Int -> Int
+let double x = x * 2
+
+identity : a -> a
+let identity x = x
+
+fact : Int -> Int
+let rec fact n =
+    if n == 0 then
+        1
+    else
+        n * fact (n - 1)
+```
+
+Annotations go on a separate line before the `let` binding. If the annotation doesn't match the inferred type, you get a clear error. Annotations can also constrain polymorphic types — `identity : Int -> Int` narrows `a -> a` to `Int -> Int`.
+
 ### Traits (typeclasses)
 
 ```
@@ -192,6 +213,7 @@ else
 | `examples/math.rex`             | Math stdlib                              |
 | `examples/floats.rex`           | Float arithmetic                         |
 | `examples/modulo.rex`           | Modulo operator                          |
+| `examples/annotations.rex`      | Optional type annotations                |
 | `examples/actors.rex`           | Actor-model concurrency with `std:Process` |
 | `examples/testing.rex`          | Built-in test framework                  |
 
@@ -210,7 +232,7 @@ go test ./...
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - [ ] Type aliases — `type Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation
-- [ ] Type annotations — optional `let f : Int -> Int`
+- [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - [ ] User modules — import your own `.rex` files
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
 

@@ -794,6 +794,9 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 	case ast.TestDecl:
 		return VUnit{}, env, nil
 
+	case ast.TypeAnnotation:
+		return VUnit{}, env, nil
+
 	case ast.LetRec:
 		if e.InExpr == nil {
 			sharedEnv := env.Clone()

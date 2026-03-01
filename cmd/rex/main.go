@@ -207,7 +207,7 @@ func repl() {
 
 			// Skip display for declarations
 			switch expr.(type) {
-			case ast.TypeDecl, ast.Import, ast.Export, ast.TraitDecl, ast.ImplDecl, ast.TestDecl:
+			case ast.TypeDecl, ast.Import, ast.Export, ast.TraitDecl, ast.ImplDecl, ast.TestDecl, ast.TypeAnnotation:
 				continue
 			}
 

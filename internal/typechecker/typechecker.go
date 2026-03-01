@@ -944,6 +944,15 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		newEnv["__ctor_families__"] = ctorFamilies
 		return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: newEnv, TypeDefs: newTypeDefs}, nil
 
+	case ast.TypeAnnotation:
+		resolved, err := tc.resolveTypeSig(e.Type, typeDefs)
+		if err != nil {
+			return InferToplevelResult{}, err
+		}
+		gen := types.Generalize(env, resolved)
+		newEnv := env.extend("__ann:"+e.Name, gen)
+		return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: newEnv, TypeDefs: typeDefs}, nil
+
 	case ast.Let:
 		if e.InExpr == nil {
 			s, ty, newEnv, err := tc.toplevelLet(env, typeDefs, subst, e)
@@ -958,6 +967,20 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 			s, genEnv, newEnv, err := tc.inferLetrecCore(env, typeDefs, subst, e.Bindings)
 			if err != nil {
 				return InferToplevelResult{}, err
+			}
+			// Check annotations for each binding
+			for _, b := range e.Bindings {
+				annScheme, err := tc.checkAnnotation(newEnv, genEnv[b.Name], b.Name)
+				if err != nil {
+					return InferToplevelResult{}, err
+				}
+				if annScheme != nil {
+					newEnv[b.Name] = *annScheme
+				}
+			}
+			// Clean up annotation keys
+			for _, b := range e.Bindings {
+				delete(newEnv, "__ann:"+b.Name)
 			}
 			lastName := e.Bindings[len(e.Bindings)-1].Name
 			return InferToplevelResult{Subst: s, Ty: types.ApplySubst(s, genEnv[lastName].Ty), Env: newEnv, TypeDefs: typeDefs}, nil
@@ -1150,6 +1173,29 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 	return InferToplevelResult{Subst: s, Ty: ty, Env: env, TypeDefs: typeDefs}, nil
 }
 
+// checkAnnotation checks if a pending annotation matches the inferred scheme.
+// Returns the annotation scheme if it exists (to constrain the type), or nil.
+func (tc *TypeChecker) checkAnnotation(env TypeEnv, inferred types.Scheme, name string) (*types.Scheme, error) {
+	annKey := "__ann:" + name
+	annVal, ok := env[annKey]
+	if !ok {
+		return nil, nil
+	}
+	annScheme, ok := annVal.(types.Scheme)
+	if !ok {
+		return nil, nil
+	}
+	annTy := tc.instantiate(annScheme)
+	infTy := tc.instantiate(inferred)
+	if _, err := types.Unify(annTy, infTy); err != nil {
+		return nil, &types.TypeError{Msg: fmt.Sprintf(
+			"type annotation mismatch for '%s': declared %s but inferred %s",
+			name, types.TypeToString(annScheme.Ty), types.TypeToString(inferred.Ty),
+		)}
+	}
+	return &annScheme, nil
+}
+
 func (tc *TypeChecker) toplevelLet(env TypeEnv, typeDefs map[string]types.Type, subst types.Subst, e ast.Let) (types.Subst, types.Type, TypeEnv, error) {
 	if e.Recursive {
 		tv := tc.fresh()
@@ -1165,7 +1211,15 @@ func (tc *TypeChecker) toplevelLet(env TypeEnv, typeDefs map[string]types.Type, 
 		s12 := types.ComposeSubst(s2, s1)
 		env2 := applySubstEnv(s12, env)
 		gen := types.Generalize(env2, types.ApplySubst(s12, t1))
+		annScheme, err := tc.checkAnnotation(env2, gen, e.Name)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if annScheme != nil {
+			gen = *annScheme
+		}
 		newEnv := env2.extend(e.Name, gen)
+		delete(newEnv, "__ann:"+e.Name)
 		return s12, types.ApplySubst(s12, gen.Ty), newEnv, nil
 	}
 	s1, t1, err := tc.infer(env, typeDefs, subst, e.Body)
@@ -1174,7 +1228,15 @@ func (tc *TypeChecker) toplevelLet(env TypeEnv, typeDefs map[string]types.Type, 
 	}
 	env1 := applySubstEnv(s1, env)
 	gen := types.Generalize(env1, types.ApplySubst(s1, t1))
+	annScheme, err := tc.checkAnnotation(env1, gen, e.Name)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if annScheme != nil {
+		gen = *annScheme
+	}
 	newEnv := env1.extend(e.Name, gen)
+	delete(newEnv, "__ann:"+e.Name)
 	return s1, types.ApplySubst(s1, gen.Ty), newEnv, nil
 }
 

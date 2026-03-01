@@ -80,6 +80,7 @@ gofmt -w .
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
 - **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded with `Eq`, `Ord`, `Show`. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
 - **String interpolation**: `"hello ${expr}"` — lexer emits `TokInterp` with `[]InterpPart`; parser produces `ast.StringInterp{Parts}`; eval dispatches `Show` trait for conversion. `\$` escapes literal `$`. Nested interpolation (`"${f "inner ${x}"}"`) supported via mutual recursion in lexer (`skipInterp`/`skipString`).
+- **Type annotations**: `name : TypeSig` on a separate line before `let`. Parser detects lowercase ident + `:` in `ParseTokens`. Typechecker stores annotation as `__ann:name` in env; `toplevelLet` checks inferred type against annotation via `checkAnnotation()` (instantiate both, unify). If annotation exists and matches, it replaces the generalized type in env (constraining polymorphism). Eval ignores annotations (`VUnit`).
 - **Test framework**: `test "name" = body` / `assert expr`. `--test` flag runs them.
 - **Stdlib embedding**: `.rex` files embedded via `//go:embed` in `internal/stdlib/embed.go`.
 
@@ -146,7 +147,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 ### Language ergonomics
 - [x] Traits v1 — `trait`/`impl`, runtime dispatch, `Eq`/`Ord` in Prelude
 - [x] Test framework — `test "name" = …` / `assert expr`, `--test` flag
-- Type annotations — optional `let f : Int -> Int`, documentation aid
+- [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`)
 
 ### Error experience
@@ -167,7 +168,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 
 - **`()` unit**: zero-element tuple; `TUnit = TCon("Unit", [])` already existed; added `ast.Unit`, `ast.PUnit`, `VUnit`, `parse_atom`/`parse_atom_pattern` handling
 - **Error handling**: IO functions return `Result ok String` instead of raising; `getEnv` returns `Maybe String`; use `std:Result` or `std:Maybe` to handle failures
-- **Type system**: full Hindley-Milner inference, no annotations required
+- **Type system**: full Hindley-Milner inference; optional Elm-style annotations (`name : TypeSig` on separate line before `let`)
 - **Compilation target**: WasmGC — emit WAT, assemble with `wasm-tools`. Runs in browsers natively and on servers via WASI (no runtime install). ADTs map to WasmGC `struct` subtypes; TCO via `return_call`.
 - **Concurrency**: actors are a stdlib library / set of builtins, not a language feature. `std:Process` ships five primitives (`spawn`, `send`, `receive`, `self`, `call`) as Go builtins injected into every program's env. `spawn` runs a Rex closure in a new goroutine with its own mailbox; `call` implements synchronous request-reply. API stable; internals could swap for WASI threads later.
 - **No hot reloading** for now
