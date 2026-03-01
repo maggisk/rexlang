@@ -81,18 +81,80 @@ func Tokenize(source string) ([]Token, error) {
 		switch {
 		case unicode.IsDigit(c):
 			start := pos
-			for pos < n && unicode.IsDigit(runes[pos]) {
+			// Check for 0x, 0o, 0b prefixes
+			if c == '0' && pos+1 < n {
+				prefix := runes[pos+1]
+				if prefix == 'x' || prefix == 'X' || prefix == 'o' || prefix == 'O' || prefix == 'b' || prefix == 'B' {
+					pos += 2 // skip "0x" etc.
+					digitStart := pos
+					for pos < n && (isHexDigit(runes[pos], prefix) || runes[pos] == '_') {
+						pos++
+					}
+					raw := string(runes[digitStart:pos])
+					if err := validateUnderscores(raw); err != nil {
+						return nil, lexErr(err.Error())
+					}
+					stripped := stripUnderscores(raw)
+					if len(stripped) == 0 {
+						return nil, lexErr(fmt.Sprintf("no digits after 0%c prefix", prefix))
+					}
+					var base int
+					switch prefix {
+					case 'x', 'X':
+						base = 16
+					case 'o', 'O':
+						base = 8
+					case 'b', 'B':
+						base = 2
+					}
+					val, err := strconv.ParseInt(stripped, base, 64)
+					if err != nil {
+						return nil, lexErr(fmt.Sprintf("invalid number literal: %s", string(runes[start:pos])))
+					}
+					tokens = append(tokens, Token{Kind: TokInt, Value: int(val), Line: tokLine, Col: tokCol})
+					break
+				}
+			}
+			// Decimal integer or float
+			for pos < n && (unicode.IsDigit(runes[pos]) || runes[pos] == '_') {
 				pos++
 			}
 			if pos < n && runes[pos] == '.' {
-				pos++
-				for pos < n && unicode.IsDigit(runes[pos]) {
+				intPart := string(runes[start:pos])
+				if err := validateUnderscores(intPart); err != nil {
+					return nil, lexErr(err.Error())
+				}
+				if len(intPart) > 0 && intPart[len(intPart)-1] == '_' {
+					return nil, lexErr("underscore before decimal point")
+				}
+				pos++ // skip '.'
+				dotPos := pos
+				for pos < n && (unicode.IsDigit(runes[pos]) || runes[pos] == '_') {
 					pos++
 				}
-				f, _ := strconv.ParseFloat(string(runes[start:pos]), 64)
+				fracPart := string(runes[dotPos:pos])
+				if len(fracPart) > 0 && fracPart[0] == '_' {
+					return nil, lexErr("underscore after decimal point")
+				}
+				if err := validateUnderscores(fracPart); err != nil {
+					return nil, lexErr(err.Error())
+				}
+				full := stripUnderscores(string(runes[start:pos]))
+				f, err := strconv.ParseFloat(full, 64)
+				if err != nil {
+					return nil, lexErr(fmt.Sprintf("invalid float literal: %s", string(runes[start:pos])))
+				}
 				tokens = append(tokens, Token{Kind: TokFloat, Value: f, Line: tokLine, Col: tokCol})
 			} else {
-				i, _ := strconv.Atoi(string(runes[start:pos]))
+				raw := string(runes[start:pos])
+				if err := validateUnderscores(raw); err != nil {
+					return nil, lexErr(err.Error())
+				}
+				stripped := stripUnderscores(raw)
+				i, err := strconv.Atoi(stripped)
+				if err != nil {
+					return nil, lexErr(fmt.Sprintf("invalid integer literal: %s", string(runes[start:pos])))
+				}
 				tokens = append(tokens, Token{Kind: TokInt, Value: i, Line: tokLine, Col: tokCol})
 			}
 
@@ -377,6 +439,49 @@ func skipInterp(runes []rune, pos *int, n int) error {
 			if err := skipString(runes, pos, n); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// isHexDigit checks if r is a valid digit for the given prefix (x/o/b).
+func isHexDigit(r rune, prefix rune) bool {
+	switch prefix {
+	case 'x', 'X':
+		return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+	case 'o', 'O':
+		return r >= '0' && r <= '7'
+	case 'b', 'B':
+		return r == '0' || r == '1'
+	}
+	return false
+}
+
+// stripUnderscores removes all '_' characters from s.
+func stripUnderscores(s string) string {
+	out := make([]byte, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] != '_' {
+			out = append(out, s[i])
+		}
+	}
+	return string(out)
+}
+
+// validateUnderscores checks for leading, trailing, or double underscores.
+func validateUnderscores(s string) error {
+	if len(s) == 0 {
+		return nil
+	}
+	if s[0] == '_' {
+		return fmt.Errorf("leading underscore in number literal")
+	}
+	if s[len(s)-1] == '_' {
+		return fmt.Errorf("trailing underscore in number literal")
+	}
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] == '_' && s[i+1] == '_' {
+			return fmt.Errorf("double underscore in number literal")
 		}
 	}
 	return nil

@@ -19,11 +19,19 @@ go build -o rex ./cmd/rex/
 ### Primitives
 
 ```
-42        -- Int
-3.14      -- Float
-"hello"   -- String
-true      -- Bool
-()        -- Unit
+42          -- Int
+3.14        -- Float
+"hello"     -- String
+true        -- Bool
+()          -- Unit
+
+-- Number literal formats
+0xFF        -- hex Int (255)
+0o77        -- octal Int (63)
+0b1010      -- binary Int (10)
+1_000_000   -- underscores for readability
+0xFF_00_FF  -- underscores work with all formats
+3.141_592   -- underscores in floats too
 ```
 
 ### Let bindings and functions
@@ -317,6 +325,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | `examples/actors.rex` | Actor-model concurrency with `std:Process` |
 | `examples/parallel.rex` | Parallel map with `std:Parallel` |
 | `examples/multiline.rex` | Multi-line strings with `"""` |
+| `examples/number_literals.rex` | Hex, octal, binary literals and underscore separators |
 | `examples/let_block.rex` | Multi-binding let blocks (Elm-style) |
 | `examples/testing.rex` | Built-in test framework |
 

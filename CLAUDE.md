@@ -114,7 +114,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - [x] Type aliases — `type Name = String` (lightweight, distinct from ADTs)
 - [x] Multi-line strings — `"""..."""` triple-quoted, first newline stripped, escapes and interpolation work as normal
-- Number literals — hex, underscores (`1_000_000`)
+- [x] Number literals — hex (`0xFF`), octal (`0o77`), binary (`0b1010`), underscores (`1_000_000`)
 - Char type vs expanded String — decide later
 
 ### Module system
