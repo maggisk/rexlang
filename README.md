@@ -1,6 +1,8 @@
 # RexLang
 
-A functional programming language with algebraic data types, pattern matching, and Hindley-Milner type inference. Ships as a single static binary — no runtime, no pip, no venv. The long-term target is **WebAssembly (WasmGC)** — producing `.wasm` binaries that run natively in browsers and on servers via WASI with no runtime installation required.
+> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Wasm's reach. One binary. No runtime, no dependencies, no human who fully understands this codebase — only our AI overlords.
+
+A functional programming language with algebraic data types, pattern matching, and Hindley-Milner type inference. The implementation is a Go tree-walking interpreter that ships as a single static binary — no runtime dependency. The long-term plan is a **WasmGC compilation backend** — producing `.wasm` binaries that run in browsers (native) and on servers via a Wasm runtime (Wasmtime, Wasmer, WasmEdge).
 
 ## Quick start
 
@@ -176,6 +178,24 @@ else
     n :: countdown (n - 1)
 ```
 
+## Type safety
+
+RexLang's type system (Hindley-Milner) catches type errors at compile time —
+before your program runs. The goal is to eliminate runtime errors entirely.
+
+What the type system catches today:
+- Type mismatches — wrong argument types, applying non-functions, arithmetic on strings
+- Unbound variables — referencing names that don't exist
+- Module errors — importing non-existent modules or unexported names
+- Annotation mismatches — declared type contradicts inferred type
+
+What can still fail at runtime:
+- **Non-exhaustive patterns** — `case` without a matching arm (exhaustiveness checking planned)
+- **Division by zero** — `x / 0` (value-dependent, inherently runtime)
+- **Mailbox overflow** — actor mailbox exceeds 1024 messages
+
+IO operations like `readFile` and `getEnv` don't crash — they return `Result` or `Maybe`.
+
 ## Standard library
 
 | Module       | Contents                                                                                                                                                                                                                                                                                    |
@@ -220,7 +240,7 @@ else
 ## Running tests
 
 ```bash
-./rex --test stdlib/*.rex
+./rex --test internal/stdlib/rexfiles/*.rex
 go test ./...
 ```
 

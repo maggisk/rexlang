@@ -6,23 +6,12 @@
 
 ## Project overview
 
-RexLang is a functional language with algebraic data types and pattern matching. The implementation is a Go tree-walking interpreter that ships as a single static binary — no runtime, no pip, no venv. The long-term plan is a **WasmGC compilation backend** — producing `.wasm` binaries that run in browsers (native) and on servers via WASI (Wasmtime/Wasmer/WasmEdge, no runtime install required).
+RexLang is a functional language with algebraic data types and pattern matching. The implementation is a Go tree-walking interpreter that ships as a single static binary — no runtime dependency. The long-term plan is a **WasmGC compilation backend** — producing `.wasm` binaries that run in browsers (native) and on servers via a Wasm runtime (Wasmtime, Wasmer, WasmEdge).
 
 ## Repository layout
 
 ```
 examples/          .rex example programs (one per feature)
-stdlib/            .rex stdlib files (embedded in the binary via //go:embed)
-  Prelude.rex      auto-loaded prelude (Maybe type, Ordering type, Eq/Ord traits + instances for Int/Float/String/Bool)
-  List.rex         list stdlib
-  Map.rex          sorted map stdlib — AVL tree using Ord trait
-  Math.rex         math stdlib
-  String.rex       string stdlib
-  IO.rex           filesystem stdlib
-  Env.rex          environment stdlib
-  Result.rex       result stdlib
-  Json.rex         JSON stdlib
-  Process.rex      actor-model concurrency stdlib
 go.mod             module github.com/maggisk/rexlang
 cmd/
   rex/main.go      CLI: run file, --test, REPL
@@ -38,8 +27,7 @@ internal/
     builtins_core.go  All builtins: core, math, string, IO, env, JSON
   stdlib/
     embed.go       //go:embed rexfiles/*.rex; Source(name) string
-    rexfiles/      .rex files for embedding
-python/            Python reference implementation (kept for reference)
+    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Process)
 ```
 
 ## Development commands
@@ -55,7 +43,7 @@ go build -o rex ./cmd/rex/
 
 # run tests in a .rex file
 ./rex --test examples/testing.rex
-./rex --test stdlib/List.rex
+./rex --test internal/stdlib/rexfiles/List.rex
 
 # REPL (blank line to eval, Ctrl-D to exit)
 ./rex
@@ -88,8 +76,8 @@ gofmt -w .
 
 - Every new language feature needs: lexer token (if needed) + AST node + parser rule + eval case + tests + example file
 - Example files in `examples/` end with a single expression whose value is asserted in `TestExampleFiles`
-- `ruff format` before committing; `ruff check` should be clean
-- Comments use `--` in `.rex` files; `#` in Python source
+- `gofmt -w .` before committing
+- Comments use `--` in `.rex` files
 
 ### `.rex` formatting style (Elm-inspired)
 
@@ -138,7 +126,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Math — abs, min, max, pow, trig, log, exp, pi, e, clamp, …
 - [x] IO — readFile, writeFile, appendFile, fileExists, listDir (return Result)
 - [x] Env — getEnv (Maybe), getEnvOr, args
-- [x] Json — parse (Python-backed), stringify (pure Rex), Json ADT, encode/decode helpers
+- [x] Json — parse (Go-backed), stringify (pure Rex), Json ADT, encode/decode helpers
 - [x] Process — actor model: `spawn`, `send`, `receive`, `self`, `call`; FIFO mailboxes (Go channels, cap 1024); `Pid a` opaque type; builtins injected into every program env automatically
 - JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
 - Date/Time (even basic)
@@ -159,8 +147,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - WasmGC backend: emit WAT (WebAssembly Text) → `wasm-tools` assemble → `.wasm`
 
 ### Before going public
-- `pyproject.toml` + installable CLI (`rexlang` command)
-- Ruff linting config
+- `go install` support for the `rex` CLI
 - Polish README (installation instructions, more examples)
 - REPL history (`readline` + `~/.rexlang_history`)
 
@@ -169,18 +156,18 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **`()` unit**: zero-element tuple; `TUnit = TCon("Unit", [])` already existed; added `ast.Unit`, `ast.PUnit`, `VUnit`, `parse_atom`/`parse_atom_pattern` handling
 - **Error handling**: IO functions return `Result ok String` instead of raising; `getEnv` returns `Maybe String`; use `std:Result` or `std:Maybe` to handle failures
 - **Type system**: full Hindley-Milner inference; optional Elm-style annotations (`name : TypeSig` on separate line before `let`)
-- **Compilation target**: WasmGC — emit WAT, assemble with `wasm-tools`. Runs in browsers natively and on servers via WASI (no runtime install). ADTs map to WasmGC `struct` subtypes; TCO via `return_call`.
+- **Compilation target**: WasmGC — emit WAT, assemble with `wasm-tools`. Runs in browsers natively and on servers via a Wasm runtime (Wasmtime/Wasmer/WasmEdge). ADTs map to WasmGC `struct` subtypes; TCO via `return_call`.
 - **Concurrency**: actors are a stdlib library / set of builtins, not a language feature. `std:Process` ships five primitives (`spawn`, `send`, `receive`, `self`, `call`) as Go builtins injected into every program's env. `spawn` runs a Rex closure in a new goroutine with its own mailbox; `call` implements synchronous request-reply. API stable; internals could swap for WASI threads later.
 - **No hot reloading** for now
-- **Exhaustiveness checking**: static pass in `typecheck.py` (post-HM); `__ctor_families__` registry in type env tracks constructor siblings; `eval.py` has no `__types__` registry
+- **Exhaustiveness checking**: planned static pass (post-HM); `__ctor_families__` registry in type env tracks constructor siblings
 - **No guards in pattern matching** (not planned)
-- **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to `python/rexlang/stdlib/`. Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
+- **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to embedded stdlib files (`internal/stdlib/rexfiles/`). Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
 - **`length` name collision**: resolved via qualified imports — `import std:List as L` and `import std:String as S` then use `L.length` vs `S.length`.
 - **Traits v1**: `trait`/`impl` with Rust-style naming. Single-parameter traits only. Runtime dispatch (no type-level constraints). Prelude auto-loaded with `Ordering`, `Eq`, `Ord`, `Show` and instances for `Int`, `Float`, `String`, `Bool`. Comparison operators (`<`, `>`, `<=`, `>=`) extended to String (lexicographic) and Bool (`false < true`). `where` is a keyword.
 - **String interpolation**: `"hello ${expr}"` syntax. Lexer scans `${...}` with mutual recursion (`skipInterp`/`skipString`) to handle nested strings; emits `TokInterp` containing `[]InterpPart`. Parser produces `ast.StringInterp{Parts []Expr}`. Typechecker allows any type per part, returns `TString`. Eval dispatches `Show:TypeName:show` from `__instances__` for each part (short-circuits VString). `\$` produces literal `$`. Strings without `${` produce normal `TokString` (backward compatible). `showInt`/`showFloat` builtins in CoreBuiltins + InitialTypeEnv for Prelude's Show instances.
 - **Test framework**: Zig-inspired `test`/`assert` keywords. `\r` is a supported string escape.
 - **Structural equality**: `==` and `/=` work on any Rex value including lists, tuples, and ADTs (recursive structural comparison). This means `Just 42 == Just 42` works.
 - **Mutual recursion in types**: `_preregister_types` pre-pass in `check_program`, `check_module`, `_load_prelude_tc` registers all TypeDecl names before resolving constructors, enabling mutually recursive ADTs.
-- **std:Json**: `parse : String -> Result Json String` is Python-backed (`jsonParse` builtin in `builtins/json.py`). `stringify` is pure Rex. The Json ADT uses three mutually recursive types (`Json`, `JsonList`, `JsonObj`). `stringify` nests its helpers inside itself to avoid forward-reference issues. Json.rex imports `std:String (replace, toString)` for `escapeStr`.
-- **Stdlib test runner**: `run_tests` in `eval.py` accepts `_extra_type_env`/`_extra_builtins` for stdlib module context. `main.py --test` detects stdlib paths and injects module builtins automatically. `test "name" = body` declares inline test blocks; `assert expr` checks a Bool at runtime. `--test` flag activates test runner; normal execution skips tests. Tests are type-checked in all modes but only evaluated in test mode. Test body env is isolated (bindings don't leak).
+- **std:Json**: `parse : String -> Result Json String` is Go-backed (`jsonParse` builtin in `builtins_core.go`). `stringify` is pure Rex. The Json ADT uses three mutually recursive types (`Json`, `JsonList`, `JsonObj`). `stringify` nests its helpers inside itself to avoid forward-reference issues. Json.rex imports `std:String (replace, toString)` for `escapeStr`.
+- **Stdlib test runner**: `RunTests` in `eval.go` runs test blocks. `cmd/rex/main.go --test` flag activates test runner. `test "name" = body` declares inline test blocks; `assert expr` checks a Bool at runtime. Normal execution skips tests. Tests are type-checked in all modes but only evaluated in test mode. Test body env is isolated (bindings don't leak).
 - **std:Process**: Five builtins (`spawn`, `send`, `receive`, `self`, `call`) implemented entirely in Go (`ProcessBuiltins(selfPid VPid)`). `call` is Go-only because it needs to close over the caller's `selfPid` — a Rex implementation would capture the module-load-time mailbox instead. `spawn` injects per-goroutine `self` and `receive` into the spawned closure's env. `call` is `Pid b -> (Pid a -> b) -> a` — the message construction function receives the caller's pid. **Important**: recursive loops inside `spawn` must use `in` syntax (`let rec loop n = ... in loop 0`) so the loop body doesn't greedily consume the initial call. Capture `self` before `spawn` if the goroutine needs to reply to the spawning process.
