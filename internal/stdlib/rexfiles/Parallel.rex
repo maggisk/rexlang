@@ -8,8 +8,9 @@ import std:List (map, length, take, drop, concat)
 let pmap f lst =
     let pids = map (fn x ->
         spawn (fn _ ->
-            let result = f x in
-            let caller = receive () in
+            let result = f x
+                caller = receive ()
+            in
             send caller result
         )
     ) lst
@@ -20,8 +21,8 @@ let pmap f lst =
 -- | Apply a function to each element in parallel, using at most n workers.
 -- The list is split into n chunks; each chunk is processed by one worker.
 let pmapN n f lst =
-    let total = length lst in
-    let size = if total == 0 then
+    let total = length lst
+        size = if total == 0 then
                     1
                 else
                     (total + n - 1) / n
@@ -35,8 +36,9 @@ let pmapN n f lst =
     in
     let pids = map (fn chunk ->
         spawn (fn _ ->
-            let result = map f chunk in
-            let caller = receive () in
+            let result = map f chunk
+                caller = receive ()
+            in
             send caller result
         )
     ) (chunks lst)

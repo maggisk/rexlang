@@ -27,25 +27,20 @@ let isEmpty s =
 --
 let dedent s =
     let countSpaces line =
-        let rec go i =
-            if i >= length line then
-                i
-            else if charAt i line == Just " " then
-                go (i + 1)
-            else
-                i
-        in go 0
-    in
-    let ls = lines s
-    in
-    let nonEmpty = filter (fn l -> l != "") ls
-    in
-    let indent =
-        foldl (fn acc l -> let n = countSpaces l in if n < acc then n else acc) 999999999 nonEmpty
-    in
-    let stripped = map (fn l -> if l == "" then "" else drop indent l) ls
-    in
-    let result = join "\n" stripped
+            let rec go i =
+                if i >= length line then
+                    i
+                else if charAt i line == Just " " then
+                    go (i + 1)
+                else
+                    i
+            in go 0
+        ls = lines s
+        nonEmpty = filter (fn l -> l != "") ls
+        indent =
+            foldl (fn acc l -> let n = countSpaces l in if n < acc then n else acc) 999999999 nonEmpty
+        stripped = map (fn l -> if l == "" then "" else drop indent l) ls
+        result = join "\n" stripped
     in
     if endsWith "\n" s then
         result ++ "\n"

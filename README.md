@@ -36,6 +36,13 @@ let rec fact n =
         1
     else
         n * fact (n - 1)
+
+-- Elm-style multi-binding let blocks
+let a = 3
+    b = 4
+    square x = x * x
+in
+square a + square b
 ```
 
 ### Pattern matching
@@ -311,6 +318,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | `examples/actors.rex`           | Actor-model concurrency with `std:Process`          |
 | `examples/parallel.rex`         | Parallel map with `std:Parallel`                    |
 | `examples/multiline.rex`        | Multi-line strings with `"""`                       |
+| `examples/let_block.rex`        | Multi-binding let blocks (Elm-style)                |
 | `examples/testing.rex`          | Built-in test framework                             |
 
 ## Running tests
@@ -330,6 +338,7 @@ go test ./...
 - [x] Type aliases — `type Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
+- [x] Multi-binding let — Elm-style `let a = 1 / b = 2 / in / expr`
 - [ ] User modules — import your own `.rex` files
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
 
