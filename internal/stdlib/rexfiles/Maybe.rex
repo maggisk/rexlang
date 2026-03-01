@@ -1,7 +1,9 @@
-export Nothing, Just, isNothing, isSome, fromMaybe, map, andThen
+export Nothing, Just, isNothing, isSome, fromMaybe, map, andThen, withDefault, filter, orElse, toResult
 
 
 type Maybe a = Nothing | Just a
+
+import std:Result (Ok, Err)
 
 
 -- # Query
@@ -54,8 +56,8 @@ let fromMaybe default x =
 
 -- | Apply a function to the value inside Just, pass Nothing through.
 --
---     map (\x -> x * 2) (Just 5) == Just 10
---     map (\x -> x * 2) Nothing == Nothing
+--     map (fn x -> x * 2) (Just 5) == Just 10
+--     map (fn x -> x * 2) Nothing == Nothing
 --
 let map f x =
     case x of
@@ -68,9 +70,9 @@ let map f x =
 -- | Chain Maybe-returning functions (flatMap/bind).
 --   The function receives the unwrapped value and returns a Maybe.
 --
---     andThen (\x -> Just (x * 2)) (Just 5) == Just 10
---     andThen (\x -> Nothing) (Just 5) == Nothing
---     andThen (\x -> Just (x * 2)) Nothing == Nothing
+--     andThen (fn x -> Just (x * 2)) (Just 5) == Just 10
+--     andThen (fn x -> Nothing) (Just 5) == Nothing
+--     andThen (fn x -> Just (x * 2)) Nothing == Nothing
 --
 let andThen f x =
     case x of
@@ -78,3 +80,96 @@ let andThen f x =
             Nothing
         Just v ->
             f v
+
+
+-- | Alias for fromMaybe (Elm naming).
+--
+--     withDefault 0 (Just 7) == 7
+--     withDefault 0 Nothing == 0
+--
+let withDefault = fromMaybe
+
+
+-- | Keep Just if predicate holds, otherwise Nothing.
+--
+--     filter (fn x -> x > 3) (Just 5) == Just 5
+--     filter (fn x -> x > 3) (Just 1) == Nothing
+--     filter (fn x -> x > 3) Nothing == Nothing
+--
+let filter pred x =
+    case x of
+        Nothing ->
+            Nothing
+        Just v ->
+            if pred v then
+                Just v
+            else
+                Nothing
+
+
+-- | Return the first Just, or Nothing if both are Nothing.
+--
+--     orElse (Just 1) (Just 2) == Just 1
+--     orElse Nothing (Just 2) == Just 2
+--     orElse Nothing Nothing == Nothing
+--
+let orElse a b =
+    case a of
+        Just _ ->
+            a
+        Nothing ->
+            b
+
+
+-- | Convert Maybe to Result with an error for Nothing.
+--
+--     toResult "missing" (Just 5) == Ok 5
+--     toResult "missing" Nothing == Err "missing"
+--
+let toResult err x =
+    case x of
+        Just v ->
+            Ok v
+        Nothing ->
+            Err err
+
+
+-- # Tests
+
+
+test "isNothing and isSome" =
+    assert (isNothing Nothing)
+    assert (not (isNothing (Just 5)))
+    assert (isSome (Just 5))
+    assert (not (isSome Nothing))
+
+test "fromMaybe" =
+    assert (fromMaybe 0 (Just 7) == 7)
+    assert (fromMaybe 0 Nothing == 0)
+
+test "map" =
+    assert (map (fn x -> x * 2) (Just 5) == Just 10)
+    assert (map (fn x -> x * 2) Nothing == Nothing)
+
+test "andThen" =
+    assert (andThen (fn x -> Just (x * 2)) (Just 5) == Just 10)
+    assert (andThen (fn x -> Nothing) (Just 5) == Nothing)
+    assert (andThen (fn x -> Just (x * 2)) Nothing == Nothing)
+
+test "withDefault" =
+    assert (withDefault 0 (Just 7) == 7)
+    assert (withDefault 0 Nothing == 0)
+
+test "filter" =
+    assert (filter (fn x -> x > 3) (Just 5) == Just 5)
+    assert (filter (fn x -> x > 3) (Just 1) == Nothing)
+    assert (filter (fn x -> x > 3) Nothing == Nothing)
+
+test "orElse" =
+    assert (orElse (Just 1) (Just 2) == Just 1)
+    assert (orElse Nothing (Just 2) == Just 2)
+    assert (orElse Nothing Nothing == Nothing)
+
+test "toResult" =
+    assert (toResult "missing" (Just 5) == Ok 5)
+    assert (toResult "missing" Nothing == Err "missing")

@@ -1774,6 +1774,19 @@ func stringTypeEnv() TypeEnv {
 		"fromCharCode": types.Scheme{Ty: types.TFun(types.TInt, types.TString)},
 		"parseInt":     types.Scheme{Ty: types.TFun(types.TString, types.TMaybe(types.TInt))},
 		"parseFloat":   types.Scheme{Ty: types.TFun(types.TString, types.TMaybe(types.TFloat))},
+		"reverse":      types.Scheme{Ty: types.TFun(types.TString, types.TString)},
+		"toList":       types.Scheme{Ty: types.TFun(types.TString, types.TList(types.TString))},
+		"fromList":     types.Scheme{Ty: types.TFun(types.TList(types.TString), types.TString)},
+		"trimLeft":     types.Scheme{Ty: types.TFun(types.TString, types.TString)},
+		"trimRight":    types.Scheme{Ty: types.TFun(types.TString, types.TString)},
+	}
+}
+
+func listTypeEnv() TypeEnv {
+	a := types.TVar{Name: "a"}
+	ordering := types.TCon{Name: "Ordering", Args: nil}
+	return TypeEnv{
+		"sortWith": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TFun(a, types.TFun(a, ordering)), types.TFun(types.TList(a), types.TList(a)))},
 	}
 }
 
@@ -1839,6 +1852,10 @@ func InitialTypeEnv() TypeEnv {
 func typeEnvForModule(name string) TypeEnv {
 	result := InitialTypeEnv()
 	switch name {
+	case "List":
+		for k, v := range listTypeEnv() {
+			result[k] = v
+		}
 	case "Math":
 		for k, v := range mathTypeEnv() {
 			result[k] = v

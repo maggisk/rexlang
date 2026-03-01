@@ -1,4 +1,4 @@
-export length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, isEmpty, charAt, substring, indexOf, replace, take, drop, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, dedent
+export length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, isEmpty, charAt, substring, indexOf, replace, take, drop, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, dedent, reverse, toList, fromList, trimLeft, trimRight
 
 import std:List (map, filter, foldl)
 
@@ -82,3 +82,20 @@ test "drop removes first N characters" =
     assert (drop 0 "hello" == "hello")
     assert (drop 10 "hi" == "")
     assert (drop 3 "" == "")
+
+test "reverse" =
+    assert (reverse "hello" == "olleh")
+    assert (reverse "" == "")
+    assert (reverse "a" == "a")
+
+test "toList and fromList" =
+    assert (toList "abc" == ["a", "b", "c"])
+    assert (toList "" == [])
+    assert (fromList ["a", "b", "c"] == "abc")
+    assert (fromList [] == "")
+
+test "trimLeft and trimRight" =
+    assert (trimLeft "  hello  " == "hello  ")
+    assert (trimRight "  hello  " == "  hello")
+    assert (trimLeft "" == "")
+    assert (trimRight "" == "")

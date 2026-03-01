@@ -1,4 +1,4 @@
-export empty, singleton, fromList, lookup, member, size, isEmpty, insert, remove, update, map, filter, foldl, foldr, toList, keys, values
+export empty, singleton, fromList, lookup, member, size, isEmpty, insert, remove, update, map, filter, foldl, foldr, toList, keys, values, mapWithKey, union, unionWith, intersect, intersectWith, difference, findMin, findMax, any, all
 
 
 type Map k v = Empty | Node int Map k v Map
@@ -282,6 +282,112 @@ let filter pred m =
             acc) empty m
 
 
+-- | Apply a function to every key-value pair in the map.
+--
+--     mapWithKey (fn k v -> k + v) (fromList [(1, 10), (2, 20)]) == fromList [(1, 11), (2, 22)]
+--
+let rec mapWithKey f m =
+    case m of
+        Empty ->
+            Empty
+        Node h l k v r ->
+            Node h (mapWithKey f l) k (f k v) (mapWithKey f r)
+
+
+-- | Left-biased merge of two maps (m1 wins on key collision).
+--
+--     union (fromList [(1, 10)]) (fromList [(1, 99), (2, 20)]) == fromList [(1, 10), (2, 20)]
+--
+let union m1 m2 =
+    foldl (fn k v acc -> insert k v acc) m2 m1
+
+
+-- | Merge two maps with a conflict resolver.
+--
+--     unionWith (fn a b -> a + b) (fromList [(1, 10)]) (fromList [(1, 20), (2, 30)])
+--
+let unionWith f m1 m2 =
+    foldl (fn k v acc ->
+        case lookup k acc of
+            Just existing ->
+                insert k (f v existing) acc
+            Nothing ->
+                insert k v acc) m2 m1
+
+
+-- | Keep only keys present in both maps (values from m1).
+--
+--     intersect (fromList [(1, 10), (2, 20)]) (fromList [(2, 99), (3, 30)]) == fromList [(2, 20)]
+--
+let intersect m1 m2 =
+    filter (fn k v -> member k m2) m1
+
+
+-- | Intersect with a value combiner.
+--
+--     intersectWith (fn a b -> a + b) (fromList [(1, 10), (2, 20)]) (fromList [(2, 30), (3, 40)])
+--
+let intersectWith f m1 m2 =
+    foldl (fn k v acc ->
+        case lookup k m2 of
+            Just v2 ->
+                insert k (f v v2) acc
+            Nothing ->
+                acc) empty m1
+
+
+-- | Keys in m1 but not in m2.
+--
+--     difference (fromList [(1, 10), (2, 20), (3, 30)]) (fromList [(2, 99)]) == fromList [(1, 10), (3, 30)]
+--
+let difference m1 m2 =
+    filter (fn k v -> not (member k m2)) m1
+
+
+-- | Return the smallest key-value pair, or Nothing for empty maps.
+--
+--     findMin (fromList [(3, 30), (1, 10), (2, 20)]) == Just (1, 10)
+--
+let rec findMin m =
+    case m of
+        Empty ->
+            Nothing
+        Node _ (Empty) k v _ ->
+            Just (k, v)
+        Node _ l _ _ _ ->
+            findMin l
+
+
+-- | Return the largest key-value pair, or Nothing for empty maps.
+--
+--     findMax (fromList [(3, 30), (1, 10), (2, 20)]) == Just (3, 30)
+--
+let rec findMax m =
+    case m of
+        Empty ->
+            Nothing
+        Node _ _ k v (Empty) ->
+            Just (k, v)
+        Node _ _ _ _ r ->
+            findMax r
+
+
+-- | Check if any key-value pair satisfies the predicate.
+--
+--     any (fn k v -> v > 20) (fromList [(1, 10), (2, 30)]) == true
+--
+let any pred m =
+    foldl (fn k v acc -> acc || pred k v) false m
+
+
+-- | Check if all key-value pairs satisfy the predicate.
+--
+--     all (fn k v -> v > 0) (fromList [(1, 10), (2, 20)]) == true
+--
+let all pred m =
+    foldl (fn k v acc -> acc && pred k v) true m
+
+
 -- # Helpers (internal, not exported)
 
 
@@ -354,3 +460,63 @@ test "keys and values" =
     let m = fromList [(3, 30), (1, 10), (2, 20)]
     assert (length (keys m) == 3)
     assert (length (values m) == 3)
+
+test "mapWithKey" =
+    let m = fromList [(1, 10), (2, 20)]
+    let m2 = mapWithKey (fn k v -> k + v) m
+    assert (unwrap (lookup 1 m2) == 11)
+    assert (unwrap (lookup 2 m2) == 22)
+
+test "union" =
+    let m1 = fromList [(1, 10), (2, 20)]
+    let m2 = fromList [(2, 99), (3, 30)]
+    let m3 = union m1 m2
+    assert (size m3 == 3)
+    assert (unwrap (lookup 1 m3) == 10)
+    assert (unwrap (lookup 2 m3) == 20)
+    assert (unwrap (lookup 3 m3) == 30)
+
+test "unionWith" =
+    let m1 = fromList [(1, 10), (2, 20)]
+    let m2 = fromList [(2, 30), (3, 40)]
+    let m3 = unionWith (fn a b -> a + b) m1 m2
+    assert (size m3 == 3)
+    assert (unwrap (lookup 2 m3) == 50)
+
+test "intersect" =
+    let m1 = fromList [(1, 10), (2, 20), (3, 30)]
+    let m2 = fromList [(2, 99), (3, 88)]
+    let m3 = intersect m1 m2
+    assert (size m3 == 2)
+    assert (unwrap (lookup 2 m3) == 20)
+    assert (not (member 1 m3))
+
+test "intersectWith" =
+    let m1 = fromList [(1, 10), (2, 20)]
+    let m2 = fromList [(2, 30), (3, 40)]
+    let m3 = intersectWith (fn a b -> a + b) m1 m2
+    assert (size m3 == 1)
+    assert (unwrap (lookup 2 m3) == 50)
+
+test "difference" =
+    let m1 = fromList [(1, 10), (2, 20), (3, 30)]
+    let m2 = fromList [(2, 99)]
+    let m3 = difference m1 m2
+    assert (size m3 == 2)
+    assert (member 1 m3)
+    assert (not (member 2 m3))
+    assert (member 3 m3)
+
+test "findMin and findMax" =
+    let m = fromList [(3, 30), (1, 10), (2, 20)]
+    assert (findMin m == Just (1, 10))
+    assert (findMax m == Just (3, 30))
+    assert (findMin empty == Nothing)
+    assert (findMax empty == Nothing)
+
+test "any and all" =
+    let m = fromList [(1, 10), (2, 30)]
+    assert (any (fn k v -> v > 20) m)
+    assert (not (any (fn k v -> v > 100) m))
+    assert (all (fn k v -> v > 0) m)
+    assert (not (all (fn k v -> v > 20) m))

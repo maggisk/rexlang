@@ -1,4 +1,4 @@
-export Ok, Err, isOk, isErr, withDefault, map, mapErr, andThen
+export Ok, Err, isOk, isErr, withDefault, map, mapErr, andThen, toMaybe, fromMaybe
 
 
 type Result a e = Ok a | Err e
@@ -92,6 +92,32 @@ let andThen f r =
             Err e
 
 
+-- | Convert Result to Maybe, discarding the error.
+--
+--     toMaybe (Ok 42) == Just 42
+--     toMaybe (Err "oops") == Nothing
+--
+let toMaybe r =
+    case r of
+        Ok x ->
+            Just x
+        Err _ ->
+            Nothing
+
+
+-- | Convert Maybe to Result with a default error.
+--
+--     fromMaybe "missing" (Just 42) == Ok 42
+--     fromMaybe "missing" Nothing == Err "missing"
+--
+let fromMaybe err m =
+    case m of
+        Just x ->
+            Ok x
+        Nothing ->
+            Err err
+
+
 -- # Tests
 
 
@@ -117,3 +143,12 @@ test "andThen" =
     assert (withDefault 0 (andThen (fn x -> Ok (x * 2)) (Ok 5)) == 10)
     assert (isErr (andThen (fn x -> Ok (x * 2)) (Err "oops")))
     assert (isErr (andThen (fn _ -> Err "nope") (Ok 5)))
+
+test "toMaybe" =
+    assert (toMaybe (Ok 42) == Just 42)
+    assert (toMaybe (Err "oops") == Nothing)
+
+test "fromMaybe" =
+    assert (fromMaybe "missing" (Just 42) == Ok 42)
+    assert (fromMaybe "missing" Nothing == Err "missing")
+

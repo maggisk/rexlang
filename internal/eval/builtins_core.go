@@ -664,6 +664,101 @@ func StringBuiltins() map[string]Value {
 			}
 			return VCtor{Name: "Just", Args: []Value{VFloat{V: f}}}, nil
 		}),
+		"reverse": makeBuiltin("reverse", func(v Value) (Value, error) {
+			s, err := CheckStr("reverse", v)
+			if err != nil {
+				return nil, err
+			}
+			runes := []rune(s)
+			for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+				runes[i], runes[j] = runes[j], runes[i]
+			}
+			return VString{V: string(runes)}, nil
+		}),
+		"toList": makeBuiltin("toList", func(v Value) (Value, error) {
+			s, err := CheckStr("toList", v)
+			if err != nil {
+				return nil, err
+			}
+			runes := []rune(s)
+			items := make([]Value, len(runes))
+			for i, r := range runes {
+				items[i] = VString{V: string(r)}
+			}
+			return VList{Items: items}, nil
+		}),
+		"fromList": makeBuiltin("fromList", func(v Value) (Value, error) {
+			lst, ok := v.(VList)
+			if !ok {
+				return nil, &RuntimeError{Msg: "fromList: expected list"}
+			}
+			var buf strings.Builder
+			for _, item := range lst.Items {
+				s, err := CheckStr("fromList", item)
+				if err != nil {
+					return nil, err
+				}
+				buf.WriteString(s)
+			}
+			return VString{V: buf.String()}, nil
+		}),
+		"trimLeft": makeBuiltin("trimLeft", func(v Value) (Value, error) {
+			s, err := CheckStr("trimLeft", v)
+			if err != nil {
+				return nil, err
+			}
+			return VString{V: strings.TrimLeft(s, " \t\n\r")}, nil
+		}),
+		"trimRight": makeBuiltin("trimRight", func(v Value) (Value, error) {
+			s, err := CheckStr("trimRight", v)
+			if err != nil {
+				return nil, err
+			}
+			return VString{V: strings.TrimRight(s, " \t\n\r")}, nil
+		}),
+	}
+}
+
+// ListBuiltins returns list-related builtins.
+func ListBuiltins() map[string]Value {
+	return map[string]Value{
+		"sortWith": curried2("sortWith", func(cmpFn, lstV Value) (Value, error) {
+			lst, ok := lstV.(VList)
+			if !ok {
+				return nil, &RuntimeError{Msg: "sortWith: expected list"}
+			}
+			// Copy the slice so we don't mutate the original
+			items := make([]Value, len(lst.Items))
+			copy(items, lst.Items)
+			var sortErr error
+			sort.SliceStable(items, func(i, j int) bool {
+				if sortErr != nil {
+					return false
+				}
+				// Apply cmpFn to items[i] then items[j]
+				partial, err := ApplyValue(cmpFn, items[i])
+				if err != nil {
+					sortErr = err
+					return false
+				}
+				result, err := ApplyValue(partial, items[j])
+				if err != nil {
+					sortErr = err
+					return false
+				}
+				// Result should be an Ordering: LT, EQ, GT
+				ctor, ok := result.(VCtor)
+				if !ok {
+					sortErr = &RuntimeError{Msg: "sortWith: comparison must return Ordering"}
+					return false
+				}
+				return ctor.Name == "LT"
+			})
+			if sortErr != nil {
+				return nil, sortErr
+			}
+			return VList{Items: items}, nil
+		}),
 	}
 }
 
@@ -853,6 +948,11 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 	}
 	for k, v := range EnvBuiltins(programArgs) {
 		result[k] = v
+	}
+	if name == "List" {
+		for k, v := range ListBuiltins() {
+			result[k] = v
+		}
 	}
 	if name == "Json" {
 		for k, v := range JsonBuiltins() {
