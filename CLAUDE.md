@@ -27,7 +27,7 @@ internal/
     builtins_core.go  All builtins: core, math, string, IO, env, JSON
   stdlib/
     embed.go       //go:embed rexfiles/*.rex; Source(name) string
-    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Process)
+    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Process, Parallel)
 ```
 
 ## Development commands
@@ -129,6 +129,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Env — getEnv (Maybe), getEnvOr, args
 - [x] Json — parse (Go-backed), stringify (pure Rex), Json ADT, encode/decode helpers
 - [x] Process — actor model: `spawn`, `send`, `receive`, `self`, `call`; FIFO mailboxes (Go channels, cap 1024); `Pid a` opaque type; builtins injected into every program env automatically
+- [x] Parallel — `pmap`, `pmapN`, `numCPU`; parallel map over lists using actors; bounded parallelism via chunking
 - JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
 - Date/Time (even basic)
 - Random numbers

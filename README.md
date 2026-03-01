@@ -238,6 +238,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | `std:IO`     | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`)                                                                                                                                                                                                        |
 | `std:Env`    | `getEnv` (returns `Maybe`), `getEnvOr`, `args`                                                                                                                                                                                                                                              |
 | `std:Process`| `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages                                                                                                                                                                                                    |
+| `std:Parallel`| `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking                                                                                                                                                                                          |
 
 ## Examples
 
@@ -265,6 +266,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | `examples/annotations.rex`      | Optional type annotations                |
 | `examples/records.rex`          | Records: creation, access, update, nested dot-paths |
 | `examples/actors.rex`           | Actor-model concurrency with `std:Process` |
+| `examples/parallel.rex`         | Parallel map with `std:Parallel`          |
 | `examples/testing.rex`          | Built-in test framework                  |
 
 ## Running tests

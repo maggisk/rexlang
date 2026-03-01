@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -839,7 +840,24 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 			result[k] = v
 		}
 	}
+	if name == "Parallel" {
+		for k, v := range ParallelBuiltins() {
+			result[k] = v
+		}
+		mb := newMailbox()
+		pid := VPid{Mailbox: mb, ID: mb.id}
+		for k, v := range ProcessBuiltins(pid) {
+			result[k] = v
+		}
+	}
 	return result
+}
+
+// ParallelBuiltins returns builtins for the Parallel module.
+func ParallelBuiltins() map[string]Value {
+	return map[string]Value{
+		"numCPU": VInt{V: runtime.NumCPU()},
+	}
 }
 
 func floatToStr(f float64) string {

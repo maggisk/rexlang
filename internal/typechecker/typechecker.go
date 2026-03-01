@@ -1825,8 +1825,21 @@ func typeEnvForModule(name string) TypeEnv {
 		for k, v := range processTypeEnv() {
 			result[k] = v
 		}
+	case "Parallel":
+		for k, v := range parallelTypeEnv() {
+			result[k] = v
+		}
+		for k, v := range processTypeEnv() {
+			result[k] = v
+		}
 	}
 	return result
+}
+
+func parallelTypeEnv() TypeEnv {
+	return TypeEnv{
+		"numCPU": types.Scheme{Ty: types.TInt},
+	}
 }
 
 // TypeEnvForModule is the exported version of typeEnvForModule.
