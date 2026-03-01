@@ -1,6 +1,6 @@
 export length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, isEmpty, charAt, substring, indexOf, replace, take, drop, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, dedent
 
-import std:List (map, filter)
+import std:List (map, filter, foldl)
 
 
 -- # Query
@@ -40,19 +40,8 @@ let dedent s =
     in
     let nonEmpty = filter (fn l -> l != "") ls
     in
-    let rec minIndent rest acc =
-        case rest of
-            [] ->
-                acc
-            [h | t] ->
-                let n = countSpaces h
-                in
-                if n < acc then
-                    minIndent t n
-                else
-                    minIndent t acc
-    in
-    let indent = minIndent nonEmpty 999999999
+    let indent =
+        foldl (fn acc l -> let n = countSpaces l in if n < acc then n else acc) 999999999 nonEmpty
     in
     let stripped = map (fn l -> if l == "" then "" else drop indent l) ls
     in

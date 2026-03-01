@@ -75,7 +75,7 @@ func (tc *TypeChecker) instantiate(s types.Scheme) types.Type {
 	for _, v := range s.Vars {
 		subst[v] = tc.fresh()
 	}
-	return types.ApplySubst(subst, s.Ty)
+	return types.SubstOnce(subst, s.Ty)
 }
 
 // ---------------------------------------------------------------------------
@@ -1686,7 +1686,6 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 			exportedEnv[name] = v
 		}
 	}
-
 	ctorFamilies := map[string]map[string]bool{}
 	if cf, ok := env["__ctor_families__"]; ok {
 		if cfm, ok := cf.(map[string]map[string]bool); ok {
