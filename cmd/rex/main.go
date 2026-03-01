@@ -106,8 +106,7 @@ func runTests(path string) int {
 		}
 	}
 
-	fmt.Printf("=== %s ===\n", path)
-	_, failed, err := eval.RunTests(src, nil, extraBuiltins)
+	_, failed, err := eval.RunTests(src, nil, extraBuiltins, path)
 	if err != nil {
 		printErr("Error", err)
 		os.Exit(1)

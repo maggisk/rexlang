@@ -1023,7 +1023,8 @@ func RunProgram(source string, programArgs []string) (Value, error) {
 }
 
 // RunTests runs all test blocks in source.
-func RunTests(source string, programArgs []string, extraBuiltins map[string]Value) (int, int, error) {
+// label is used in the header line (e.g. "=== label ==="); empty to suppress.
+func RunTests(source string, programArgs []string, extraBuiltins map[string]Value, label string) (int, int, error) {
 	exprs, err := parser.Parse(source)
 	if err != nil {
 		return 0, 0, err
@@ -1050,6 +1051,9 @@ func RunTests(source string, programArgs []string, extraBuiltins map[string]Valu
 	}
 	if len(tests) == 0 {
 		return 0, 0, nil
+	}
+	if label != "" {
+		fmt.Printf("\n=== %s ===\n", label)
 	}
 	passed, failed := 0, 0
 	for _, test := range tests {
