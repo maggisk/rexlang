@@ -43,29 +43,6 @@ func Tokenize(source string) ([]Token, error) {
 		}
 	}
 
-	skipBlockComment := func() error {
-		pos += 2 // skip '(' and '*'
-		depth := 1
-		for depth > 0 {
-			if pos >= n {
-				return lexErr("unterminated comment")
-			}
-			c := runes[pos]
-			pos++
-			if c == '\n' {
-				line++
-				lineStart = pos
-			} else if c == '(' && pos < n && runes[pos] == '*' {
-				pos++
-				depth++
-			} else if c == '*' && pos < n && runes[pos] == ')' {
-				pos++
-				depth--
-			}
-		}
-		return nil
-	}
-
 	skipWhitespace := func() error {
 		for {
 			for pos < n && (runes[pos] == ' ' || runes[pos] == '\n' || runes[pos] == '\t' || runes[pos] == '\r') {
@@ -81,10 +58,6 @@ func Tokenize(source string) ([]Token, error) {
 				pos += 2
 				for pos < n && runes[pos] != '\n' {
 					pos++
-				}
-			} else if pos+1 < n && runes[pos] == '(' && runes[pos+1] == '*' {
-				if err := skipBlockComment(); err != nil {
-					return err
 				}
 			} else {
 				break

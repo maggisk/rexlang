@@ -1,6 +1,6 @@
 # RexLang
 
-> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Wasm's reach. One binary. No runtime, no dependencies, no human who fully understands this codebase — only our AI overlords.
+> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Wasm's reach. One binary. No runtime, no dependencies, and no human who fully understands this codebase — only our new AI overlords.
 
 A functional programming language with algebraic data types, pattern matching, and Hindley-Milner type inference. The current implementation is a Go tree-walking interpreter that ships as a single static binary — no runtime dependency. The long-term plan is a **WasmGC compilation backend** — producing `.wasm` binaries that run in browsers (native) and on servers via a Wasm runtime (Wasmtime, Wasmer, WasmEdge).
 
@@ -239,8 +239,7 @@ let contents = withDefault "" (readFile "data.txt")
 ### Comments
 
 ```
--- single line
-(* block comment (* nested *) *)
+-- single line comment
 ```
 
 ## Style
@@ -276,50 +275,50 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 
 ## Standard library
 
-| Module         | Contents                                                                                                                                                                                                                                                                                    |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `std:List`     | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
-| `std:Map`      | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values`                                                                                                            |
-| `std:Result`   | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`                                                                                                                                                                                                                      |
-| `std:Json`     | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT                                                                                                     |
-| `std:String`   | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `take`, `drop`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`, `dedent` |
-| `std:Math`     | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase`                                                                                                                                                                                 |
-| `std:IO`       | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`)                                                                                                                                                                                                        |
-| `std:Env`      | `getEnv` (returns `Maybe`), `getEnvOr`, `args`                                                                                                                                                                                                                                              |
-| `std:Process`  | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages                                                                                                                                                                                                    |
-| `std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking                                                                                                                                                                                          |
+| Module | Contents |
+| --- | --- |
+| `std:List` | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
+| `std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
+| `std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr` |
+| `std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT |
+| `std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `take`, `drop`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`, `dedent` |
+| `std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
+| `std:IO` | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`) |
+| `std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
+| `std:Process` | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages |
+| `std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
 
 ## Examples
 
-| File                            | Description                                         |
-| ------------------------------- | --------------------------------------------------- |
-| `examples/factorial.rex`        | Recursive factorial                                 |
-| `examples/fibonacci.rex`        | Recursive Fibonacci                                 |
-| `examples/adt.rex`              | Algebraic data types                                |
-| `examples/pattern_match.rex`    | Pattern matching on multiple types                  |
-| `examples/higher_order.rex`     | Higher-order functions                              |
-| `examples/pipe.rex`             | Pipe operator `\|>`                                 |
-| `examples/list.rex`             | List stdlib                                         |
-| `examples/tuple.rex`            | Tuples and destructuring                            |
-| `examples/mutual_recursion.rex` | Mutual recursion with `let rec … and`               |
-| `examples/traits.rex`           | Trait declarations and implementations              |
-| `examples/map.rex`              | `std:Map` sorted map                                |
-| `examples/interpolation.rex`    | String interpolation with `${expr}`                 |
-| `examples/import.rex`           | Module imports (selective and qualified)            |
-| `examples/maybe.rex`            | `Maybe` type from Prelude                           |
-| `examples/io.rex`               | File I/O with `Result`                              |
-| `examples/string.rex`           | String stdlib                                       |
-| `examples/math.rex`             | Math stdlib                                         |
-| `examples/floats.rex`           | Float arithmetic                                    |
-| `examples/modulo.rex`           | Modulo operator                                     |
-| `examples/annotations.rex`      | Optional type annotations                           |
-| `examples/type_alias.rex`       | Type aliases: simple, parametric, function types    |
-| `examples/records.rex`          | Records: creation, access, update, nested dot-paths |
-| `examples/actors.rex`           | Actor-model concurrency with `std:Process`          |
-| `examples/parallel.rex`         | Parallel map with `std:Parallel`                    |
-| `examples/multiline.rex`        | Multi-line strings with `"""`                       |
-| `examples/let_block.rex`        | Multi-binding let blocks (Elm-style)                |
-| `examples/testing.rex`          | Built-in test framework                             |
+| File | Description |
+| --- | --- |
+| `examples/factorial.rex` | Recursive factorial |
+| `examples/fibonacci.rex` | Recursive Fibonacci |
+| `examples/adt.rex` | Algebraic data types |
+| `examples/pattern_match.rex` | Pattern matching on multiple types |
+| `examples/higher_order.rex` | Higher-order functions |
+| `examples/pipe.rex` | Pipe operator `\|>` |
+| `examples/list.rex` | List stdlib |
+| `examples/tuple.rex` | Tuples and destructuring |
+| `examples/mutual_recursion.rex` | Mutual recursion with `let rec … and` |
+| `examples/traits.rex` | Trait declarations and implementations |
+| `examples/map.rex` | `std:Map` sorted map |
+| `examples/interpolation.rex` | String interpolation with `${expr}` |
+| `examples/import.rex` | Module imports (selective and qualified) |
+| `examples/maybe.rex` | `Maybe` type from Prelude |
+| `examples/io.rex` | File I/O with `Result` |
+| `examples/string.rex` | String stdlib |
+| `examples/math.rex` | Math stdlib |
+| `examples/floats.rex` | Float arithmetic |
+| `examples/modulo.rex` | Modulo operator |
+| `examples/annotations.rex` | Optional type annotations |
+| `examples/type_alias.rex` | Type aliases: simple, parametric, function types |
+| `examples/records.rex` | Records: creation, access, update, nested dot-paths |
+| `examples/actors.rex` | Actor-model concurrency with `std:Process` |
+| `examples/parallel.rex` | Parallel map with `std:Parallel` |
+| `examples/multiline.rex` | Multi-line strings with `"""` |
+| `examples/let_block.rex` | Multi-binding let blocks (Elm-style) |
+| `examples/testing.rex` | Built-in test framework |
 
 ## Running tests
 
