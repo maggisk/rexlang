@@ -56,7 +56,8 @@ func scheme(v interface{}) (types.Scheme, bool) {
 
 // TypeChecker holds mutable state for HM inference.
 type TypeChecker struct {
-	counter int
+	counter     int
+	typeAliases map[string]types.TypeAliasInfo
 }
 
 // NewTypeChecker creates a new TypeChecker.
@@ -1094,6 +1095,10 @@ func (tc *TypeChecker) resolveTypeSig(node ast.TySyntax, typeDefs map[string]typ
 		if t, ok := typeDefs[name]; ok {
 			return t, nil
 		}
+		// Check type aliases for non-parametric aliases not yet in typeDefs
+		if info, ok := tc.typeAliases[name]; ok && len(info.Params) == 0 {
+			return info.Body, nil
+		}
 		return types.TCon{Name: name, Args: nil}, nil
 	case ast.TyFun:
 		arg, err := tc.resolveTypeSig(n.Arg, typeDefs)
@@ -1131,6 +1136,14 @@ func (tc *TypeChecker) resolveTypeSig(node ast.TySyntax, typeDefs map[string]typ
 				return nil, err
 			}
 			args[i] = t
+		}
+		// Check type aliases for parametric aliases
+		if info, ok := tc.typeAliases[n.Name]; ok && len(info.Params) == len(args) {
+			s := types.Subst{}
+			for i, p := range info.Params {
+				s[p] = args[i]
+			}
+			return types.SubstOnce(s, info.Body), nil
 		}
 		return types.TCon{Name: n.Name, Args: args}, nil
 	case ast.TyRecord:
@@ -1176,6 +1189,27 @@ type InferToplevelResult struct {
 func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type, subst types.Subst, expr ast.Expr) (InferToplevelResult, error) {
 	switch e := expr.(type) {
 	case ast.TypeDecl:
+		// Type alias
+		if e.AliasType != nil {
+			body, err := tc.resolveTypeSig(e.AliasType, typeDefs)
+			if err != nil {
+				return InferToplevelResult{}, err
+			}
+			info := types.TypeAliasInfo{Params: e.Params, Body: body}
+			if tc.typeAliases == nil {
+				tc.typeAliases = map[string]types.TypeAliasInfo{}
+			}
+			tc.typeAliases[e.Name] = info
+			newTypeDefs := make(map[string]types.Type, len(typeDefs)+1)
+			for k, v := range typeDefs {
+				newTypeDefs[k] = v
+			}
+			if len(e.Params) == 0 {
+				newTypeDefs[e.Name] = body
+			}
+			return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: env, TypeDefs: newTypeDefs}, nil
+		}
+
 		paramVars := make([]types.Type, len(e.Params))
 		for i, p := range e.Params {
 			paramVars[i] = types.TVar{Name: p}
@@ -1578,6 +1612,9 @@ func PreregisterTypes(exprs []ast.Expr, typeDefs map[string]types.Type) map[stri
 	}
 	for _, e := range exprs {
 		if td, ok := e.(ast.TypeDecl); ok {
+			if td.AliasType != nil {
+				continue // aliases expand to their target, no new TCon
+			}
 			paramVars := make([]types.Type, len(td.Params))
 			for i, p := range td.Params {
 				paramVars[i] = types.TVar{Name: p}

@@ -133,6 +133,7 @@ type TypeDecl struct {
 	Params       []string
 	Ctors        []CtorDef
 	RecordFields []RecordFieldDef // non-nil for record types (mutually exclusive with Ctors)
+	AliasType    TySyntax         // non-nil for type aliases (mutually exclusive with Ctors/RecordFields)
 }
 
 type RecordFieldDef struct {

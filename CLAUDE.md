@@ -64,6 +64,7 @@ gofmt -w .
 - **Actors**: `VPid{Mailbox *Mailbox, ID int64}` is the process handle. `Mailbox.ch` is a buffered Go channel (capacity 1024). Five builtins: `spawn : (() -> b) -> Pid a`, `send : Pid a -> a -> ()`, `receive : () -> a`, `self : Pid a`, `call : Pid b -> (Pid a -> b) -> a`. Injected into every program's initial env automatically (no import required). `ProcessBuiltins(selfPid VPid)` returns them keyed to a specific mailbox. `WithProcessBuiltins(env Env) Env` creates a fresh main-process mailbox and injects them.
 - **Environment**: `Env = map[string]Value`; `Clone()` and `Extend()` for closure snapshots.
 - **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
+- **Type aliases**: `type Name = String` — transparent alias, fully interchangeable at the type level. Parametric: `type Pair a b = (a, b)`. Stored in `tc.typeAliases` (`TypeAliasInfo{Params, Body}`); non-parametric aliases also stored in `typeDefs` for direct lookup. Parser disambiguates from ADTs by checking for `|` after parsing the type sig. No runtime effect.
 - **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
 - **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }`. Field access: `p.name` (chained: `p.addr.city`; lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Update: `{ alice | name = "Bob" }` — creates a new record with changed fields. Nested dot-path updates: `{ model | user.name = "Alice" }` — recursively clones and updates nested records. Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`).
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
@@ -108,7 +109,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Map/Dict — `std:Map` AVL tree, sorted by `Ord` trait
 - [x] Records — `type Person = { name : String, age : Int }`, field access, pattern matching, update syntax `{ rec | field = val }` with nested dot-paths
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
-- Type aliases — `type Name = String` (lightweight, distinct from ADTs)
+- [x] Type aliases — `type Name = String` (lightweight, distinct from ADTs)
 - Multi-line strings
 - Number literals — hex, underscores (`1_000_000`)
 - Char type vs expanded String — decide later

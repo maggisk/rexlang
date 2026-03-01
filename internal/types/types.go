@@ -106,6 +106,16 @@ type RecordFieldInfo struct {
 }
 
 // ---------------------------------------------------------------------------
+// Type alias metadata
+// ---------------------------------------------------------------------------
+
+// TypeAliasInfo stores a type alias definition.
+type TypeAliasInfo struct {
+	Params []string
+	Body   Type
+}
+
+// ---------------------------------------------------------------------------
 // Substitution — map from TVar name to Type
 // ---------------------------------------------------------------------------
 
@@ -135,6 +145,25 @@ func FreeVarsScheme(s Scheme) map[string]bool {
 		delete(fv, v)
 	}
 	return fv
+}
+
+// SubstOnce applies a single-pass substitution (no transitive following).
+// Used for type alias expansion where param→arg mappings can form cycles.
+func SubstOnce(s Subst, ty Type) Type {
+	switch t := ty.(type) {
+	case TVar:
+		if resolved, ok := s[t.Name]; ok {
+			return resolved
+		}
+		return ty
+	case TCon:
+		newArgs := make([]Type, len(t.Args))
+		for i, a := range t.Args {
+			newArgs[i] = SubstOnce(s, a)
+		}
+		return TCon{Name: t.Name, Args: newArgs}
+	}
+	return ty
 }
 
 // ApplySubst applies substitution s to type ty.

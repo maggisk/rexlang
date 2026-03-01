@@ -932,6 +932,18 @@ func (p *parser) parseTypeDecl() (ast.Expr, error) {
 		}
 		return ast.TypeDecl{Name: name, Params: params, RecordFields: fields}, nil
 	}
+	// Alias detection: try parsing as type signature, then check for |
+	if p.peek().Kind != lexer.TokPipe {
+		savedPos := p.pos
+		ty, err := p.parseTypeSig()
+		if err == nil && p.peek().Kind != lexer.TokPipe {
+			// No | follows — this is a type alias
+			return ast.TypeDecl{Name: name, Params: params, AliasType: ty}, nil
+		}
+		// Has | or parse failed — restore and parse as ADT
+		p.pos = savedPos
+	}
+
 	if p.peek().Kind == lexer.TokPipe {
 		p.advance()
 	}

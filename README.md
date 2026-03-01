@@ -84,6 +84,17 @@ p.fst    -- 1
 
 Records are nominal — tied to a `type` declaration. The type name is required for construction and pattern matching. Updates with `{ rec | field = val }` are immutable — they return a new record. Nested dot-paths (`addr.city`) recursively update inner records.
 
+### Type aliases
+
+```
+type Name = String
+type Predicate a = a -> Bool
+type Pair a b = (a, b)
+type IntList = [Int]
+```
+
+Type aliases are transparent — `Name` and `String` are fully interchangeable. They support type parameters and work with annotations.
+
 ### Lists and tuples
 
 ```
@@ -264,6 +275,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | `examples/floats.rex`           | Float arithmetic                         |
 | `examples/modulo.rex`           | Modulo operator                          |
 | `examples/annotations.rex`      | Optional type annotations                |
+| `examples/type_alias.rex`       | Type aliases: simple, parametric, function types |
 | `examples/records.rex`          | Records: creation, access, update, nested dot-paths |
 | `examples/actors.rex`           | Actor-model concurrency with `std:Process` |
 | `examples/parallel.rex`         | Parallel map with `std:Parallel`          |
@@ -282,7 +294,7 @@ go test ./...
 
 - [x] Records — nominal records with field access, pattern matching, update syntax with nested dot-paths
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
-- [ ] Type aliases — `type Name = String`
+- [x] Type aliases — `type Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - [ ] User modules — import your own `.rex` files
