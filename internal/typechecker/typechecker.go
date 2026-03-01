@@ -156,6 +156,55 @@ func (tc *TypeChecker) inferPattern(pat ast.Pattern, env TypeEnv, typeDefs map[s
 		}
 		return s, types.TTuple(finalTypes), allBinds, nil
 
+	case ast.PRecord:
+		recordFields, _ := env["__record_fields__"]
+		rfMap, ok := recordFields.(map[string]types.RecordInfo)
+		if !ok {
+			return nil, nil, nil, &types.TypeError{Msg: "unknown record type: " + p.TypeName}
+		}
+		ri, ok := rfMap[p.TypeName]
+		if !ok {
+			return nil, nil, nil, &types.TypeError{Msg: "unknown record type: " + p.TypeName}
+		}
+		// Instantiate type parameters
+		paramSubst := make(types.Subst, len(ri.Params))
+		for _, param := range ri.Params {
+			paramSubst[param] = tc.fresh()
+		}
+		expectedFields := map[string]types.Type{}
+		for _, fi := range ri.Fields {
+			expectedFields[fi.Name] = types.ApplySubst(paramSubst, fi.Type)
+		}
+		// Check field names are valid
+		for _, f := range p.Fields {
+			if _, ok := expectedFields[f.Name]; !ok {
+				return nil, nil, nil, &types.TypeError{Msg: fmt.Sprintf("record '%s' has no field '%s'", p.TypeName, f.Name)}
+			}
+		}
+		s := subst
+		allBinds := map[string]types.Scheme{}
+		for _, f := range p.Fields {
+			s1, patTy, binds, err := tc.inferPattern(f.Pat, env, typeDefs, s)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			s = types.ComposeSubst(s1, s)
+			expected := types.ApplySubst(s, expectedFields[f.Name])
+			s2, err := types.Unify(types.ApplySubst(s, patTy), expected)
+			if err != nil {
+				return nil, nil, nil, &types.TypeError{Msg: fmt.Sprintf("in record pattern %s, field '%s': %s", p.TypeName, f.Name, err.Error())}
+			}
+			s = types.ComposeSubst(s2, s)
+			for k, v := range binds {
+				allBinds[k] = v
+			}
+		}
+		resultArgs := make([]types.Type, len(ri.Params))
+		for i, param := range ri.Params {
+			resultArgs[i] = types.ApplySubst(s, paramSubst[param])
+		}
+		return s, types.TCon{Name: p.TypeName, Args: resultArgs}, allBinds, nil
+
 	case ast.PCtor:
 		envVal, ok := env[p.Name]
 		if !ok {
@@ -400,6 +449,135 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		}
 		return subst, tc.instantiate(sc), nil
 
+	case ast.RecordCreate:
+		recordFields, ok := env["__record_fields__"]
+		if !ok {
+			return nil, nil, &types.TypeError{Msg: "unknown record type: " + e.TypeName}
+		}
+		rfMap, ok := recordFields.(map[string]types.RecordInfo)
+		if !ok {
+			return nil, nil, &types.TypeError{Msg: "unknown record type: " + e.TypeName}
+		}
+		ri, ok := rfMap[e.TypeName]
+		if !ok {
+			return nil, nil, &types.TypeError{Msg: "unknown record type: " + e.TypeName}
+		}
+		// Instantiate type parameters
+		paramSubst := make(types.Subst, len(ri.Params))
+		for _, p := range ri.Params {
+			paramSubst[p] = tc.fresh()
+		}
+		// Check all fields present, no extra
+		provided := map[string]bool{}
+		for _, f := range e.Fields {
+			provided[f.Name] = true
+		}
+		for _, fi := range ri.Fields {
+			if !provided[fi.Name] {
+				return nil, nil, &types.TypeError{Msg: fmt.Sprintf("missing field '%s' in %s", fi.Name, e.TypeName)}
+			}
+		}
+		expectedFields := map[string]types.Type{}
+		for _, fi := range ri.Fields {
+			expectedFields[fi.Name] = types.ApplySubst(paramSubst, fi.Type)
+		}
+		for _, f := range e.Fields {
+			if _, ok := expectedFields[f.Name]; !ok {
+				return nil, nil, &types.TypeError{Msg: fmt.Sprintf("unknown field '%s' in %s", f.Name, e.TypeName)}
+			}
+		}
+		s := subst
+		for _, f := range e.Fields {
+			s1, ft, err := tc.infer(applySubstEnv(s, env), typeDefs, s, f.Value)
+			if err != nil {
+				return nil, nil, err
+			}
+			s = types.ComposeSubst(s1, s)
+			expected := types.ApplySubst(s, expectedFields[f.Name])
+			s2, err := types.Unify(types.ApplySubst(s, ft), expected)
+			if err != nil {
+				return nil, nil, &types.TypeError{Msg: fmt.Sprintf("field '%s' in %s: %s", f.Name, e.TypeName, err.Error())}
+			}
+			s = types.ComposeSubst(s2, s)
+		}
+		// Build result type
+		resultArgs := make([]types.Type, len(ri.Params))
+		for i, p := range ri.Params {
+			resultArgs[i] = types.ApplySubst(s, paramSubst[p])
+		}
+		return s, types.TCon{Name: e.TypeName, Args: resultArgs}, nil
+
+	case ast.FieldAccess:
+		s1, recTy, err := tc.infer(env, typeDefs, subst, e.Record)
+		if err != nil {
+			return nil, nil, err
+		}
+		resolved := types.ApplySubst(s1, recTy)
+		recordFields, _ := env["__record_fields__"]
+		rfMap, _ := recordFields.(map[string]types.RecordInfo)
+		if rfMap == nil {
+			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("cannot access field '%s': no record types defined", e.Field)}
+		}
+		// If the type is a TVar, find which record type has this field
+		if _, isTVar := resolved.(types.TVar); isTVar {
+			var matches []string
+			for typeName, ri := range rfMap {
+				for _, fi := range ri.Fields {
+					if fi.Name == e.Field {
+						matches = append(matches, typeName)
+						break
+					}
+				}
+			}
+			if len(matches) == 0 {
+				return nil, nil, &types.TypeError{Msg: fmt.Sprintf("no record type has field '%s'", e.Field)}
+			}
+			if len(matches) > 1 {
+				return nil, nil, &types.TypeError{Msg: fmt.Sprintf("ambiguous field '%s': multiple record types have this field", e.Field)}
+			}
+			ri := rfMap[matches[0]]
+			paramSubst := make(types.Subst, len(ri.Params))
+			for _, p := range ri.Params {
+				paramSubst[p] = tc.fresh()
+			}
+			paramArgs := make([]types.Type, len(ri.Params))
+			for i, p := range ri.Params {
+				paramArgs[i] = paramSubst[p]
+			}
+			expectedRecTy := types.TCon{Name: matches[0], Args: paramArgs}
+			s2, err := types.Unify(resolved, expectedRecTy)
+			if err != nil {
+				return nil, nil, err
+			}
+			s := types.ComposeSubst(s2, s1)
+			for _, fi := range ri.Fields {
+				if fi.Name == e.Field {
+					return s, types.ApplySubst(s, types.ApplySubst(paramSubst, fi.Type)), nil
+				}
+			}
+		}
+		con, ok := resolved.(types.TCon)
+		if !ok {
+			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("cannot access field '%s' on non-record type %s", e.Field, types.TypeToString(resolved))}
+		}
+		ri, ok := rfMap[con.Name]
+		if !ok {
+			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("'%s' is not a record type", con.Name)}
+		}
+		// Build substitution from type params to actual args
+		paramSubst := make(types.Subst, len(ri.Params))
+		for i, p := range ri.Params {
+			if i < len(con.Args) {
+				paramSubst[p] = con.Args[i]
+			}
+		}
+		for _, fi := range ri.Fields {
+			if fi.Name == e.Field {
+				return s1, types.ApplySubst(paramSubst, fi.Type), nil
+			}
+		}
+		return nil, nil, &types.TypeError{Msg: fmt.Sprintf("record '%s' has no field '%s'", con.Name, e.Field)}
+
 	case ast.Assert:
 		s1, t, err := tc.infer(env, typeDefs, subst, e.Expr)
 		if err != nil {
@@ -635,6 +813,9 @@ func checkExhaustive(arms []ast.MatchArm, ctorFamilies map[string]map[string]boo
 		if _, ok := p.(ast.PVar); ok {
 			return nil
 		}
+		if _, ok := p.(ast.PRecord); ok {
+			return nil // record types have a single constructor, always exhaustive
+		}
 	}
 	// Bool patterns
 	hasBool := false
@@ -856,6 +1037,10 @@ func (tc *TypeChecker) resolveTypeSig(node ast.TySyntax, typeDefs map[string]typ
 			args[i] = t
 		}
 		return types.TCon{Name: n.Name, Args: args}, nil
+	case ast.TyRecord:
+		// Record type syntax in annotations — not a standalone type, just pass through
+		// This would need a type name lookup; for now we don't support anonymous record types
+		return nil, &types.TypeError{Msg: "anonymous record types are not supported; use the named type instead"}
 	}
 	return nil, &types.TypeError{Msg: fmt.Sprintf("unknown type syntax node: %T", node)}
 }
@@ -905,11 +1090,37 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 			newTypeDefs[k] = v
 		}
 		newTypeDefs[e.Name] = adtTy
+		newEnv := env.clone()
+
+		// Record type
+		if len(e.RecordFields) > 0 {
+			fieldInfos := make([]types.RecordFieldInfo, len(e.RecordFields))
+			for i, f := range e.RecordFields {
+				t, err := tc.resolveTypeSig(f.Type, newTypeDefs)
+				if err != nil {
+					return InferToplevelResult{}, err
+				}
+				fieldInfos[i] = types.RecordFieldInfo{Name: f.Name, Type: t}
+			}
+			ri := types.RecordInfo{Fields: fieldInfos, Params: e.Params}
+			recordFields := map[string]types.RecordInfo{}
+			if rf, ok := newEnv["__record_fields__"]; ok {
+				if rfm, ok := rf.(map[string]types.RecordInfo); ok {
+					for k, v := range rfm {
+						recordFields[k] = v
+					}
+				}
+			}
+			recordFields[e.Name] = ri
+			newEnv["__record_fields__"] = recordFields
+			return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: newEnv, TypeDefs: newTypeDefs}, nil
+		}
+
+		// ADT type
 		paramEnv := map[string]types.Type{}
 		for _, p := range e.Params {
 			paramEnv[p] = types.TVar{Name: p}
 		}
-		newEnv := env.clone()
 		for _, ctor := range e.Ctors {
 			argTypes := make([]types.Type, len(ctor.ArgTypes))
 			for i, argAST := range ctor.ArgTypes {

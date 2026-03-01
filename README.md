@@ -55,6 +55,27 @@ type Shape = Circle float | Rect float float
 type Tree a = Leaf | Node (Tree a) a (Tree a)
 ```
 
+### Records
+
+```
+type Person = { name : String, age : Int }
+
+let alice = Person { name = "Alice", age = 30 }
+alice.name    -- "Alice"
+
+-- pattern matching
+case alice of
+    Person { name = n } ->
+        n
+
+-- parametric records
+type Pair a b = { fst : a, snd : b }
+let p = Pair { fst = 1, snd = "hello" }
+p.fst    -- 1
+```
+
+Records are nominal — tied to a `type` declaration. The type name is required for construction and pattern matching.
+
 ### Lists and tuples
 
 ```
@@ -234,6 +255,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | `examples/floats.rex`           | Float arithmetic                         |
 | `examples/modulo.rex`           | Modulo operator                          |
 | `examples/annotations.rex`      | Optional type annotations                |
+| `examples/records.rex`          | Nominal records with field access        |
 | `examples/actors.rex`           | Actor-model concurrency with `std:Process` |
 | `examples/testing.rex`          | Built-in test framework                  |
 
@@ -248,7 +270,7 @@ go test ./...
 
 ### Language
 
-- [ ] Records — `{ name : String, age : Int }`, field access, update syntax
+- [x] Records — nominal records with field access, pattern matching
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - [ ] Type aliases — `type Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation

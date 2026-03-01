@@ -109,13 +109,49 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 	case lexer.TokIdent:
 		p.advance()
 		name := tok.Value.(string)
+		// Uppercase ident + '{' = record construction
+		if isUppercase(name) && p.peek().Kind == lexer.TokLBrace {
+			p.advance() // consume '{'
+			var fields []ast.RecordFieldExpr
+			for p.peek().Kind != lexer.TokRBrace {
+				fname, err := p.expectIdent()
+				if err != nil {
+					return nil, err
+				}
+				if err := p.expect(lexer.TokEq); err != nil {
+					return nil, err
+				}
+				val, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				fields = append(fields, ast.RecordFieldExpr{Name: fname, Value: val})
+				if p.peek().Kind == lexer.TokComma {
+					p.advance()
+				}
+			}
+			if err := p.expect(lexer.TokRBrace); err != nil {
+				return nil, err
+			}
+			return ast.RecordCreate{TypeName: name, Fields: fields}, nil
+		}
 		if p.peek().Kind == lexer.TokDot {
+			if isUppercase(name) {
+				// Module access: M.foo
+				p.advance()
+				field, err := p.expectIdent()
+				if err != nil {
+					return nil, err
+				}
+				return ast.DotAccess{ModuleName: name, FieldName: field}, nil
+			}
+			// Record field access: expr.field
 			p.advance()
 			field, err := p.expectIdent()
 			if err != nil {
 				return nil, err
 			}
-			return ast.DotAccess{ModuleName: name, FieldName: field}, nil
+			return ast.FieldAccess{Record: ast.Var{Name: name}, Field: field}, nil
 		}
 		return ast.Var{Name: name}, nil
 	case lexer.TokLParen:
@@ -695,6 +731,32 @@ func (p *parser) parsePattern() (ast.Pattern, error) {
 	if tok.Kind == lexer.TokIdent && isUppercase(tok.Value.(string)) {
 		p.advance()
 		name := tok.Value.(string)
+		// Record pattern: Person { name = n, age = a }
+		if p.peek().Kind == lexer.TokLBrace {
+			p.advance() // consume '{'
+			var fields []ast.PRecordField
+			for p.peek().Kind != lexer.TokRBrace {
+				fname, err := p.expectIdent()
+				if err != nil {
+					return nil, err
+				}
+				if err := p.expect(lexer.TokEq); err != nil {
+					return nil, err
+				}
+				pat, err := p.parsePattern()
+				if err != nil {
+					return nil, err
+				}
+				fields = append(fields, ast.PRecordField{Name: fname, Pat: pat})
+				if p.peek().Kind == lexer.TokComma {
+					p.advance()
+				}
+			}
+			if err := p.expect(lexer.TokRBrace); err != nil {
+				return nil, err
+			}
+			return ast.PRecord{TypeName: name, Fields: fields}, nil
+		}
 		var args []ast.Pattern
 		for {
 			t := p.peek()
@@ -791,6 +853,32 @@ func (p *parser) parseTypeDecl() (ast.Expr, error) {
 	}
 	if err := p.expect(lexer.TokEq); err != nil {
 		return nil, err
+	}
+	// Record type: type Name = { field : Type, ... }
+	if p.peek().Kind == lexer.TokLBrace {
+		p.advance() // consume '{'
+		var fields []ast.RecordFieldDef
+		for p.peek().Kind != lexer.TokRBrace {
+			fname, err := p.expectIdent()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expect(lexer.TokColon); err != nil {
+				return nil, err
+			}
+			ftype, err := p.parseTypeSig()
+			if err != nil {
+				return nil, err
+			}
+			fields = append(fields, ast.RecordFieldDef{Name: fname, Type: ftype})
+			if p.peek().Kind == lexer.TokComma {
+				p.advance()
+			}
+		}
+		if err := p.expect(lexer.TokRBrace); err != nil {
+			return nil, err
+		}
+		return ast.TypeDecl{Name: name, Params: params, RecordFields: fields}, nil
 	}
 	if p.peek().Kind == lexer.TokPipe {
 		p.advance()
@@ -926,6 +1014,30 @@ func (p *parser) parseTypeSig() (ast.TySyntax, error) {
 func (p *parser) parseTypeSigAtom() (ast.TySyntax, error) {
 	tok := p.peek()
 	switch tok.Kind {
+	case lexer.TokLBrace:
+		p.advance() // consume '{'
+		var fields []ast.TyRecordField
+		for p.peek().Kind != lexer.TokRBrace {
+			fname, err := p.expectIdent()
+			if err != nil {
+				return nil, err
+			}
+			if err := p.expect(lexer.TokColon); err != nil {
+				return nil, err
+			}
+			ftype, err := p.parseTypeSig()
+			if err != nil {
+				return nil, err
+			}
+			fields = append(fields, ast.TyRecordField{Name: fname, Type: ftype})
+			if p.peek().Kind == lexer.TokComma {
+				p.advance()
+			}
+		}
+		if err := p.expect(lexer.TokRBrace); err != nil {
+			return nil, err
+		}
+		return ast.TyRecord{Fields: fields}, nil
 	case lexer.TokLParen:
 		p.advance()
 		if p.peek().Kind == lexer.TokRParen {

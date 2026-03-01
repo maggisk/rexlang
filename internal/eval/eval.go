@@ -304,6 +304,24 @@ func matchPattern(pat ast.Pattern, value Value) (map[string]Value, bool) {
 			}
 			return bindings, true
 		}
+	case ast.PRecord:
+		if v, ok := value.(VRecord); ok && p.TypeName == v.TypeName {
+			bindings := map[string]Value{}
+			for _, f := range p.Fields {
+				fv, ok := v.Fields[f.Name]
+				if !ok {
+					return nil, false
+				}
+				b, ok := matchPattern(f.Pat, fv)
+				if !ok {
+					return nil, false
+				}
+				for k, val := range b {
+					bindings[k] = val
+				}
+			}
+			return bindings, true
+		}
 	}
 	return nil, false
 }
@@ -540,6 +558,32 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 				return value, nil
 			}
 
+		case ast.RecordCreate:
+			fields := make(map[string]Value, len(e.Fields))
+			for _, f := range e.Fields {
+				v, err := Eval(env, f.Value)
+				if err != nil {
+					return nil, err
+				}
+				fields[f.Name] = v
+			}
+			return VRecord{TypeName: e.TypeName, Fields: fields}, nil
+
+		case ast.FieldAccess:
+			v, err := Eval(env, e.Record)
+			if err != nil {
+				return nil, err
+			}
+			rec, ok := v.(VRecord)
+			if !ok {
+				return nil, runtimeErr("cannot access field '%s' on non-record value %s", e.Field, ValueToString(v))
+			}
+			fv, ok := rec.Fields[e.Field]
+			if !ok {
+				return nil, runtimeErr("record '%s' has no field '%s'", rec.TypeName, e.Field)
+			}
+			return fv, nil
+
 		case ast.DotAccess:
 			v := env[e.ModuleName]
 			mod, ok := v.(VModule)
@@ -706,6 +750,10 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 	switch e := expr.(type) {
 	case ast.TypeDecl:
 		newEnv := env.Clone()
+		if len(e.RecordFields) > 0 {
+			// Record type — store field info for runtime (used by FieldAccess pattern matching)
+			return VBool{V: false}, newEnv, nil
+		}
 		for _, ctor := range e.Ctors {
 			if len(ctor.ArgTypes) == 0 {
 				newEnv[ctor.Name] = VCtor{Name: ctor.Name, Args: nil}

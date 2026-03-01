@@ -61,6 +61,8 @@ const (
 	TokRParen     = ")"
 	TokLBrack     = "["
 	TokRBrack     = "]"
+	TokLBrace     = "{"
+	TokRBrace     = "}"
 )
 
 // Token represents a lexed token.

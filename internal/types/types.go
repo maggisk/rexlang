@@ -90,6 +90,22 @@ func TPid(a Type) Type {
 }
 
 // ---------------------------------------------------------------------------
+// Record field metadata
+// ---------------------------------------------------------------------------
+
+// RecordInfo stores field metadata for a named record type.
+type RecordInfo struct {
+	Fields []RecordFieldInfo
+	Params []string // type parameter names
+}
+
+// RecordFieldInfo stores one field's name and type.
+type RecordFieldInfo struct {
+	Name string
+	Type Type
+}
+
+// ---------------------------------------------------------------------------
 // Substitution — map from TVar name to Type
 // ---------------------------------------------------------------------------
 

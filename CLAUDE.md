@@ -60,11 +60,12 @@ gofmt -w .
 - **Pipeline**: source → `lexer.Tokenize()` → `parser.Parse()` → `typechecker.CheckProgram()` → `eval.RunProgram()`
 - **Language**: Go 1.24+. Single binary, no runtime dependency.
 - **Type inference**: `internal/typechecker` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types in `internal/types` (`TVar`, `TCon`, `Scheme`). Arithmetic operators (`+` `-` `*` `/`) require `Int` or `Float`; free type variables in arithmetic expressions default to `Int`. Use `toFloat` to convert before Float arithmetic. REPL shows `name : type` after each binding.
-- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod`, `VInstances`, `VModule`, `VPid` — all implement `Value` interface via `valueKind()`.
+- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod`, `VInstances`, `VModule`, `VPid`, `VRecord` — all implement `Value` interface via `valueKind()`.
 - **Actors**: `VPid{Mailbox *Mailbox, ID int64}` is the process handle. `Mailbox.ch` is a buffered Go channel (capacity 1024). Five builtins: `spawn : (() -> b) -> Pid a`, `send : Pid a -> a -> ()`, `receive : () -> a`, `self : Pid a`, `call : Pid b -> (Pid a -> b) -> a`. Injected into every program's initial env automatically (no import required). `ProcessBuiltins(selfPid VPid)` returns them keyed to a specific mailbox. `WithProcessBuiltins(env Env) Env` creates a fresh main-process mailbox and injects them.
 - **Environment**: `Env = map[string]Value`; `Clone()` and `Extend()` for closure snapshots.
 - **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
 - **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
+- **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }`. Field access: `p.name` (lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`).
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
 - **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded with `Eq`, `Ord`, `Show`. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
 - **String interpolation**: `"hello ${expr}"` — lexer emits `TokInterp` with `[]InterpPart`; parser produces `ast.StringInterp{Parts}`; eval dispatches `Show` trait for conversion. `\$` escapes literal `$`. Nested interpolation (`"${f "inner ${x}"}"`) supported via mutual recursion in lexer (`skipInterp`/`skipString`).
@@ -105,7 +106,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 
 ### Data structures & types
 - [x] Map/Dict — `std:Map` AVL tree, sorted by `Ord` trait
-- Records — `{ name : String, age : Int }`, field access, update syntax
+- [x] Records — `type Person = { name : String, age : Int }`, field access, pattern matching (no update syntax yet)
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - Type aliases — `type Name = String` (lightweight, distinct from ADTs)
 - Multi-line strings
@@ -166,7 +167,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **Traits v1**: `trait`/`impl` with Rust-style naming. Single-parameter traits only. Runtime dispatch (no type-level constraints). Prelude auto-loaded with `Ordering`, `Eq`, `Ord`, `Show` and instances for `Int`, `Float`, `String`, `Bool`. Comparison operators (`<`, `>`, `<=`, `>=`) extended to String (lexicographic) and Bool (`false < true`). `where` is a keyword.
 - **String interpolation**: `"hello ${expr}"` syntax. Lexer scans `${...}` with mutual recursion (`skipInterp`/`skipString`) to handle nested strings; emits `TokInterp` containing `[]InterpPart`. Parser produces `ast.StringInterp{Parts []Expr}`. Typechecker allows any type per part, returns `TString`. Eval dispatches `Show:TypeName:show` from `__instances__` for each part (short-circuits VString). `\$` produces literal `$`. Strings without `${` produce normal `TokString` (backward compatible). `showInt`/`showFloat` builtins in CoreBuiltins + InitialTypeEnv for Prelude's Show instances.
 - **Test framework**: Zig-inspired `test`/`assert` keywords. `\r` is a supported string escape.
-- **Structural equality**: `==` and `/=` work on any Rex value including lists, tuples, and ADTs (recursive structural comparison). This means `Just 42 == Just 42` works.
+- **Structural equality**: `==` and `/=` work on any Rex value including lists, tuples, ADTs, and records (recursive structural comparison). This means `Just 42 == Just 42` works.
 - **Mutual recursion in types**: `_preregister_types` pre-pass in `check_program`, `check_module`, `_load_prelude_tc` registers all TypeDecl names before resolving constructors, enabling mutually recursive ADTs.
 - **std:Json**: `parse : String -> Result Json String` is Go-backed (`jsonParse` builtin in `builtins_core.go`). `stringify` is pure Rex. The Json ADT uses three mutually recursive types (`Json`, `JsonList`, `JsonObj`). `stringify` nests its helpers inside itself to avoid forward-reference issues. Json.rex imports `std:String (replace, toString)` for `escapeStr`.
 - **Stdlib test runner**: `RunTests` in `eval.go` runs test blocks. `cmd/rex/main.go --test` flag activates test runner. `test "name" = body` declares inline test blocks; `assert expr` checks a Bool at runtime. Normal execution skips tests. Tests are type-checked in all modes but only evaluated in test mode. Test body env is isolated (bindings don't leak).

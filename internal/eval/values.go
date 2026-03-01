@@ -3,6 +3,7 @@ package eval
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync/atomic"
 
@@ -85,6 +86,11 @@ type VPid struct {
 	ID      int64
 }
 
+type VRecord struct {
+	TypeName string
+	Fields   map[string]Value
+}
+
 func (VInt) valueKind()         {}
 func (VInstances) valueKind()   {}
 func (VFloat) valueKind()       {}
@@ -100,6 +106,7 @@ func (VBuiltin) valueKind()     {}
 func (VModule) valueKind()      {}
 func (VTraitMethod) valueKind() {}
 func (VPid) valueKind()         {}
+func (VRecord) valueKind()      {}
 
 // RuntimeError is a runtime error.
 type RuntimeError struct{ Msg string }
@@ -211,6 +218,18 @@ func StructuralEq(l, r Value) bool {
 		if b, ok := r.(VPid); ok {
 			return a.ID == b.ID
 		}
+	case VRecord:
+		b, ok := r.(VRecord)
+		if !ok || a.TypeName != b.TypeName || len(a.Fields) != len(b.Fields) {
+			return false
+		}
+		for k, av := range a.Fields {
+			bv, ok := b.Fields[k]
+			if !ok || !StructuralEq(av, bv) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }
@@ -300,6 +319,14 @@ func ValueToString(v Value) string {
 		return fmt.Sprintf("<trait method %s.%s>", val.TraitName, val.MethodName)
 	case VPid:
 		return fmt.Sprintf("<pid %d>", val.ID)
+	case VRecord:
+		parts := make([]string, 0, len(val.Fields))
+		for k, v := range val.Fields {
+			parts = append(parts, k+" = "+ValueToString(v))
+		}
+		// Sort for deterministic output
+		sort.Strings(parts)
+		return val.TypeName + " { " + strings.Join(parts, ", ") + " }"
 	}
 	panic(fmt.Sprintf("unknown value type: %T", v))
 }

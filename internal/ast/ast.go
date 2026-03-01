@@ -32,6 +32,14 @@ type PCtor struct {
 	Name string
 	Args []Pattern
 }
+type PRecord struct {
+	TypeName string
+	Fields   []PRecordField
+}
+type PRecordField struct {
+	Name string
+	Pat  Pattern
+}
 
 func (PWild) patternNode()   {}
 func (PUnit) patternNode()   {}
@@ -44,6 +52,7 @@ func (PNil) patternNode()    {}
 func (PCons) patternNode()   {}
 func (PTuple) patternNode()  {}
 func (PCtor) patternNode()   {}
+func (PRecord) patternNode() {}
 
 // ---------------------------------------------------------------------------
 // Binary operator symbols
@@ -120,9 +129,30 @@ type MatchArm struct {
 }
 
 type TypeDecl struct {
-	Name   string
-	Params []string
-	Ctors  []CtorDef
+	Name         string
+	Params       []string
+	Ctors        []CtorDef
+	RecordFields []RecordFieldDef // non-nil for record types (mutually exclusive with Ctors)
+}
+
+type RecordFieldDef struct {
+	Name string
+	Type TySyntax
+}
+
+type RecordCreate struct {
+	TypeName string
+	Fields   []RecordFieldExpr
+}
+
+type RecordFieldExpr struct {
+	Name  string
+	Value Expr
+}
+
+type FieldAccess struct {
+	Record Expr
+	Field  string
 }
 
 type CtorDef struct {
@@ -208,33 +238,35 @@ type TypeAnnotation struct {
 }
 
 // Implement exprNode for all expression types
-func (IntLit) exprNode()       {}
-func (FloatLit) exprNode()     {}
-func (StringLit) exprNode()    {}
-func (BoolLit) exprNode()      {}
-func (UnitLit) exprNode()      {}
-func (Var) exprNode()          {}
-func (UnaryMinus) exprNode()   {}
-func (Binop) exprNode()        {}
-func (If) exprNode()           {}
-func (Let) exprNode()          {}
-func (Fun) exprNode()          {}
-func (App) exprNode()          {}
-func (Match) exprNode()        {}
-func (StringInterp) exprNode() {}
-func (TypeDecl) exprNode()     {}
-func (ListLit) exprNode()      {}
-func (TupleLit) exprNode()     {}
-func (LetPat) exprNode()       {}
-func (LetRec) exprNode()       {}
-func (Import) exprNode()       {}
-func (DotAccess) exprNode()    {}
-func (Export) exprNode()       {}
-func (TraitDecl) exprNode()    {}
-func (ImplDecl) exprNode()     {}
-func (TestDecl) exprNode()     {}
-func (Assert) exprNode()          {}
+func (IntLit) exprNode()         {}
+func (FloatLit) exprNode()       {}
+func (StringLit) exprNode()      {}
+func (BoolLit) exprNode()        {}
+func (UnitLit) exprNode()        {}
+func (Var) exprNode()            {}
+func (UnaryMinus) exprNode()     {}
+func (Binop) exprNode()          {}
+func (If) exprNode()             {}
+func (Let) exprNode()            {}
+func (Fun) exprNode()            {}
+func (App) exprNode()            {}
+func (Match) exprNode()          {}
+func (StringInterp) exprNode()   {}
+func (TypeDecl) exprNode()       {}
+func (ListLit) exprNode()        {}
+func (TupleLit) exprNode()       {}
+func (LetPat) exprNode()         {}
+func (LetRec) exprNode()         {}
+func (Import) exprNode()         {}
+func (DotAccess) exprNode()      {}
+func (Export) exprNode()         {}
+func (TraitDecl) exprNode()      {}
+func (ImplDecl) exprNode()       {}
+func (TestDecl) exprNode()       {}
+func (Assert) exprNode()         {}
 func (TypeAnnotation) exprNode() {}
+func (RecordCreate) exprNode()   {}
+func (FieldAccess) exprNode()    {}
 
 // ---------------------------------------------------------------------------
 // Type syntax nodes
@@ -252,10 +284,18 @@ type TyFun struct {
 type TyList struct{ Elem TySyntax }
 type TyTuple struct{ Elems []TySyntax }
 type TyUnit struct{}
+type TyRecord struct {
+	Fields []TyRecordField
+}
+type TyRecordField struct {
+	Name string
+	Type TySyntax
+}
 
-func (TyName) tySyntaxNode()  {}
-func (TyApp) tySyntaxNode()   {}
-func (TyFun) tySyntaxNode()   {}
-func (TyList) tySyntaxNode()  {}
-func (TyTuple) tySyntaxNode() {}
-func (TyUnit) tySyntaxNode()  {}
+func (TyName) tySyntaxNode()   {}
+func (TyApp) tySyntaxNode()    {}
+func (TyFun) tySyntaxNode()    {}
+func (TyList) tySyntaxNode()   {}
+func (TyTuple) tySyntaxNode()  {}
+func (TyUnit) tySyntaxNode()   {}
+func (TyRecord) tySyntaxNode() {}

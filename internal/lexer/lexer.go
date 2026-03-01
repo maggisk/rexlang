@@ -306,6 +306,14 @@ func Tokenize(source string) ([]Token, error) {
 			pos++
 			tokens = append(tokens, Token{Kind: TokRBrack, Line: tokLine, Col: tokCol})
 
+		case c == '{':
+			pos++
+			tokens = append(tokens, Token{Kind: TokLBrace, Line: tokLine, Col: tokCol})
+
+		case c == '}':
+			pos++
+			tokens = append(tokens, Token{Kind: TokRBrace, Line: tokLine, Col: tokCol})
+
 		case c == ',':
 			pos++
 			tokens = append(tokens, Token{Kind: TokComma, Line: tokLine, Col: tokCol})
