@@ -19,6 +19,10 @@ let isOk r =
         Err _ ->
             false
 
+test "isOk" =
+    assert (isOk (Ok 42))
+    assert (not (isOk (Err "oops")))
+
 
 -- | Return true if the result is Err.
 --
@@ -31,6 +35,10 @@ let isErr r =
             false
         Err _ ->
             true
+
+test "isErr" =
+    assert (isErr (Err "oops"))
+    assert (not (isErr (Ok 42)))
 
 
 -- # Extract
@@ -48,6 +56,10 @@ let withDefault default r =
         Err _ ->
             default
 
+test "withDefault" =
+    assert (withDefault 0 (Ok 42) == 42)
+    assert (withDefault 0 (Err "oops") == 0)
+
 
 -- # Transform
 
@@ -64,6 +76,10 @@ let map f r =
         Err e ->
             Err e
 
+test "map" =
+    assert (withDefault 0 (map (fn x -> x * 2) (Ok 5)) == 10)
+    assert (isErr (map (fn x -> x * 2) (Err "oops")))
+
 
 -- | Apply a function to the Err value; pass Ok through unchanged.
 --
@@ -76,6 +92,10 @@ let mapErr f r =
             Ok x
         Err e ->
             Err (f e)
+
+test "mapErr" =
+    assert (isOk (mapErr (fn e -> e ++ "!") (Ok 5)))
+    assert (isErr (mapErr (fn e -> e ++ "!") (Err "oops")))
 
 
 -- | Chain Result-returning functions (flatMap/bind).
@@ -91,6 +111,14 @@ let andThen f r =
         Err e ->
             Err e
 
+test "andThen" =
+    assert (withDefault 0 (andThen (fn x -> Ok (x * 2)) (Ok 5)) == 10)
+    assert (isErr (andThen (fn x -> Ok (x * 2)) (Err "oops")))
+    assert (isErr (andThen (fn _ -> Err "nope") (Ok 5)))
+
+
+-- # Convert
+
 
 -- | Convert Result to Maybe, discarding the error.
 --
@@ -103,6 +131,10 @@ let toMaybe r =
             Just x
         Err _ ->
             Nothing
+
+test "toMaybe" =
+    assert (toMaybe (Ok 42) == Just 42)
+    assert (toMaybe (Err "oops") == Nothing)
 
 
 -- | Convert Maybe to Result with a default error.
@@ -117,38 +149,6 @@ let fromMaybe err m =
         Nothing ->
             Err err
 
-
--- # Tests
-
-
-test "isOk and isErr" =
-    assert (isOk (Ok 42))
-    assert (not (isOk (Err "oops")))
-    assert (isErr (Err "oops"))
-    assert (not (isErr (Ok 42)))
-
-test "withDefault" =
-    assert (withDefault 0 (Ok 42) == 42)
-    assert (withDefault 0 (Err "oops") == 0)
-
-test "map" =
-    assert (withDefault 0 (map (fn x -> x * 2) (Ok 5)) == 10)
-    assert (isErr (map (fn x -> x * 2) (Err "oops")))
-
-test "mapErr" =
-    assert (isOk (mapErr (fn e -> e ++ "!") (Ok 5)))
-    assert (isErr (mapErr (fn e -> e ++ "!") (Err "oops")))
-
-test "andThen" =
-    assert (withDefault 0 (andThen (fn x -> Ok (x * 2)) (Ok 5)) == 10)
-    assert (isErr (andThen (fn x -> Ok (x * 2)) (Err "oops")))
-    assert (isErr (andThen (fn _ -> Err "nope") (Ok 5)))
-
-test "toMaybe" =
-    assert (toMaybe (Ok 42) == Just 42)
-    assert (toMaybe (Err "oops") == Nothing)
-
 test "fromMaybe" =
     assert (fromMaybe "missing" (Just 42) == Ok 42)
     assert (fromMaybe "missing" Nothing == Err "missing")
-

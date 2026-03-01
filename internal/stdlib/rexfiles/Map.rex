@@ -76,6 +76,68 @@ let rebalance m =
                 m
 
 
+-- # Internal helpers (not exported)
+
+
+let unwrap m =
+    case m of
+        Just v ->
+            v
+        Nothing ->
+            error "unwrap: Nothing"
+
+
+-- # Query
+
+
+-- | Count the number of entries in the map.
+let rec size m =
+    case m of
+        Empty ->
+            0
+        Node _ l _ _ r ->
+            1 + size l + size r
+
+
+-- | Check if the map is empty.
+let isEmpty m =
+    case m of
+        Empty ->
+            true
+        Node _ _ _ _ _ ->
+            false
+
+
+-- | Look up a key, returning Just value or Nothing.
+let rec lookup key m =
+    case m of
+        Empty ->
+            Nothing
+        Node _ l k v r ->
+            case compare key k of
+                LT ->
+                    lookup key l
+                GT ->
+                    lookup key r
+                EQ ->
+                    Just v
+
+
+-- | Check if a key is present in the map.
+let rec member key m =
+    case m of
+        Empty ->
+            false
+        Node _ l k _ r ->
+            case compare key k of
+                LT ->
+                    member key l
+                GT ->
+                    member key r
+                EQ ->
+                    true
+
+
 -- # Create
 
 
@@ -85,6 +147,11 @@ let empty = Empty
 
 -- | Create a map with a single key-value pair.
 let singleton k v = Node 1 Empty k v Empty
+
+test "empty and singleton" =
+    assert (isEmpty empty)
+    assert (not (isEmpty (singleton 1 10)))
+    assert (size (singleton 1 10) == 1)
 
 
 -- # Modify
@@ -103,6 +170,19 @@ let rec insert key val m =
                     rebalance (node l k v (insert key val r))
                 EQ ->
                     Node h l key val r
+
+test "insert" =
+    let m = insert 2 20 (insert 1 10 empty)
+    assert (size m == 2)
+    assert (unwrap (lookup 1 m) == 10)
+    assert (unwrap (lookup 2 m) == 20)
+    assert (member 1 m)
+    assert (not (member 3 m))
+
+test "insert replaces existing key" =
+    let m = insert 1 99 (insert 1 10 empty)
+    assert (size m == 1)
+    assert (unwrap (lookup 1 m) == 99)
 
 
 -- | Remove the minimum element, returning (minKey, minValue, remaining).
@@ -136,6 +216,14 @@ let rec remove key m =
                             let (mk, mv, newR) = removeMin r in
                             rebalance (node l mk mv newR)
 
+test "remove" =
+    let m = insert 3 30 (insert 2 20 (insert 1 10 empty))
+    let m2 = remove 2 m
+    assert (size m2 == 2)
+    assert (member 1 m2)
+    assert (not (member 2 m2))
+    assert (member 3 m2)
+
 
 -- | Update the value at a key by applying a function. No-op if key absent.
 let rec update key f m =
@@ -151,56 +239,28 @@ let rec update key f m =
                 EQ ->
                     Node h l k (f v) r
 
-
--- # Query
-
-
--- | Look up a key, returning Just value or Nothing.
-let rec lookup key m =
-    case m of
-        Empty ->
-            Nothing
-        Node _ l k v r ->
-            case compare key k of
-                LT ->
-                    lookup key l
-                GT ->
-                    lookup key r
-                EQ ->
-                    Just v
+test "update" =
+    let m = insert 1 10 empty
+    let m2 = update 1 (fn v -> v + 5) m
+    assert (unwrap (lookup 1 m2) == 15)
 
 
--- | Check if a key is present in the map.
-let rec member key m =
-    case m of
-        Empty ->
-            false
-        Node _ l k _ r ->
-            case compare key k of
-                LT ->
-                    member key l
-                GT ->
-                    member key r
-                EQ ->
-                    true
+-- | Build a map from a list of (key, value) pairs.
+let fromList lst =
+    let rec go acc pairs =
+        case pairs of
+            [] ->
+                acc
+            [pair | rest] ->
+                let (k, v) = pair in
+                go (insert k v acc) rest
+    in
+    go empty lst
 
-
--- | Count the number of entries in the map.
-let rec size m =
-    case m of
-        Empty ->
-            0
-        Node _ l _ _ r ->
-            1 + size l + size r
-
-
--- | Check if the map is empty.
-let isEmpty m =
-    case m of
-        Empty ->
-            true
-        Node _ _ _ _ _ ->
-            false
+test "fromList" =
+    let m = fromList [(1, 10), (2, 20), (3, 30)]
+    assert (size m == 3)
+    assert (unwrap (lookup 2 m) == 20)
 
 
 -- # Fold
@@ -216,6 +276,10 @@ let rec foldl f acc m =
                 acc2 = f k v acc1
             in
             foldl f acc2 r
+
+test "foldl" =
+    let m = fromList [(1, 10), (2, 20), (3, 30)]
+    assert (foldl (fn k v acc -> acc + v) 0 m == 60)
 
 
 -- | Fold over key-value pairs from largest to smallest key.
@@ -247,18 +311,11 @@ let keys m =
 let values m =
     foldr (fn k v acc -> v :: acc) [] m
 
-
--- | Build a map from a list of (key, value) pairs.
-let fromList lst =
-    let rec go acc pairs =
-        case pairs of
-            [] ->
-                acc
-            [pair | rest] ->
-                let (k, v) = pair in
-                go (insert k v acc) rest
-    in
-    go empty lst
+test "keys and values" =
+    import std:List (length)
+    let m = fromList [(3, 30), (1, 10), (2, 20)]
+    assert (length (keys m) == 3)
+    assert (length (values m) == 3)
 
 
 -- # Transform
@@ -272,14 +329,11 @@ let rec map f m =
         Node h l k v r ->
             Node h (map f l) k (f v) (map f r)
 
-
--- | Keep only entries where the predicate returns true.
-let filter pred m =
-    foldl (fn k v acc ->
-        if pred k v then
-            insert k v acc
-        else
-            acc) empty m
+test "map" =
+    let m = fromList [(1, 10), (2, 20)]
+    let m2 = map (fn v -> v * 2) m
+    assert (unwrap (lookup 1 m2) == 20)
+    assert (unwrap (lookup 2 m2) == 40)
 
 
 -- | Apply a function to every key-value pair in the map.
@@ -293,6 +347,31 @@ let rec mapWithKey f m =
         Node h l k v r ->
             Node h (mapWithKey f l) k (f k v) (mapWithKey f r)
 
+test "mapWithKey" =
+    let m = fromList [(1, 10), (2, 20)]
+    let m2 = mapWithKey (fn k v -> k + v) m
+    assert (unwrap (lookup 1 m2) == 11)
+    assert (unwrap (lookup 2 m2) == 22)
+
+
+-- | Keep only entries where the predicate returns true.
+let filter pred m =
+    foldl (fn k v acc ->
+        if pred k v then
+            insert k v acc
+        else
+            acc) empty m
+
+test "filter" =
+    let m = fromList [(1, 10), (2, 20), (3, 30)]
+    let m2 = filter (fn k v -> v > 15) m
+    assert (size m2 == 2)
+    assert (not (member 1 m2))
+    assert (member 2 m2)
+
+
+-- # Set operations
+
 
 -- | Left-biased merge of two maps (m1 wins on key collision).
 --
@@ -300,6 +379,15 @@ let rec mapWithKey f m =
 --
 let union m1 m2 =
     foldl (fn k v acc -> insert k v acc) m2 m1
+
+test "union" =
+    let m1 = fromList [(1, 10), (2, 20)]
+    let m2 = fromList [(2, 99), (3, 30)]
+    let m3 = union m1 m2
+    assert (size m3 == 3)
+    assert (unwrap (lookup 1 m3) == 10)
+    assert (unwrap (lookup 2 m3) == 20)
+    assert (unwrap (lookup 3 m3) == 30)
 
 
 -- | Merge two maps with a conflict resolver.
@@ -314,6 +402,13 @@ let unionWith f m1 m2 =
             Nothing ->
                 insert k v acc) m2 m1
 
+test "unionWith" =
+    let m1 = fromList [(1, 10), (2, 20)]
+    let m2 = fromList [(2, 30), (3, 40)]
+    let m3 = unionWith (fn a b -> a + b) m1 m2
+    assert (size m3 == 3)
+    assert (unwrap (lookup 2 m3) == 50)
+
 
 -- | Keep only keys present in both maps (values from m1).
 --
@@ -321,6 +416,14 @@ let unionWith f m1 m2 =
 --
 let intersect m1 m2 =
     filter (fn k v -> member k m2) m1
+
+test "intersect" =
+    let m1 = fromList [(1, 10), (2, 20), (3, 30)]
+    let m2 = fromList [(2, 99), (3, 88)]
+    let m3 = intersect m1 m2
+    assert (size m3 == 2)
+    assert (unwrap (lookup 2 m3) == 20)
+    assert (not (member 1 m3))
 
 
 -- | Intersect with a value combiner.
@@ -335,6 +438,13 @@ let intersectWith f m1 m2 =
             Nothing ->
                 acc) empty m1
 
+test "intersectWith" =
+    let m1 = fromList [(1, 10), (2, 20)]
+    let m2 = fromList [(2, 30), (3, 40)]
+    let m3 = intersectWith (fn a b -> a + b) m1 m2
+    assert (size m3 == 1)
+    assert (unwrap (lookup 2 m3) == 50)
+
 
 -- | Keys in m1 but not in m2.
 --
@@ -342,6 +452,18 @@ let intersectWith f m1 m2 =
 --
 let difference m1 m2 =
     filter (fn k v -> not (member k m2)) m1
+
+test "difference" =
+    let m1 = fromList [(1, 10), (2, 20), (3, 30)]
+    let m2 = fromList [(2, 99)]
+    let m3 = difference m1 m2
+    assert (size m3 == 2)
+    assert (member 1 m3)
+    assert (not (member 2 m3))
+    assert (member 3 m3)
+
+
+-- # Min/Max
 
 
 -- | Return the smallest key-value pair, or Nothing for empty maps.
@@ -371,6 +493,16 @@ let rec findMax m =
         Node _ _ _ _ r ->
             findMax r
 
+test "findMin and findMax" =
+    let m = fromList [(3, 30), (1, 10), (2, 20)]
+    assert (findMin m == Just (1, 10))
+    assert (findMax m == Just (3, 30))
+    assert (findMin empty == Nothing)
+    assert (findMax empty == Nothing)
+
+
+-- # Predicates
+
 
 -- | Check if any key-value pair satisfies the predicate.
 --
@@ -386,133 +518,6 @@ let any pred m =
 --
 let all pred m =
     foldl (fn k v acc -> acc && pred k v) true m
-
-
--- # Helpers (internal, not exported)
-
-
-let unwrap m =
-    case m of
-        Just v ->
-            v
-        Nothing ->
-            error "unwrap: Nothing"
-
-
--- # Tests
-
-
-test "empty and singleton" =
-    assert (isEmpty empty)
-    assert (not (isEmpty (singleton 1 10)))
-    assert (size (singleton 1 10) == 1)
-
-test "insert and lookup" =
-    let m = insert 2 20 (insert 1 10 empty)
-    assert (size m == 2)
-    assert (unwrap (lookup 1 m) == 10)
-    assert (unwrap (lookup 2 m) == 20)
-    assert (member 1 m)
-    assert (not (member 3 m))
-
-test "insert replaces existing key" =
-    let m = insert 1 99 (insert 1 10 empty)
-    assert (size m == 1)
-    assert (unwrap (lookup 1 m) == 99)
-
-test "remove" =
-    let m = insert 3 30 (insert 2 20 (insert 1 10 empty))
-    let m2 = remove 2 m
-    assert (size m2 == 2)
-    assert (member 1 m2)
-    assert (not (member 2 m2))
-    assert (member 3 m2)
-
-test "update" =
-    let m = insert 1 10 empty
-    let m2 = update 1 (fn v -> v + 5) m
-    assert (unwrap (lookup 1 m2) == 15)
-
-test "fromList and size" =
-    let m = fromList [(1, 10), (2, 20), (3, 30)]
-    assert (size m == 3)
-    assert (unwrap (lookup 2 m) == 20)
-
-test "map values" =
-    let m = fromList [(1, 10), (2, 20)]
-    let m2 = map (fn v -> v * 2) m
-    assert (unwrap (lookup 1 m2) == 20)
-    assert (unwrap (lookup 2 m2) == 40)
-
-test "filter" =
-    let m = fromList [(1, 10), (2, 20), (3, 30)]
-    let m2 = filter (fn k v -> v > 15) m
-    assert (size m2 == 2)
-    assert (not (member 1 m2))
-    assert (member 2 m2)
-
-test "foldl sums values" =
-    let m = fromList [(1, 10), (2, 20), (3, 30)]
-    assert (foldl (fn k v acc -> acc + v) 0 m == 60)
-
-test "keys and values" =
-    import std:List (length)
-    let m = fromList [(3, 30), (1, 10), (2, 20)]
-    assert (length (keys m) == 3)
-    assert (length (values m) == 3)
-
-test "mapWithKey" =
-    let m = fromList [(1, 10), (2, 20)]
-    let m2 = mapWithKey (fn k v -> k + v) m
-    assert (unwrap (lookup 1 m2) == 11)
-    assert (unwrap (lookup 2 m2) == 22)
-
-test "union" =
-    let m1 = fromList [(1, 10), (2, 20)]
-    let m2 = fromList [(2, 99), (3, 30)]
-    let m3 = union m1 m2
-    assert (size m3 == 3)
-    assert (unwrap (lookup 1 m3) == 10)
-    assert (unwrap (lookup 2 m3) == 20)
-    assert (unwrap (lookup 3 m3) == 30)
-
-test "unionWith" =
-    let m1 = fromList [(1, 10), (2, 20)]
-    let m2 = fromList [(2, 30), (3, 40)]
-    let m3 = unionWith (fn a b -> a + b) m1 m2
-    assert (size m3 == 3)
-    assert (unwrap (lookup 2 m3) == 50)
-
-test "intersect" =
-    let m1 = fromList [(1, 10), (2, 20), (3, 30)]
-    let m2 = fromList [(2, 99), (3, 88)]
-    let m3 = intersect m1 m2
-    assert (size m3 == 2)
-    assert (unwrap (lookup 2 m3) == 20)
-    assert (not (member 1 m3))
-
-test "intersectWith" =
-    let m1 = fromList [(1, 10), (2, 20)]
-    let m2 = fromList [(2, 30), (3, 40)]
-    let m3 = intersectWith (fn a b -> a + b) m1 m2
-    assert (size m3 == 1)
-    assert (unwrap (lookup 2 m3) == 50)
-
-test "difference" =
-    let m1 = fromList [(1, 10), (2, 20), (3, 30)]
-    let m2 = fromList [(2, 99)]
-    let m3 = difference m1 m2
-    assert (size m3 == 2)
-    assert (member 1 m3)
-    assert (not (member 2 m3))
-    assert (member 3 m3)
-
-test "findMin and findMax" =
-    let m = fromList [(3, 30), (1, 10), (2, 20)]
-    assert (findMin m == Just (1, 10))
-    assert (findMax m == Just (3, 30))
-    assert (findMin empty == Nothing)
-    assert (findMax empty == Nothing)
 
 test "any and all" =
     let m = fromList [(1, 10), (2, 30)]
