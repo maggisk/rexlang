@@ -78,7 +78,8 @@ gofmt -w .
 - **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
 - **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
-- **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
+- **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded with `Eq`, `Ord`, `Show`. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
+- **String interpolation**: `"hello ${expr}"` — lexer emits `TokInterp` with `[]InterpPart`; parser produces `ast.StringInterp{Parts}`; eval dispatches `Show` trait for conversion. `\$` escapes literal `$`. Nested interpolation (`"${f "inner ${x}"}"`) supported via mutual recursion in lexer (`skipInterp`/`skipString`).
 - **Test framework**: `test "name" = body` / `assert expr`. `--test` flag runs them.
 - **Stdlib embedding**: `.rex` files embedded via `//go:embed` in `internal/stdlib/embed.go`.
 
@@ -116,7 +117,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 ### Data structures & types
 - [x] Map/Dict — `std:Map` AVL tree, sorted by `Ord` trait
 - Records — `{ name : String, age : Int }`, field access, update syntax
-- String interpolation — `"hello ${name}"` or similar
+- [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - Type aliases — `type Name = String` (lightweight, distinct from ADTs)
 - Multi-line strings
 - Number literals — hex, underscores (`1_000_000`)
@@ -146,7 +147,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Traits v1 — `trait`/`impl`, runtime dispatch, `Eq`/`Ord` in Prelude
 - [x] Test framework — `test "name" = …` / `assert expr`, `--test` flag
 - Type annotations — optional `let f : Int -> Int`, documentation aid
-- Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`), `Show` trait
+- Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`)
 
 ### Error experience
 - Better error messages — source locations, span info
@@ -174,7 +175,8 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **No guards in pattern matching** (not planned)
 - **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to `python/rexlang/stdlib/`. Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
 - **`length` name collision**: resolved via qualified imports — `import std:List as L` and `import std:String as S` then use `L.length` vs `S.length`.
-- **Traits v1**: `trait`/`impl` with Rust-style naming. Single-parameter traits only. Runtime dispatch (no type-level constraints). Prelude auto-loaded with `Ordering`, `Eq`, `Ord` and instances for `Int`, `Float`, `String`, `Bool`. Comparison operators (`<`, `>`, `<=`, `>=`) extended to String (lexicographic) and Bool (`false < true`). `where` is a keyword.
+- **Traits v1**: `trait`/`impl` with Rust-style naming. Single-parameter traits only. Runtime dispatch (no type-level constraints). Prelude auto-loaded with `Ordering`, `Eq`, `Ord`, `Show` and instances for `Int`, `Float`, `String`, `Bool`. Comparison operators (`<`, `>`, `<=`, `>=`) extended to String (lexicographic) and Bool (`false < true`). `where` is a keyword.
+- **String interpolation**: `"hello ${expr}"` syntax. Lexer scans `${...}` with mutual recursion (`skipInterp`/`skipString`) to handle nested strings; emits `TokInterp` containing `[]InterpPart`. Parser produces `ast.StringInterp{Parts []Expr}`. Typechecker allows any type per part, returns `TString`. Eval dispatches `Show:TypeName:show` from `__instances__` for each part (short-circuits VString). `\$` produces literal `$`. Strings without `${` produce normal `TokString` (backward compatible). `showInt`/`showFloat` builtins in CoreBuiltins + InitialTypeEnv for Prelude's Show instances.
 - **Test framework**: Zig-inspired `test`/`assert` keywords. `\r` is a supported string escape.
 - **Structural equality**: `==` and `/=` work on any Rex value including lists, tuples, and ADTs (recursive structural comparison). This means `Just 42 == Just 42` works.
 - **Mutual recursion in types**: `_preregister_types` pre-pass in `check_program`, `check_module`, `_load_prelude_tc` registers all TypeDecl names before resolving constructors, enabling mutually recursive ADTs.

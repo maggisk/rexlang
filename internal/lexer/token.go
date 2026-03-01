@@ -8,6 +8,7 @@ const (
 	TokInt    = "int"
 	TokFloat  = "float"
 	TokString = "string"
+	TokInterp = "interp"
 	TokBool   = "bool"
 	TokIdent  = "ident"
 	TokEOF    = "eof"
@@ -34,32 +35,32 @@ const (
 	TokAssert = "assert"
 
 	// Symbols
-	TokPlus      = "+"
-	TokPlusPlus  = "++"
-	TokMinus     = "-"
-	TokStar      = "*"
-	TokSlash     = "/"
-	TokPercent   = "%"
-	TokEq        = "="
-	TokEqEq      = "=="
-	TokSlashEq   = "/="
-	TokLt        = "<"
-	TokLtEq      = "<="
-	TokGt        = ">"
-	TokGtEq      = ">="
-	TokAmpAmp    = "&&"
-	TokPipePipe  = "||"
-	TokPipeGt    = "|>"
-	TokPipe      = "|"
-	TokArrow     = "->"
+	TokPlus       = "+"
+	TokPlusPlus   = "++"
+	TokMinus      = "-"
+	TokStar       = "*"
+	TokSlash      = "/"
+	TokPercent    = "%"
+	TokEq         = "="
+	TokEqEq       = "=="
+	TokSlashEq    = "/="
+	TokLt         = "<"
+	TokLtEq       = "<="
+	TokGt         = ">"
+	TokGtEq       = ">="
+	TokAmpAmp     = "&&"
+	TokPipePipe   = "||"
+	TokPipeGt     = "|>"
+	TokPipe       = "|"
+	TokArrow      = "->"
 	TokColonColon = "::"
-	TokColon     = ":"
-	TokDot       = "."
-	TokComma     = ","
-	TokLParen    = "("
-	TokRParen    = ")"
-	TokLBrack    = "["
-	TokRBrack    = "]"
+	TokColon      = ":"
+	TokDot        = "."
+	TokComma      = ","
+	TokLParen     = "("
+	TokRParen     = ")"
+	TokLBrack     = "["
+	TokRBrack     = "]"
 )
 
 // Token represents a lexed token.
@@ -68,6 +69,13 @@ type Token struct {
 	Value interface{} // int, float64, string, bool, or nil
 	Line  int
 	Col   int
+}
+
+// InterpPart represents one segment of an interpolated string.
+type InterpPart struct {
+	Literal bool    // true = plain string text
+	Str     string  // the text when Literal == true
+	Tokens  []Token // tokenized expression when Literal == false
 }
 
 func (t Token) String() string {

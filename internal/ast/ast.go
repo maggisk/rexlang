@@ -18,15 +18,15 @@ type TySyntax interface{ tySyntaxNode() }
 // Patterns
 // ---------------------------------------------------------------------------
 
-type PWild struct{}                  // _
-type PUnit struct{}                  // ()
-type PVar struct{ Name string }      // x
-type PInt struct{ Value int }        // 42
-type PFloat struct{ Value float64 }  // 3.14
-type PString struct{ Value string }  // "hello"
-type PBool struct{ Value bool }      // true / false
-type PNil struct{}                   // []
-type PCons struct{ Head, Tail Pattern }  // [h|t]
+type PWild struct{}                     // _
+type PUnit struct{}                     // ()
+type PVar struct{ Name string }         // x
+type PInt struct{ Value int }           // 42
+type PFloat struct{ Value float64 }     // 3.14
+type PString struct{ Value string }     // "hello"
+type PBool struct{ Value bool }         // true / false
+type PNil struct{}                      // []
+type PCons struct{ Head, Tail Pattern } // [h|t]
 type PTuple struct{ Pats []Pattern }    // (a, b)
 type PCtor struct {
 	Name string
@@ -130,6 +130,8 @@ type CtorDef struct {
 	ArgTypes []TySyntax
 }
 
+type StringInterp struct{ Parts []Expr }
+
 type ListLit struct{ Items []Expr }
 type TupleLit struct{ Items []Expr }
 
@@ -199,31 +201,32 @@ type Assert struct {
 }
 
 // Implement exprNode for all expression types
-func (IntLit) exprNode()     {}
-func (FloatLit) exprNode()   {}
-func (StringLit) exprNode()  {}
-func (BoolLit) exprNode()    {}
-func (UnitLit) exprNode()    {}
-func (Var) exprNode()        {}
-func (UnaryMinus) exprNode() {}
-func (Binop) exprNode()      {}
-func (If) exprNode()         {}
-func (Let) exprNode()        {}
-func (Fun) exprNode()        {}
-func (App) exprNode()        {}
-func (Match) exprNode()      {}
-func (TypeDecl) exprNode()   {}
-func (ListLit) exprNode()    {}
-func (TupleLit) exprNode()   {}
-func (LetPat) exprNode()     {}
-func (LetRec) exprNode()     {}
-func (Import) exprNode()     {}
-func (DotAccess) exprNode()  {}
-func (Export) exprNode()     {}
-func (TraitDecl) exprNode()  {}
-func (ImplDecl) exprNode()   {}
-func (TestDecl) exprNode()   {}
-func (Assert) exprNode()     {}
+func (IntLit) exprNode()       {}
+func (FloatLit) exprNode()     {}
+func (StringLit) exprNode()    {}
+func (BoolLit) exprNode()      {}
+func (UnitLit) exprNode()      {}
+func (Var) exprNode()          {}
+func (UnaryMinus) exprNode()   {}
+func (Binop) exprNode()        {}
+func (If) exprNode()           {}
+func (Let) exprNode()          {}
+func (Fun) exprNode()          {}
+func (App) exprNode()          {}
+func (Match) exprNode()        {}
+func (StringInterp) exprNode() {}
+func (TypeDecl) exprNode()     {}
+func (ListLit) exprNode()      {}
+func (TupleLit) exprNode()     {}
+func (LetPat) exprNode()       {}
+func (LetRec) exprNode()       {}
+func (Import) exprNode()       {}
+func (DotAccess) exprNode()    {}
+func (Export) exprNode()       {}
+func (TraitDecl) exprNode()    {}
+func (ImplDecl) exprNode()     {}
+func (TestDecl) exprNode()     {}
+func (Assert) exprNode()       {}
 
 // ---------------------------------------------------------------------------
 // Type syntax nodes

@@ -54,6 +54,20 @@ func CoreBuiltins() map[string]Value {
 			}
 			return nil, &RuntimeError{Msg: s}
 		}),
+		"showInt": makeBuiltin("showInt", func(v Value) (Value, error) {
+			i, err := AsInt(v)
+			if err != nil {
+				return nil, err
+			}
+			return VString{V: fmt.Sprintf("%d", i)}, nil
+		}),
+		"showFloat": makeBuiltin("showFloat", func(v Value) (Value, error) {
+			f, err := AsFloat(v)
+			if err != nil {
+				return nil, err
+			}
+			return VString{V: floatToStr(f)}, nil
+		}),
 	}
 }
 
@@ -272,15 +286,15 @@ func MathBuiltins() map[string]Value {
 				return VFloat{V: math.Pow(xf, yf)}, nil
 			}), nil
 		}),
-		"sqrt":  mathFn1("sqrt", math.Sqrt),
-		"sin":   mathFn1("sin", math.Sin),
-		"cos":   mathFn1("cos", math.Cos),
-		"tan":   mathFn1("tan", math.Tan),
-		"asin":  mathFn1("asin", math.Asin),
-		"acos":  mathFn1("acos", math.Acos),
-		"atan":  mathFn1("atan", math.Atan),
-		"log":   mathFn1("log", math.Log),
-		"exp":   mathFn1("exp", math.Exp),
+		"sqrt": mathFn1("sqrt", math.Sqrt),
+		"sin":  mathFn1("sin", math.Sin),
+		"cos":  mathFn1("cos", math.Cos),
+		"tan":  mathFn1("tan", math.Tan),
+		"asin": mathFn1("asin", math.Asin),
+		"acos": mathFn1("acos", math.Acos),
+		"atan": mathFn1("atan", math.Atan),
+		"log":  mathFn1("log", math.Log),
+		"exp":  mathFn1("exp", math.Exp),
 		"atan2": curried2("atan2", func(yV, xV Value) (Value, error) {
 			y, err := AsFloat(yV)
 			if err != nil {

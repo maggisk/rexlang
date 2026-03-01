@@ -126,6 +126,8 @@ func Tokenize(source string) ([]Token, error) {
 		case c == '"':
 			pos++ // skip opening '"'
 			var buf []rune
+			var parts []InterpPart
+			hasInterp := false
 			for {
 				if pos >= n {
 					return nil, lexErr("unterminated string")
@@ -151,14 +153,43 @@ func Tokenize(source string) ([]Token, error) {
 						buf = append(buf, '\\')
 					case '"':
 						buf = append(buf, '"')
+					case '$':
+						buf = append(buf, '$')
 					default:
 						return nil, lexErr(fmt.Sprintf("unknown escape: \\%c", esc))
 					}
+				} else if ch == '$' && pos < n && runes[pos] == '{' {
+					hasInterp = true
+					pos++ // skip '{'
+					// Save accumulated literal
+					if len(buf) > 0 {
+						parts = append(parts, InterpPart{Literal: true, Str: string(buf)})
+						buf = nil
+					}
+					// Find matching '}' using mutual recursion helpers
+					exprStart := pos
+					if err := skipInterp(runes, &pos, n); err != nil {
+						return nil, lexErr(err.Error())
+					}
+					exprSrc := string(runes[exprStart : pos-1]) // exclude closing '}'
+					exprTokens, err := Tokenize(exprSrc)
+					if err != nil {
+						return nil, err
+					}
+					parts = append(parts, InterpPart{Literal: false, Tokens: exprTokens})
 				} else {
 					buf = append(buf, ch)
 				}
 			}
-			tokens = append(tokens, Token{Kind: TokString, Value: string(buf), Line: tokLine, Col: tokCol})
+			if hasInterp {
+				// Trailing literal
+				if len(buf) > 0 {
+					parts = append(parts, InterpPart{Literal: true, Str: string(buf)})
+				}
+				tokens = append(tokens, Token{Kind: TokInterp, Value: parts, Line: tokLine, Col: tokCol})
+			} else {
+				tokens = append(tokens, Token{Kind: TokString, Value: string(buf), Line: tokLine, Col: tokCol})
+			}
 
 		case unicode.IsLetter(c) || c == '_':
 			start := pos
@@ -301,4 +332,54 @@ func Tokenize(source string) ([]Token, error) {
 	}
 
 	return tokens, nil
+}
+
+// skipInterp advances pos past a ${...} expression body (pos is right after the '{').
+// On return, pos points just past the closing '}'.
+func skipInterp(runes []rune, pos *int, n int) error {
+	depth := 1
+	for depth > 0 {
+		if *pos >= n {
+			return fmt.Errorf("unterminated interpolation")
+		}
+		ch := runes[*pos]
+		*pos++
+		switch ch {
+		case '{':
+			depth++
+		case '}':
+			depth--
+		case '"':
+			if err := skipString(runes, pos, n); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// skipString advances pos past a string literal (pos is right after the opening '"').
+func skipString(runes []rune, pos *int, n int) error {
+	for {
+		if *pos >= n {
+			return fmt.Errorf("unterminated string in interpolation")
+		}
+		ch := runes[*pos]
+		*pos++
+		switch ch {
+		case '"':
+			return nil
+		case '\\':
+			if *pos < n {
+				*pos++ // skip escaped char
+			}
+		case '$':
+			if *pos < n && runes[*pos] == '{' {
+				*pos++ // skip '{'
+				if err := skipInterp(runes, pos, n); err != nil {
+					return err
+				}
+			}
+		}
+	}
 }

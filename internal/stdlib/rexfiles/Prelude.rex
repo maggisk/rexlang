@@ -69,3 +69,25 @@ impl Ord Bool where
             EQ
         else
             GT
+
+
+-- ## Show trait
+
+trait Show a where
+    show : a -> String
+
+impl Show Int where
+    show n = showInt n
+
+impl Show Float where
+    show n = showFloat n
+
+impl Show Bool where
+    show b =
+        if b then
+            "true"
+        else
+            "false"
+
+impl Show String where
+    show s = s

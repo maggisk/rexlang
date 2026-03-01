@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/maggisk/rexlang/internal/ast"
@@ -308,6 +309,38 @@ func matchPattern(pat ast.Pattern, value Value) (map[string]Value, bool) {
 }
 
 // ---------------------------------------------------------------------------
+// Show dispatch for string interpolation
+// ---------------------------------------------------------------------------
+
+// showValue converts a value to string using the Show trait when available.
+func showValue(env Env, v Value) (string, error) {
+	// Short-circuit for strings
+	if s, ok := v.(VString); ok {
+		return s.V, nil
+	}
+	// Try Show trait dispatch
+	typeName, err := RuntimeTypeName(v)
+	if err == nil {
+		if inst, ok := env["__instances__"]; ok {
+			if vi, ok := inst.(VInstances); ok {
+				key := "Show:" + typeName + ":show"
+				if implFn, ok := vi.M[key]; ok {
+					result, err := ApplyValue(implFn, v)
+					if err != nil {
+						return "", err
+					}
+					if s, ok := result.(VString); ok {
+						return s.V, nil
+					}
+				}
+			}
+		}
+	}
+	// Fallback to ValueToString (for types without Show instance)
+	return Display(v), nil
+}
+
+// ---------------------------------------------------------------------------
 // Evaluator
 // ---------------------------------------------------------------------------
 
@@ -321,6 +354,20 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			return VFloat{V: e.Value}, nil
 		case ast.StringLit:
 			return VString{V: e.Value}, nil
+		case ast.StringInterp:
+			var buf strings.Builder
+			for _, part := range e.Parts {
+				v, err := Eval(env, part)
+				if err != nil {
+					return nil, err
+				}
+				s, err := showValue(env, v)
+				if err != nil {
+					return nil, err
+				}
+				buf.WriteString(s)
+			}
+			return VString{V: buf.String()}, nil
 		case ast.BoolLit:
 			return VBool{V: e.Value}, nil
 		case ast.UnitLit:

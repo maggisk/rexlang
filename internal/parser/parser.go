@@ -86,6 +86,23 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 	case lexer.TokString:
 		p.advance()
 		return ast.StringLit{Value: tok.Value.(string)}, nil
+	case lexer.TokInterp:
+		p.advance()
+		parts := tok.Value.([]lexer.InterpPart)
+		var exprParts []ast.Expr
+		for _, part := range parts {
+			if part.Literal {
+				exprParts = append(exprParts, ast.StringLit{Value: part.Str})
+			} else {
+				subParser := &parser{tokens: part.Tokens, pos: 0, caseArmCol: -1}
+				expr, err := subParser.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				exprParts = append(exprParts, expr)
+			}
+		}
+		return ast.StringInterp{Parts: exprParts}, nil
 	case lexer.TokBool:
 		p.advance()
 		return ast.BoolLit{Value: tok.Value.(bool)}, nil
@@ -169,7 +186,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 
 func isAtomStart(kind string) bool {
 	switch kind {
-	case lexer.TokInt, lexer.TokFloat, lexer.TokString, lexer.TokBool,
+	case lexer.TokInt, lexer.TokFloat, lexer.TokString, lexer.TokInterp, lexer.TokBool,
 		lexer.TokIdent, lexer.TokLParen, lexer.TokLBrack:
 		return true
 	}
@@ -300,11 +317,11 @@ func (p *parser) parseCompare() (ast.Expr, error) {
 		return nil, err
 	}
 	opMap := map[string]string{
-		lexer.TokLt:    "Lt",
-		lexer.TokGt:    "Gt",
-		lexer.TokLtEq:  "Leq",
-		lexer.TokGtEq:  "Geq",
-		lexer.TokEqEq:  "Eq",
+		lexer.TokLt:      "Lt",
+		lexer.TokGt:      "Gt",
+		lexer.TokLtEq:    "Leq",
+		lexer.TokGtEq:    "Geq",
+		lexer.TokEqEq:    "Eq",
 		lexer.TokSlashEq: "Neq",
 	}
 	k := p.peek().Kind

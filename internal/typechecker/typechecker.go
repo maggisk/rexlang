@@ -214,6 +214,16 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		return subst, types.TFloat, nil
 	case ast.StringLit:
 		return subst, types.TString, nil
+	case ast.StringInterp:
+		s := subst
+		for _, part := range e.Parts {
+			var err error
+			s, _, err = tc.infer(env, typeDefs, s, part)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		return s, types.TString, nil
 	case ast.BoolLit:
 		return subst, types.TBool, nil
 	case ast.UnitLit:
@@ -1334,29 +1344,29 @@ func mathTypeEnv() TypeEnv {
 
 func stringTypeEnv() TypeEnv {
 	return TypeEnv{
-		"length":     types.Scheme{Ty: types.TFun(types.TString, types.TInt)},
-		"toUpper":    types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-		"toLower":    types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-		"trim":       types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-		"split":      types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TList(types.TString)))},
-		"join":       types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TList(types.TString), types.TString))},
-		"toString":   types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TVar{Name: "a"}, types.TString)},
-		"contains":   types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TBool))},
-		"startsWith": types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TBool))},
-		"endsWith":   types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TBool))},
-		"charAt":     types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TMaybe(types.TString)))},
-		"substring":  types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TFun(types.TString, types.TString)))},
-		"indexOf":    types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TMaybe(types.TInt)))},
-		"replace":    types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
-		"repeat":     types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TString))},
-		"padLeft":    types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
-		"padRight":   types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
-		"words":      types.Scheme{Ty: types.TFun(types.TString, types.TList(types.TString))},
-		"lines":      types.Scheme{Ty: types.TFun(types.TString, types.TList(types.TString))},
-		"charCode":   types.Scheme{Ty: types.TFun(types.TString, types.TInt)},
+		"length":       types.Scheme{Ty: types.TFun(types.TString, types.TInt)},
+		"toUpper":      types.Scheme{Ty: types.TFun(types.TString, types.TString)},
+		"toLower":      types.Scheme{Ty: types.TFun(types.TString, types.TString)},
+		"trim":         types.Scheme{Ty: types.TFun(types.TString, types.TString)},
+		"split":        types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TList(types.TString)))},
+		"join":         types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TList(types.TString), types.TString))},
+		"toString":     types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TVar{Name: "a"}, types.TString)},
+		"contains":     types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TBool))},
+		"startsWith":   types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TBool))},
+		"endsWith":     types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TBool))},
+		"charAt":       types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TMaybe(types.TString)))},
+		"substring":    types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TFun(types.TString, types.TString)))},
+		"indexOf":      types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TMaybe(types.TInt)))},
+		"replace":      types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
+		"repeat":       types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TString))},
+		"padLeft":      types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
+		"padRight":     types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
+		"words":        types.Scheme{Ty: types.TFun(types.TString, types.TList(types.TString))},
+		"lines":        types.Scheme{Ty: types.TFun(types.TString, types.TList(types.TString))},
+		"charCode":     types.Scheme{Ty: types.TFun(types.TString, types.TInt)},
 		"fromCharCode": types.Scheme{Ty: types.TFun(types.TInt, types.TString)},
-		"parseInt":   types.Scheme{Ty: types.TFun(types.TString, types.TMaybe(types.TInt))},
-		"parseFloat": types.Scheme{Ty: types.TFun(types.TString, types.TMaybe(types.TFloat))},
+		"parseInt":     types.Scheme{Ty: types.TFun(types.TString, types.TMaybe(types.TInt))},
+		"parseFloat":   types.Scheme{Ty: types.TFun(types.TString, types.TMaybe(types.TFloat))},
 	}
 }
 
@@ -1408,8 +1418,10 @@ func processTypeEnv() TypeEnv {
 
 func InitialTypeEnv() TypeEnv {
 	env := TypeEnv{
-		"not":   types.Scheme{Ty: types.TFun(types.TBool, types.TBool)},
-		"error": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TString, types.TVar{Name: "a"})},
+		"not":       types.Scheme{Ty: types.TFun(types.TBool, types.TBool)},
+		"error":     types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TString, types.TVar{Name: "a"})},
+		"showInt":   types.Scheme{Ty: types.TFun(types.TInt, types.TString)},
+		"showFloat": types.Scheme{Ty: types.TFun(types.TFloat, types.TString)},
 	}
 	for k, v := range processTypeEnv() {
 		env[k] = v

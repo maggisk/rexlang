@@ -75,6 +75,18 @@ case xs of
     |> sum
 ```
 
+### String interpolation
+
+```
+let name = "Rex"
+let version = 1
+"Hello, ${name}! Version ${version}"    -- "Hello, Rex! Version 1"
+"Escaped: \${not interpolated}"         -- "Escaped: ${not interpolated}"
+"Expr: ${1 + 2 + 3}"                   -- "Expr: 6"
+```
+
+Expressions inside `${...}` are converted to strings via the `Show` trait. Strings without `${` are unchanged. Use `\$` to produce a literal `$`.
+
 ### Traits (typeclasses)
 
 ```
@@ -82,10 +94,10 @@ trait Describable a where
     describe : a -> String
 
 impl Describable Int where
-    describe n = "the number " ++ toString n
+    describe n = "the number " ++ show n
 ```
 
-The prelude provides `Eq`, `Ord`, and `Ordering` with instances for `Int`, `Float`, `String`, and `Bool`.
+The prelude provides `Eq`, `Ord`, `Show`, and `Ordering` with instances for `Int`, `Float`, `String`, and `Bool`.
 
 ### Imports and modules
 
@@ -155,6 +167,7 @@ else
 | `std:Math`   | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase`                                                                                                                                                                                 |
 | `std:IO`     | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`)                                                                                                                                                                                                        |
 | `std:Env`    | `getEnv` (returns `Maybe`), `getEnvOr`, `args`                                                                                                                                                                                                                                              |
+| `std:Process`| `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages                                                                                                                                                                                                    |
 
 ## Examples
 
@@ -171,6 +184,7 @@ else
 | `examples/mutual_recursion.rex` | Mutual recursion with `let rec … and`    |
 | `examples/traits.rex`           | Trait declarations and implementations   |
 | `examples/map.rex`              | `std:Map` sorted map                     |
+| `examples/interpolation.rex`    | String interpolation with `${expr}`      |
 | `examples/import.rex`           | Module imports (selective and qualified) |
 | `examples/maybe.rex`            | `Maybe` type from Prelude                |
 | `examples/io.rex`               | File I/O with `Result`                   |
@@ -178,6 +192,7 @@ else
 | `examples/math.rex`             | Math stdlib                              |
 | `examples/floats.rex`           | Float arithmetic                         |
 | `examples/modulo.rex`           | Modulo operator                          |
+| `examples/actors.rex`           | Actor-model concurrency with `std:Process` |
 | `examples/testing.rex`          | Built-in test framework                  |
 
 ## Running tests
@@ -192,9 +207,9 @@ go test ./...
 ### Language
 
 - [ ] Records — `{ name : String, age : Int }`, field access, update syntax
-- [ ] String interpolation — `"hello ${name}"`
+- [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - [ ] Type aliases — `type Name = String`
-- [ ] Traits v2 — parameterized instances, constraint propagation, `Show` trait
+- [ ] Traits v2 — parameterized instances, constraint propagation
 - [ ] Type annotations — optional `let f : Int -> Int`
 - [ ] User modules — import your own `.rex` files
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
@@ -224,4 +239,4 @@ Ideas worth keeping in mind but not yet committed to. May never happen.
 
 - **Extensible records (row polymorphism)** — functions over "any record with field `x`". Elm had these and [removed them in 0.19](https://elm-lang.org/news/small-assets-without-the-headache) because the complexity cost (error messages, type system machinery) outweighed the flexibility. Traits already cover many of the same use cases. WasmGC's fixed-layout structs also push against it. Worth revisiting only if plain records prove genuinely limiting in practice.
 - **Hot module reloading** — WasmGC separates code from the GC-managed heap, which makes this more tractable than classic linear-memory Wasm. Live GC references are typed and runtime-managed, so a host could in theory transfer them from an old module instance to a new one. The open questions are type layout compatibility across versions and the lack of standardized dynamic linking in the Wasm spec today. Needs more research before committing.
-- **Concurrency / actors** — single-threaded cooperative scheduler as a stdlib library. Swap internals for real WASI threads when the spec matures.
+- **Concurrency / actors** — already implemented via `std:Process` with Go goroutines. May swap internals for real WASI threads when the spec matures.
