@@ -1,5 +1,9 @@
 -- Built-in test framework demo
 
+test "tests can reference functions defined below" =
+    assert (double 5 == 10)
+    assert (add 1 2 == 3)
+
 let double x = x * 2
 
 let add x y = x + y

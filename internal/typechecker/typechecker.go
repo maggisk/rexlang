@@ -1969,7 +1969,10 @@ func CheckProgram(exprs []ast.Expr) (TypeEnv, error) {
 	}
 	env := prelude.Env.clone()
 	typeDefs := PreregisterTypes(exprs, copyTypeDefs(prelude.TypeDefs))
-	for _, expr := range exprs {
+	// Typecheck non-test expressions first, then tests, so tests can
+	// reference any definition regardless of source order.
+	ordered := deferTests(exprs)
+	for _, expr := range ordered {
 		res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 		if err != nil {
 			return nil, err
@@ -1978,6 +1981,20 @@ func CheckProgram(exprs []ast.Expr) (TypeEnv, error) {
 		typeDefs = res.TypeDefs
 	}
 	return env, nil
+}
+
+// deferTests reorders expressions so that TestDecl nodes come after all other
+// top-level expressions, preserving relative order within each group.
+func deferTests(exprs []ast.Expr) []ast.Expr {
+	var defs, tests []ast.Expr
+	for _, e := range exprs {
+		if _, ok := e.(ast.TestDecl); ok {
+			tests = append(tests, e)
+		} else {
+			defs = append(defs, e)
+		}
+	}
+	return append(defs, tests...)
 }
 
 // ---------------------------------------------------------------------------
@@ -2061,7 +2078,8 @@ func CheckProgramWithExtraEnv(exprs []ast.Expr, extraEnv TypeEnv) (TypeEnv, erro
 		env[k] = v
 	}
 	typeDefs := PreregisterTypes(exprs, copyTypeDefs(prelude.TypeDefs))
-	for _, expr := range exprs {
+	ordered := deferTests(exprs)
+	for _, expr := range ordered {
 		res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 		if err != nil {
 			return nil, err
