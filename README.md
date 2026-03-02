@@ -53,6 +53,13 @@ in
 square a + square b
 ```
 
+Definition order doesn't matter — top-level bindings are automatically sorted by dependency. Mutual recursion still requires explicit `let rec … and …`.
+
+```
+let result = double 5             -- forward reference: double is defined below
+let double x = x * 2
+```
+
 ### Pattern matching
 
 ```
@@ -327,6 +334,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | `examples/multiline.rex` | Multi-line strings with `"""` |
 | `examples/number_literals.rex` | Hex, octal, binary literals and underscore separators |
 | `examples/let_block.rex` | Multi-binding let blocks (Elm-style) |
+| `examples/forward_ref.rex` | Forward references between top-level bindings |
 | `examples/testing.rex` | Built-in test framework |
 
 ## Running tests
@@ -375,4 +383,5 @@ Ideas worth keeping in mind but not yet committed to. May never happen.
 
 - **Extensible records (row polymorphism)** — functions over "any record with field `x`". Elm had these and [removed them in 0.19](https://elm-lang.org/news/small-assets-without-the-headache) because the complexity cost (error messages, type system machinery) outweighed the flexibility. Traits already cover many of the same use cases. WasmGC's fixed-layout structs also push against it. Worth revisiting only if plain records prove genuinely limiting in practice.
 - **Hot module reloading** — WasmGC separates code from the GC-managed heap, which makes this more tractable than classic linear-memory Wasm. Live GC references are typed and runtime-managed, so a host could in theory transfer them from an old module instance to a new one. The open questions are type layout compatibility across versions and the lack of standardized dynamic linking in the Wasm spec today. Needs more research before committing.
+- **Implicit mutual recursion** — currently, mutually recursive functions require explicit `let rec … and …`. Elm and Haskell treat all top-level bindings as mutually recursive by default. We could auto-detect cycles in the dependency graph and wrap them in implicit `LetRec` groups instead of erroring. Trade-off: simpler for users, but makes accidental cycles (typos, shadowing bugs) harder to catch.
 - **Concurrency / actors** — already implemented via `std:Process` with Go goroutines. May swap internals for real WASI threads when the spec matures.

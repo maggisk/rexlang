@@ -999,12 +999,8 @@ func InitialEnv(programArgs []string) Env {
 // RunProgram and RunTests
 // ---------------------------------------------------------------------------
 
-// RunProgram evaluates the entire program.
-func RunProgram(source string, programArgs []string) (Value, error) {
-	exprs, err := parser.Parse(source)
-	if err != nil {
-		return nil, err
-	}
+// RunProgram evaluates a list of pre-parsed (and reordered) top-level expressions.
+func RunProgram(exprs []ast.Expr, programArgs []string) (Value, error) {
 	env, err := loadPreludeEval(programArgs)
 	if err != nil {
 		return nil, err
@@ -1022,13 +1018,9 @@ func RunProgram(source string, programArgs []string) (Value, error) {
 	return last, nil
 }
 
-// RunTests runs all test blocks in source.
+// RunTests runs all test blocks from a list of pre-parsed (and reordered) expressions.
 // label is used in the header line (e.g. "=== label ==="); empty to suppress.
-func RunTests(source string, programArgs []string, extraBuiltins map[string]Value, label string) (int, int, error) {
-	exprs, err := parser.Parse(source)
-	if err != nil {
-		return 0, 0, err
-	}
+func RunTests(exprs []ast.Expr, programArgs []string, extraBuiltins map[string]Value, label string) (int, int, error) {
 	env, err := loadPreludeEval(programArgs)
 	if err != nil {
 		return 0, 0, err

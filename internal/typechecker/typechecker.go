@@ -3,6 +3,7 @@ package typechecker
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/maggisk/rexlang/internal/ast"
@@ -1969,9 +1970,10 @@ func CheckProgram(exprs []ast.Expr) (TypeEnv, error) {
 	}
 	env := prelude.Env.clone()
 	typeDefs := PreregisterTypes(exprs, copyTypeDefs(prelude.TypeDefs))
-	// Typecheck non-test expressions first, then tests, so tests can
-	// reference any definition regardless of source order.
-	ordered := deferTests(exprs)
+	ordered, err := ReorderToplevel(exprs)
+	if err != nil {
+		return nil, err
+	}
 	for _, expr := range ordered {
 		res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 		if err != nil {
@@ -1983,18 +1985,404 @@ func CheckProgram(exprs []ast.Expr) (TypeEnv, error) {
 	return env, nil
 }
 
-// deferTests reorders expressions so that TestDecl nodes come after all other
-// top-level expressions, preserving relative order within each group.
-func deferTests(exprs []ast.Expr) []ast.Expr {
-	var defs, tests []ast.Expr
+// ---------------------------------------------------------------------------
+// Top-level reordering (dependency analysis)
+// ---------------------------------------------------------------------------
+
+// ReorderToplevel reorders top-level expressions so that:
+//  1. Let/LetRec/LetPat bindings are topologically sorted by dependency,
+//     filling the same positional slots they originally occupied
+//  2. Non-binding exprs keep their original positions relative to bindings
+//  3. Tests are moved to the end
+//
+// TypeAnnotations travel with their corresponding binding.
+// Returns an error if mutually recursive bindings are detected.
+func ReorderToplevel(exprs []ast.Expr) ([]ast.Expr, error) {
+	type bindingEntry struct {
+		expr       ast.Expr
+		names      []string
+		annotation *ast.TypeAnnotation
+	}
+
+	// First pass: collect all binding names so we know which annotations to pair
+	bindingNameSet := map[string]bool{}
 	for _, e := range exprs {
-		if _, ok := e.(ast.TestDecl); ok {
-			tests = append(tests, e)
-		} else {
-			defs = append(defs, e)
+		switch e := e.(type) {
+		case ast.Let:
+			if e.InExpr == nil {
+				bindingNameSet[e.Name] = true
+			}
+		case ast.LetRec:
+			if e.InExpr == nil {
+				for _, b := range e.Bindings {
+					bindingNameSet[b.Name] = true
+				}
+			}
+		case ast.LetPat:
+			if e.InExpr == nil {
+				for _, n := range patNames(e.Pat) {
+					bindingNameSet[n] = true
+				}
+			}
 		}
 	}
-	return append(defs, tests...)
+
+	// Second pass: build entries list tracking which positions are binding slots
+	const (
+		slotFixed   = 0
+		slotBinding = 1
+	)
+	type slot struct {
+		kind int
+		bidx int      // index into bindings (for slotBinding)
+		expr ast.Expr // for slotFixed
+	}
+
+	var slots []slot
+	var bindings []bindingEntry
+	var tests []ast.Expr
+	annotations := map[string]ast.TypeAnnotation{}
+
+	for _, e := range exprs {
+		switch e := e.(type) {
+		case ast.TestDecl:
+			tests = append(tests, e)
+		case ast.TypeAnnotation:
+			if bindingNameSet[e.Name] {
+				annotations[e.Name] = e
+			} else {
+				slots = append(slots, slot{kind: slotFixed, expr: e})
+			}
+		case ast.Let:
+			if e.InExpr == nil {
+				var ann *ast.TypeAnnotation
+				if a, ok := annotations[e.Name]; ok {
+					ann = &a
+					delete(annotations, e.Name)
+				}
+				bidx := len(bindings)
+				bindings = append(bindings, bindingEntry{expr: e, names: []string{e.Name}, annotation: ann})
+				slots = append(slots, slot{kind: slotBinding, bidx: bidx})
+			} else {
+				slots = append(slots, slot{kind: slotFixed, expr: e})
+			}
+		case ast.LetRec:
+			if e.InExpr == nil {
+				names := make([]string, len(e.Bindings))
+				for j, b := range e.Bindings {
+					names[j] = b.Name
+				}
+				// Check for annotations on any of the bindings
+				var ann *ast.TypeAnnotation
+				for _, n := range names {
+					if a, ok := annotations[n]; ok {
+						ann = &a
+						delete(annotations, n)
+						break // LetRec group gets at most one prepended annotation
+					}
+				}
+				bidx := len(bindings)
+				bindings = append(bindings, bindingEntry{expr: e, names: names, annotation: ann})
+				slots = append(slots, slot{kind: slotBinding, bidx: bidx})
+			} else {
+				slots = append(slots, slot{kind: slotFixed, expr: e})
+			}
+		case ast.LetPat:
+			if e.InExpr == nil {
+				pnames := patNames(e.Pat)
+				bidx := len(bindings)
+				bindings = append(bindings, bindingEntry{expr: e, names: pnames})
+				slots = append(slots, slot{kind: slotBinding, bidx: bidx})
+			} else {
+				slots = append(slots, slot{kind: slotFixed, expr: e})
+			}
+		default:
+			slots = append(slots, slot{kind: slotFixed, expr: e})
+		}
+	}
+
+	if len(bindings) <= 1 {
+		// Nothing to reorder — just reassemble from slots + tests
+		result := make([]ast.Expr, 0, len(exprs))
+		for _, s := range slots {
+			if s.kind == slotFixed {
+				result = append(result, s.expr)
+			} else {
+				b := bindings[s.bidx]
+				if b.annotation != nil {
+					result = append(result, *b.annotation)
+				}
+				result = append(result, b.expr)
+			}
+		}
+		result = append(result, tests...)
+		return result, nil
+	}
+
+	// Build name → binding index map
+	nameToIdx := map[string]int{}
+	for i, b := range bindings {
+		for _, n := range b.names {
+			nameToIdx[n] = i
+		}
+	}
+
+	// Compute dependencies for each binding
+	deps := make([]map[int]bool, len(bindings))
+	dependents := make([][]int, len(bindings))
+	for i, b := range bindings {
+		fv := bindingFreeVars(b.expr)
+		for _, n := range b.names {
+			delete(fv, n)
+		}
+		deps[i] = map[int]bool{}
+		for v := range fv {
+			if j, ok := nameToIdx[v]; ok && j != i {
+				deps[i][j] = true
+			}
+		}
+	}
+
+	// Build reverse adjacency
+	for i, d := range deps {
+		for j := range d {
+			dependents[j] = append(dependents[j], i)
+		}
+	}
+
+	// Kahn's algorithm with stability (prefer lower index for determinism)
+	inDegree := make([]int, len(bindings))
+	for i := range bindings {
+		inDegree[i] = len(deps[i])
+	}
+
+	var queue []int
+	for i, d := range inDegree {
+		if d == 0 {
+			queue = append(queue, i)
+		}
+	}
+
+	var sorted []int
+	for len(queue) > 0 {
+		minPos := 0
+		for j := 1; j < len(queue); j++ {
+			if queue[j] < queue[minPos] {
+				minPos = j
+			}
+		}
+		node := queue[minPos]
+		queue[minPos] = queue[len(queue)-1]
+		queue = queue[:len(queue)-1]
+
+		sorted = append(sorted, node)
+
+		for _, dep := range dependents[node] {
+			inDegree[dep]--
+			if inDegree[dep] == 0 {
+				queue = append(queue, dep)
+			}
+		}
+	}
+
+	if len(sorted) != len(bindings) {
+		var cycleNames []string
+		for i, d := range inDegree {
+			if d > 0 {
+				cycleNames = append(cycleNames, strings.Join(bindings[i].names, ", "))
+			}
+		}
+		return nil, &types.TypeError{Msg: fmt.Sprintf(
+			"mutually recursive bindings: %s — use let rec ... and ...",
+			strings.Join(cycleNames, ", "),
+		)}
+	}
+
+	// Reassemble: walk slots, filling binding slots with sorted bindings in order
+	result := make([]ast.Expr, 0, len(exprs))
+	sortedPos := 0
+	for _, s := range slots {
+		if s.kind == slotFixed {
+			result = append(result, s.expr)
+		} else {
+			b := bindings[sorted[sortedPos]]
+			if b.annotation != nil {
+				result = append(result, *b.annotation)
+			}
+			result = append(result, b.expr)
+			sortedPos++
+		}
+	}
+	result = append(result, tests...)
+	return result, nil
+}
+
+// bindingFreeVars returns the free variables of a top-level binding's body.
+func bindingFreeVars(expr ast.Expr) map[string]bool {
+	result := map[string]bool{}
+	switch e := expr.(type) {
+	case ast.Let:
+		bound := map[string]bool{}
+		if e.Recursive {
+			bound[e.Name] = true
+		}
+		freeVarsRec(e.Body, bound, result)
+	case ast.LetRec:
+		bound := map[string]bool{}
+		for _, b := range e.Bindings {
+			bound[b.Name] = true
+		}
+		for _, b := range e.Bindings {
+			freeVarsRec(b.Body, bound, result)
+		}
+	case ast.LetPat:
+		freeVarsRec(e.Body, map[string]bool{}, result)
+	}
+	return result
+}
+
+// freeVarsRec walks an expression collecting free variable references.
+func freeVarsRec(expr ast.Expr, bound map[string]bool, free map[string]bool) {
+	switch e := expr.(type) {
+	case ast.Var:
+		if !bound[e.Name] {
+			free[e.Name] = true
+		}
+	case ast.IntLit, ast.FloatLit, ast.StringLit, ast.BoolLit, ast.UnitLit:
+		// no free vars
+	case ast.UnaryMinus:
+		freeVarsRec(e.Expr, bound, free)
+	case ast.Binop:
+		freeVarsRec(e.Left, bound, free)
+		freeVarsRec(e.Right, bound, free)
+	case ast.If:
+		freeVarsRec(e.Cond, bound, free)
+		freeVarsRec(e.ThenExpr, bound, free)
+		freeVarsRec(e.ElseExpr, bound, free)
+	case ast.Let:
+		if e.Recursive {
+			newBound := copyStringSet(bound)
+			newBound[e.Name] = true
+			freeVarsRec(e.Body, newBound, free)
+			if e.InExpr != nil {
+				freeVarsRec(e.InExpr, newBound, free)
+			}
+		} else {
+			freeVarsRec(e.Body, bound, free)
+			if e.InExpr != nil {
+				newBound := copyStringSet(bound)
+				newBound[e.Name] = true
+				freeVarsRec(e.InExpr, newBound, free)
+			}
+		}
+	case ast.LetRec:
+		newBound := copyStringSet(bound)
+		for _, b := range e.Bindings {
+			newBound[b.Name] = true
+		}
+		for _, b := range e.Bindings {
+			freeVarsRec(b.Body, newBound, free)
+		}
+		if e.InExpr != nil {
+			freeVarsRec(e.InExpr, newBound, free)
+		}
+	case ast.LetPat:
+		freeVarsRec(e.Body, bound, free)
+		if e.InExpr != nil {
+			newBound := copyStringSet(bound)
+			for _, n := range patNames(e.Pat) {
+				newBound[n] = true
+			}
+			freeVarsRec(e.InExpr, newBound, free)
+		}
+	case ast.Fun:
+		newBound := copyStringSet(bound)
+		newBound[e.Param] = true
+		freeVarsRec(e.Body, newBound, free)
+	case ast.App:
+		freeVarsRec(e.Func, bound, free)
+		freeVarsRec(e.Arg, bound, free)
+	case ast.Match:
+		freeVarsRec(e.Scrutinee, bound, free)
+		for _, arm := range e.Arms {
+			newBound := copyStringSet(bound)
+			for _, n := range patNames(arm.Pat) {
+				newBound[n] = true
+			}
+			freeVarsRec(arm.Body, newBound, free)
+		}
+	case ast.ListLit:
+		for _, item := range e.Items {
+			freeVarsRec(item, bound, free)
+		}
+	case ast.TupleLit:
+		for _, item := range e.Items {
+			freeVarsRec(item, bound, free)
+		}
+	case ast.StringInterp:
+		for _, part := range e.Parts {
+			freeVarsRec(part, bound, free)
+		}
+	case ast.RecordCreate:
+		for _, f := range e.Fields {
+			freeVarsRec(f.Value, bound, free)
+		}
+	case ast.FieldAccess:
+		freeVarsRec(e.Record, bound, free)
+	case ast.RecordUpdate:
+		freeVarsRec(e.Record, bound, free)
+		for _, u := range e.Updates {
+			freeVarsRec(u.Value, bound, free)
+		}
+	case ast.Assert:
+		freeVarsRec(e.Expr, bound, free)
+	case ast.ImplDecl:
+		for _, m := range e.Methods {
+			freeVarsRec(m.Body, bound, free)
+		}
+	case ast.TestDecl:
+		for _, bodyExpr := range e.Body {
+			freeVarsRec(bodyExpr, bound, free)
+		}
+		// DotAccess, TypeDecl, Import, Export, TraitDecl, TypeAnnotation: no free vars
+	}
+}
+
+// patNames extracts all variable names bound by a pattern.
+func patNames(pat ast.Pattern) []string {
+	var names []string
+	collectPatNames(pat, &names)
+	return names
+}
+
+func collectPatNames(pat ast.Pattern, names *[]string) {
+	switch p := pat.(type) {
+	case ast.PVar:
+		*names = append(*names, p.Name)
+	case ast.PCons:
+		collectPatNames(p.Head, names)
+		collectPatNames(p.Tail, names)
+	case ast.PTuple:
+		for _, pp := range p.Pats {
+			collectPatNames(pp, names)
+		}
+	case ast.PCtor:
+		for _, pp := range p.Args {
+			collectPatNames(pp, names)
+		}
+	case ast.PRecord:
+		for _, f := range p.Fields {
+			collectPatNames(f.Pat, names)
+		}
+	}
+}
+
+func copyStringSet(s map[string]bool) map[string]bool {
+	out := make(map[string]bool, len(s))
+	for k := range s {
+		out[k] = true
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -2078,7 +2466,10 @@ func CheckProgramWithExtraEnv(exprs []ast.Expr, extraEnv TypeEnv) (TypeEnv, erro
 		env[k] = v
 	}
 	typeDefs := PreregisterTypes(exprs, copyTypeDefs(prelude.TypeDefs))
-	ordered := deferTests(exprs)
+	ordered, err := ReorderToplevel(exprs)
+	if err != nil {
+		return nil, err
+	}
 	for _, expr := range ordered {
 		res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 		if err != nil {

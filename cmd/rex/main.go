@@ -54,6 +54,13 @@ func runFile(path string, programArgs []string) {
 		os.Exit(1)
 	}
 
+	// Reorder top-level bindings by dependency
+	exprs, err = typechecker.ReorderToplevel(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+
 	// Type check
 	if _, err := typechecker.CheckProgram(exprs); err != nil {
 		printErr("Type error", err)
@@ -61,7 +68,7 @@ func runFile(path string, programArgs []string) {
 	}
 
 	// Evaluate
-	if _, err := eval.RunProgram(string(source), programArgs); err != nil {
+	if _, err := eval.RunProgram(exprs, programArgs); err != nil {
 		printErr("Runtime error", err)
 		os.Exit(1)
 	}
@@ -93,6 +100,13 @@ func runTests(path string) int {
 		os.Exit(1)
 	}
 
+	// Reorder top-level bindings by dependency
+	exprs, err = typechecker.ReorderToplevel(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+
 	// Type check with optional extra env
 	if extraTypeEnv != nil {
 		if _, err := typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv); err != nil {
@@ -106,7 +120,7 @@ func runTests(path string) int {
 		}
 	}
 
-	_, failed, err := eval.RunTests(src, nil, extraBuiltins, path)
+	_, failed, err := eval.RunTests(exprs, nil, extraBuiltins, path)
 	if err != nil {
 		printErr("Error", err)
 		os.Exit(1)
