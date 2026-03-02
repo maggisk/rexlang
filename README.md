@@ -353,6 +353,8 @@ go test ./...
 - [x] Multi-line strings — `"""..."""` triple-quoted strings
 - [x] Type aliases — `type Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation
+- [ ] Exhaustiveness checking — reject non-exhaustive `case` at compile time
+- [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - [x] Multi-binding let — Elm-style `let a = 1 / b = 2 / in / expr`
 - [ ] User modules — import your own `.rex` files

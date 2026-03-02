@@ -144,6 +144,8 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - [x] Multi-binding let — Elm-style `let a = 1 / b = 2 / in / a + b` (parser-only desugaring)
 - Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`)
+- Exhaustiveness checking — static pass post-HM using `__ctor_families__`; reject incomplete case analysis at compile time
+- Typed holes — `?name` in expression position; typechecker infers the required type from surrounding context and reports it along with in-scope bindings; enables type-directed, incremental program construction. Never reaches eval. Implementation: `HoleExpr{Name string}` AST node; typechecker unifies hole with inferred type, collects into a holes report instead of a hard error. Use `?name` (not `_`) to avoid ambiguity with pattern wildcards.
 
 ### Error experience
 - Better error messages — source locations, span info
