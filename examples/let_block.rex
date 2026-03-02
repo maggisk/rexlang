@@ -1,7 +1,6 @@
 -- Multi-binding let blocks (Elm-style)
 
 import std:List (map, foldl)
-import std:IO (print)
 
 -- Multiple simple bindings
 let result =
@@ -45,10 +44,10 @@ let total =
     sum
 
 test "multi-binding let blocks" =
-    assert result == 200
-    assert hypotenuse == 25
-    assert nested == 6
-    assert chained == 30
-    assert total == 30
+    assert (result == 200)
+    assert (hypotenuse == 25)
+    assert (nested == 6)
+    assert (chained == 30)
+    assert (total == 30)
 
-print (result + hypotenuse + nested + chained + total)
+true

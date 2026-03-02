@@ -1,18 +1,15 @@
 -- Parallel map: apply a function to list elements concurrently.
 
 import std:Parallel (pmap, pmapN, numCPU)
-import std:IO (println)
 
 let square x = x * x
 
--- One process per element
-let a = pmap square [1, 2, 3, 4, 5]
-let _ = println "pmap square [1..5]:"
-let _ = println "  ${a}"
+test "pmap" =
+    assert (pmap square [1, 2, 3, 4, 5] == [1, 4, 9, 16, 25])
+    assert (pmap (fn x -> x + 1) [] == [])
 
--- Bounded parallelism (numCPU workers)
-let b = pmapN numCPU square [1, 2, 3, 4, 5, 6, 7, 8]
-let _ = println "pmapN numCPU square [1..8]:"
-let _ = println "  ${b}"
+test "pmapN" =
+    assert (pmapN numCPU square [1, 2, 3, 4, 5, 6, 7, 8] == [1, 4, 9, 16, 25, 36, 49, 64])
+    assert (pmapN 2 square [1, 2, 3] == [1, 4, 9])
 
-a == [1, 4, 9, 16, 25]
+true

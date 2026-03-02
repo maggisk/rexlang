@@ -1,7 +1,14 @@
-import std:IO (print)
+-- Modulo operator examples
 
--- modulo operator examples
-let a = 10 % 3   -- 1
-let b = 7 % 2    -- 1
 let isEven = fn n -> n % 2 == 0
-print (isEven 4)
+
+test "modulo" =
+    assert (10 % 3 == 1)
+    assert (7 % 2 == 1)
+    assert (6 % 3 == 0)
+
+test "isEven" =
+    assert (isEven 4)
+    assert (not (isEven 5))
+
+true

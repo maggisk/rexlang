@@ -1,5 +1,3 @@
-import std:IO (print)
-
 -- Mutual recursion: isEven and isOdd
 
 let rec isEven n =
@@ -13,4 +11,14 @@ and isOdd n =
     else
         isEven (n - 1)
 
-print (isEven 10)
+test "isEven" =
+    assert (isEven 0)
+    assert (isEven 10)
+    assert (not (isEven 7))
+
+test "isOdd" =
+    assert (isOdd 1)
+    assert (isOdd 11)
+    assert (not (isOdd 8))
+
+true

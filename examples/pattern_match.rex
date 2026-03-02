@@ -1,5 +1,3 @@
-import std:IO (print)
-
 -- Pattern matching examples
 
 
@@ -13,7 +11,8 @@ let rec fib n =
         _ ->
             fib (n - 1) + fib (n - 2)
 
-print (fib 10)
+test "fibonacci via pattern match" =
+    assert (fib 10 == 55)
 
 
 -- Describe a number as a string
@@ -26,9 +25,10 @@ let describe x =
         _ ->
             "other"
 
-print (describe 0)
-print (describe 1)
-print (describe 42)
+test "describe" =
+    assert (describe 0 == "zero")
+    assert (describe 1 == "one")
+    assert (describe 42 == "other")
 
 
 -- Boolean negation via pattern matching
@@ -39,5 +39,8 @@ let myNot b =
         false ->
             true
 
-print (myNot true)
-print (myNot false)
+test "boolean negation" =
+    assert (myNot true == false)
+    assert (myNot false == true)
+
+true

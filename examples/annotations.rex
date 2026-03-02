@@ -1,4 +1,4 @@
-import std:IO (println)
+-- Type annotations
 
 double : Int -> Int
 let double x = x * 2
@@ -9,8 +9,10 @@ let identity x = x
 greet : String -> String
 let greet name = "Hello, ${name}!"
 
-println (double 21)
-println (identity "hello")
-println (greet "Rex")
+test "annotated functions" =
+    assert (double 21 == 42)
+    assert (identity "hello" == "hello")
+    assert (identity 42 == 42)
+    assert (greet "Rex" == "Hello, Rex!")
 
-"done"
+true

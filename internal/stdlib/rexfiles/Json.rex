@@ -21,6 +21,7 @@ type JsonObj = ObjNil | ObjCons string Json JsonObj
 --     parse "null" == Ok JNull
 --     parse "{\"x\": 1}" == Ok (JObj (ObjCons "x" (JNum 1.0) ObjNil))
 --
+parse : String -> Result Json String
 let parse s =
     jsonParse s
 
@@ -37,6 +38,7 @@ let parse s =
 --     stringify (JBool true) == "true"
 --     stringify (JStr "hi") == "\"hi\""
 --
+stringify : Json -> String
 let rec stringify j =
     let escapeStr s =
         s
@@ -89,15 +91,19 @@ let rec stringify j =
 let encodeNull = JNull
 
 -- | Create a JSON boolean.
+encodeBool : Bool -> Json
 let encodeBool b = JBool b
 
 -- | Create a JSON number from a float.
+encodeNum : Float -> Json
 let encodeNum n = JNum n
 
 -- | Create a JSON string.
+encodeStr : String -> Json
 let encodeStr s = JStr s
 
 -- | Create a JSON array from a Rex list of Json values.
+encodeArr : [Json] -> Json
 let encodeArr lst =
     let rec fromList xs =
         case xs of
@@ -109,6 +115,7 @@ let encodeArr lst =
     JArr (fromList lst)
 
 -- | Create a JSON object from a Rex list of (String, Json) pairs.
+encodeObj : [(String, Json)] -> Json
 let encodeObj pairs =
     let rec fromList xs =
         case xs of
@@ -125,6 +132,7 @@ let encodeObj pairs =
 
 
 -- | Look up a field in a JSON object, returning Nothing if absent.
+getField : String -> JsonObj -> Maybe Json
 let rec getField key obj =
     case obj of
         ObjNil ->
@@ -136,6 +144,7 @@ let rec getField key obj =
                 getField key rest
 
 -- | Convert a JsonList to a Rex list.
+arrayToList : JsonList -> [Json]
 let rec arrayToList arr =
     case arr of
         ArrNil ->
@@ -144,6 +153,7 @@ let rec arrayToList arr =
             x :: arrayToList rest
 
 -- | Convert a Rex list to a JsonList.
+listToArray : [Json] -> JsonList
 let listToArray lst =
     let rec fromList xs =
         case xs of

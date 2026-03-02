@@ -12,6 +12,7 @@ type Result a e = Ok a | Err e
 --     isOk (Ok 42) == true
 --     isOk (Err "oops") == false
 --
+isOk : Result a e -> Bool
 let isOk r =
     case r of
         Ok _ ->
@@ -29,6 +30,7 @@ test "isOk" =
 --     isErr (Err "oops") == true
 --     isErr (Ok 42) == false
 --
+isErr : Result a e -> Bool
 let isErr r =
     case r of
         Ok _ ->
@@ -49,6 +51,7 @@ test "isErr" =
 --     withDefault 0 (Ok 42) == 42
 --     withDefault 0 (Err "oops") == 0
 --
+withDefault : a -> Result a e -> a
 let withDefault default r =
     case r of
         Ok x ->
@@ -69,6 +72,7 @@ test "withDefault" =
 --     map (fn x -> x * 2) (Ok 5) == Ok 10
 --     map (fn x -> x * 2) (Err "oops") == Err "oops"
 --
+map : (a -> b) -> Result a e -> Result b e
 let map f r =
     case r of
         Ok x ->
@@ -86,6 +90,7 @@ test "map" =
 --     mapErr (fn e -> "error: " ++ e) (Err "oops") == Err "error: oops"
 --     mapErr (fn e -> "error: " ++ e) (Ok 5) == Ok 5
 --
+mapErr : (e -> f) -> Result a e -> Result a f
 let mapErr f r =
     case r of
         Ok x ->
@@ -104,6 +109,7 @@ test "mapErr" =
 --     andThen (fn x -> Ok (x * 2)) (Err "oops") == Err "oops"
 --     andThen (fn x -> Err "nope") (Ok 5) == Err "nope"
 --
+andThen : (a -> Result b e) -> Result a e -> Result b e
 let andThen f r =
     case r of
         Ok x ->
@@ -125,6 +131,7 @@ test "andThen" =
 --     toMaybe (Ok 42) == Just 42
 --     toMaybe (Err "oops") == Nothing
 --
+toMaybe : Result a e -> Maybe a
 let toMaybe r =
     case r of
         Ok x ->
@@ -142,6 +149,7 @@ test "toMaybe" =
 --     fromMaybe "missing" (Just 42) == Ok 42
 --     fromMaybe "missing" Nothing == Err "missing"
 --
+fromMaybe : e -> Maybe a -> Result a e
 let fromMaybe err m =
     case m of
         Just x ->

@@ -1136,6 +1136,14 @@ func (p *parser) parseTypeSig() (ast.TySyntax, error) {
 	return ty, nil
 }
 
+func (p *parser) isTypeSigAtomStart() bool {
+	switch p.peek().Kind {
+	case lexer.TokIdent, lexer.TokLParen, lexer.TokLBrack, lexer.TokLBrace:
+		return true
+	}
+	return false
+}
+
 func (p *parser) parseTypeSigAtom() (ast.TySyntax, error) {
 	tok := p.peek()
 	switch tok.Kind {
@@ -1207,17 +1215,26 @@ func (p *parser) parseTypeSigAtom() (ast.TySyntax, error) {
 		name := tok.Value.(string)
 		if isUppercase(name) {
 			var args []ast.TySyntax
-			for p.peek().Kind == lexer.TokIdent && p.peek().Kind != lexer.TokArrow {
+			for p.isTypeSigAtomStart() {
 				if p.caseArmCol >= 0 && p.peek().Col <= p.caseArmCol {
 					break
 				}
-				argTok := p.peek()
-				argName := argTok.Value.(string)
-				if argName == "where" {
-					break
+				if p.peek().Kind == lexer.TokIdent {
+					argName := p.peek().Value.(string)
+					if argName == "where" {
+						break
+					}
+					// Bare ident in arg position — don't recurse into type application
+					p.advance()
+					args = append(args, ast.TyName{Name: argName})
+					continue
 				}
-				p.advance()
-				args = append(args, ast.TyName{Name: argName})
+				// Parens, brackets, braces — parse fully
+				arg, err := p.parseTypeSigAtom()
+				if err != nil {
+					return nil, err
+				}
+				args = append(args, arg)
 			}
 			if len(args) > 0 {
 				return ast.TyApp{Name: name, Args: args}, nil

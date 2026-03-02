@@ -14,6 +14,7 @@ import std:Result (Ok, Err)
 --     isNothing Nothing == true
 --     isNothing (Just 5) == false
 --
+isNothing : Maybe a -> Bool
 let isNothing x =
     case x of
         Nothing ->
@@ -31,6 +32,7 @@ test "isNothing" =
 --     isSome (Just 5) == true
 --     isSome Nothing == false
 --
+isSome : Maybe a -> Bool
 let isSome x =
     case x of
         Nothing ->
@@ -51,6 +53,7 @@ test "isSome" =
 --     fromMaybe 0 (Just 7) == 7
 --     fromMaybe 0 Nothing == 0
 --
+fromMaybe : a -> Maybe a -> a
 let fromMaybe default x =
     case x of
         Nothing ->
@@ -68,6 +71,7 @@ test "fromMaybe" =
 --     withDefault 0 (Just 7) == 7
 --     withDefault 0 Nothing == 0
 --
+withDefault : a -> Maybe a -> a
 let withDefault = fromMaybe
 
 test "withDefault" =
@@ -83,6 +87,7 @@ test "withDefault" =
 --     map (fn x -> x * 2) (Just 5) == Just 10
 --     map (fn x -> x * 2) Nothing == Nothing
 --
+map : (a -> b) -> Maybe a -> Maybe b
 let map f x =
     case x of
         Nothing ->
@@ -102,6 +107,7 @@ test "map" =
 --     andThen (fn x -> Nothing) (Just 5) == Nothing
 --     andThen (fn x -> Just (x * 2)) Nothing == Nothing
 --
+andThen : (a -> Maybe b) -> Maybe a -> Maybe b
 let andThen f x =
     case x of
         Nothing ->
@@ -121,6 +127,7 @@ test "andThen" =
 --     filter (fn x -> x > 3) (Just 1) == Nothing
 --     filter (fn x -> x > 3) Nothing == Nothing
 --
+filter : (a -> Bool) -> Maybe a -> Maybe a
 let filter pred x =
     case x of
         Nothing ->
@@ -143,6 +150,7 @@ test "filter" =
 --     orElse Nothing (Just 2) == Just 2
 --     orElse Nothing Nothing == Nothing
 --
+orElse : Maybe a -> Maybe a -> Maybe a
 let orElse a b =
     case a of
         Just _ ->
@@ -164,6 +172,7 @@ test "orElse" =
 --     toResult "missing" (Just 5) == Ok 5
 --     toResult "missing" Nothing == Err "missing"
 --
+toResult : e -> Maybe a -> Result a e
 let toResult err x =
     case x of
         Just v ->

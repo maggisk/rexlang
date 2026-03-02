@@ -1,4 +1,4 @@
-import std:IO (print)
+-- Factorial
 
 let rec fact n =
     case n of
@@ -8,4 +8,9 @@ let rec fact n =
             n * fact (n - 1)
 
 
-print (fact 10)
+test "factorial" =
+    assert (fact 0 == 1)
+    assert (fact 5 == 120)
+    assert (fact 10 == 3628800)
+
+true

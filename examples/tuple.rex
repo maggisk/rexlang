@@ -1,5 +1,3 @@
-import std:IO (print)
-
 -- Tuple type and let destructuring
 
 let swap pair =
@@ -14,8 +12,15 @@ let snd pair =
     let (_, b) = pair in
     b
 
-let p = (10, 20)
+test "swap" =
+    assert (swap (1, 2) == (2, 1))
 
-let (x, y) = p
+test "fst and snd" =
+    assert (fst (10, 20) == 10)
+    assert (snd (10, 20) == 20)
 
-print (x + y)
+test "destructuring" =
+    let (x, y) = (10, 20)
+    assert (x + y == 30)
+
+true

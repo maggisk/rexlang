@@ -11,6 +11,7 @@ import std:List (map, filter, foldl)
 --     isEmpty "" == true
 --     isEmpty "hi" == false
 --
+isEmpty : String -> Bool
 let isEmpty s =
     s == ""
 
@@ -242,6 +243,7 @@ test "parseFloat" =
 --     dedent "  hello\n  world\n" == "hello\nworld\n"
 --     dedent "  hi\n    there\n" == "hi\n  there\n"
 --
+dedent : String -> String
 let dedent s =
     let countSpaces line =
             let rec go i =

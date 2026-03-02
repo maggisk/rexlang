@@ -1,6 +1,12 @@
-import std:IO (print)
+-- String module examples
+
 import std:String (toUpper, split, join)
 
-let words = split " " "hello world rex"
+test "split and join" =
+    let words = split " " "hello world rex"
+    assert (join "-" words == "hello-world-rex")
 
-print (join "-" words)
+test "toUpper" =
+    assert (toUpper "hello" == "HELLO")
+
+true

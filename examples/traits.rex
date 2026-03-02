@@ -23,25 +23,30 @@ impl Describable Bool where
         else
             "no"
 
--- Use built-in Ord
-let cmp = compare 3 5
+test "built-in Ord" =
+    assert (compare 3 5 == LT)
+    assert (compare 5 3 == GT)
+    assert (compare 3 3 == EQ)
 
--- Use built-in Eq
-let same = eq "hello" "hello"
+test "built-in Eq" =
+    assert (eq "hello" "hello")
+    assert (not (eq "a" "b"))
 
--- Use custom trait
-let d1 = describe 42
-let d2 = describe 0
-let d3 = describe false
+test "custom trait" =
+    assert (describe 42 == "positive")
+    assert (describe 0 == "zero")
+    assert (describe (0 - 1) == "negative")
+    assert (describe true == "yes")
+    assert (describe false == "no")
 
--- Pattern match on Ordering
-let label = case cmp of
-    LT ->
-        "less"
-    EQ ->
-        "equal"
-    GT ->
-        "greater"
+test "ordering pattern match" =
+    let label = case compare 3 5 of
+        LT ->
+            "less"
+        EQ ->
+            "equal"
+        GT ->
+            "greater"
+    assert (label == "less")
 
--- Combine results
-label ++ " " ++ d1 ++ " " ++ d2 ++ " " ++ d3
+true

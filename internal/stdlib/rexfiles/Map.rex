@@ -91,6 +91,7 @@ let unwrap m =
 
 
 -- | Count the number of entries in the map.
+size : Map k v -> Int
 let rec size m =
     case m of
         Empty ->
@@ -100,6 +101,7 @@ let rec size m =
 
 
 -- | Check if the map is empty.
+isEmpty : Map k v -> Bool
 let isEmpty m =
     case m of
         Empty ->
@@ -109,6 +111,7 @@ let isEmpty m =
 
 
 -- | Look up a key, returning Just value or Nothing.
+lookup : k -> Map k v -> Maybe v
 let rec lookup key m =
     case m of
         Empty ->
@@ -124,6 +127,7 @@ let rec lookup key m =
 
 
 -- | Check if a key is present in the map.
+member : k -> Map k v -> Bool
 let rec member key m =
     case m of
         Empty ->
@@ -146,6 +150,7 @@ let empty = Empty
 
 
 -- | Create a map with a single key-value pair.
+singleton : k -> v -> Map k v
 let singleton k v = Node 1 Empty k v Empty
 
 test "empty and singleton" =
@@ -158,6 +163,7 @@ test "empty and singleton" =
 
 
 -- | Insert a key-value pair, replacing any existing value for the key.
+insert : k -> v -> Map k v -> Map k v
 let rec insert key val m =
     case m of
         Empty ->
@@ -198,6 +204,7 @@ let rec removeMin m =
 
 
 -- | Remove a key from the map.
+remove : k -> Map k v -> Map k v
 let rec remove key m =
     case m of
         Empty ->
@@ -226,6 +233,7 @@ test "remove" =
 
 
 -- | Update the value at a key by applying a function. No-op if key absent.
+update : k -> (v -> v) -> Map k v -> Map k v
 let rec update key f m =
     case m of
         Empty ->
@@ -246,6 +254,7 @@ test "update" =
 
 
 -- | Build a map from a list of (key, value) pairs.
+fromList : [(k, v)] -> Map k v
 let fromList lst =
     let rec go acc pairs =
         case pairs of
@@ -267,6 +276,7 @@ test "fromList" =
 
 
 -- | Fold over key-value pairs from smallest to largest key.
+foldl : (k -> v -> a -> a) -> a -> Map k v -> a
 let rec foldl f acc m =
     case m of
         Empty ->
@@ -283,6 +293,7 @@ test "foldl" =
 
 
 -- | Fold over key-value pairs from largest to smallest key.
+foldr : (k -> v -> a -> a) -> a -> Map k v -> a
 let rec foldr f acc m =
     case m of
         Empty ->
@@ -298,16 +309,19 @@ let rec foldr f acc m =
 
 
 -- | Convert to a sorted list of (key, value) pairs.
+toList : Map k v -> [(k, v)]
 let toList m =
     foldr (fn k v acc -> (k, v) :: acc) [] m
 
 
 -- | Get all keys in sorted order.
+keys : Map k v -> [k]
 let keys m =
     foldr (fn k v acc -> k :: acc) [] m
 
 
 -- | Get all values in key order.
+values : Map k v -> [v]
 let values m =
     foldr (fn k v acc -> v :: acc) [] m
 
@@ -322,6 +336,7 @@ test "keys and values" =
 
 
 -- | Apply a function to every value in the map.
+map : (v -> w) -> Map k v -> Map k w
 let rec map f m =
     case m of
         Empty ->
@@ -340,6 +355,7 @@ test "map" =
 --
 --     mapWithKey (fn k v -> k + v) (fromList [(1, 10), (2, 20)]) == fromList [(1, 11), (2, 22)]
 --
+mapWithKey : (k -> v -> w) -> Map k v -> Map k w
 let rec mapWithKey f m =
     case m of
         Empty ->
@@ -355,6 +371,7 @@ test "mapWithKey" =
 
 
 -- | Keep only entries where the predicate returns true.
+filter : (k -> v -> Bool) -> Map k v -> Map k v
 let filter pred m =
     foldl (fn k v acc ->
         if pred k v then
@@ -377,6 +394,7 @@ test "filter" =
 --
 --     union (fromList [(1, 10)]) (fromList [(1, 99), (2, 20)]) == fromList [(1, 10), (2, 20)]
 --
+union : Map k v -> Map k v -> Map k v
 let union m1 m2 =
     foldl (fn k v acc -> insert k v acc) m2 m1
 
@@ -394,6 +412,7 @@ test "union" =
 --
 --     unionWith (fn a b -> a + b) (fromList [(1, 10)]) (fromList [(1, 20), (2, 30)])
 --
+unionWith : (v -> v -> v) -> Map k v -> Map k v -> Map k v
 let unionWith f m1 m2 =
     foldl (fn k v acc ->
         case lookup k acc of
@@ -414,6 +433,7 @@ test "unionWith" =
 --
 --     intersect (fromList [(1, 10), (2, 20)]) (fromList [(2, 99), (3, 30)]) == fromList [(2, 20)]
 --
+intersect : Map k v -> Map k v -> Map k v
 let intersect m1 m2 =
     filter (fn k v -> member k m2) m1
 
@@ -430,6 +450,7 @@ test "intersect" =
 --
 --     intersectWith (fn a b -> a + b) (fromList [(1, 10), (2, 20)]) (fromList [(2, 30), (3, 40)])
 --
+intersectWith : (v -> v -> v) -> Map k v -> Map k v -> Map k v
 let intersectWith f m1 m2 =
     foldl (fn k v acc ->
         case lookup k m2 of
@@ -450,6 +471,7 @@ test "intersectWith" =
 --
 --     difference (fromList [(1, 10), (2, 20), (3, 30)]) (fromList [(2, 99)]) == fromList [(1, 10), (3, 30)]
 --
+difference : Map k v -> Map k v -> Map k v
 let difference m1 m2 =
     filter (fn k v -> not (member k m2)) m1
 
@@ -470,6 +492,7 @@ test "difference" =
 --
 --     findMin (fromList [(3, 30), (1, 10), (2, 20)]) == Just (1, 10)
 --
+findMin : Map k v -> Maybe (k, v)
 let rec findMin m =
     case m of
         Empty ->
@@ -484,6 +507,7 @@ let rec findMin m =
 --
 --     findMax (fromList [(3, 30), (1, 10), (2, 20)]) == Just (3, 30)
 --
+findMax : Map k v -> Maybe (k, v)
 let rec findMax m =
     case m of
         Empty ->
@@ -508,6 +532,7 @@ test "findMin and findMax" =
 --
 --     any (fn k v -> v > 20) (fromList [(1, 10), (2, 30)]) == true
 --
+any : (k -> v -> Bool) -> Map k v -> Bool
 let any pred m =
     foldl (fn k v acc -> acc || pred k v) false m
 
@@ -516,6 +541,7 @@ let any pred m =
 --
 --     all (fn k v -> v > 0) (fromList [(1, 10), (2, 20)]) == true
 --
+all : (k -> v -> Bool) -> Map k v -> Bool
 let all pred m =
     foldl (fn k v acc -> acc && pred k v) true m
 
