@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -717,7 +718,17 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			if b, ok := v.(VBool); ok && b.V {
 				return VUnit{}, nil
 			}
-			return nil, runtimeErr("assert failed at line %d", e.Line)
+			// For == comparisons, show both sides
+			if binop, ok := e.Expr.(ast.Binop); ok && binop.Op == "Eq" {
+				lv, lerr := Eval(env, binop.Left)
+				rv, rerr := Eval(env, binop.Right)
+				if lerr == nil && rerr == nil {
+					return nil, &AssertError{Msg: fmt.Sprintf(
+						"assert failed at line %d\n  left:  %s\n  right: %s",
+						e.Line, ValueToString(lv), ValueToString(rv))}
+				}
+			}
+			return nil, &AssertError{Msg: fmt.Sprintf("assert failed at line %d", e.Line)}
 
 		default:
 			return nil, runtimeErr("unknown AST node: %T", expr)
@@ -1018,12 +1029,26 @@ func RunProgram(exprs []ast.Expr, programArgs []string) (Value, error) {
 	return last, nil
 }
 
+// isTTY reports whether stdout is a terminal.
+func isTTY() bool {
+	fi, err := os.Stdout.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// FailedTest holds the name and source location of a test that did not pass.
+type FailedTest struct {
+	Name string
+	Line int
+}
+
 // RunTests runs all test blocks from a list of pre-parsed (and reordered) expressions.
 // label is used in the header line (e.g. "=== label ==="); empty to suppress.
-func RunTests(exprs []ast.Expr, programArgs []string, extraBuiltins map[string]Value, label string) (int, int, error) {
+// only, if non-empty, restricts execution to tests whose name contains the substring.
+// The third return value is the list of failed tests with their source locations.
+func RunTests(exprs []ast.Expr, programArgs []string, extraBuiltins map[string]Value, label string, only string) (int, int, []FailedTest, error) {
 	env, err := loadPreludeEval(programArgs)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, nil, err
 	}
 	env = WithProcessBuiltins(env)
 	for k, v := range extraBuiltins {
@@ -1036,42 +1061,64 @@ func RunTests(exprs []ast.Expr, programArgs []string, extraBuiltins map[string]V
 		} else {
 			_, newEnv, err := EvalToplevel(env, expr, programArgs)
 			if err != nil {
-				return 0, 0, err
+				return 0, 0, nil, err
 			}
 			env = newEnv
 		}
 	}
+	// Filter by --only pattern
+	if only != "" {
+		filtered := tests[:0]
+		for _, t := range tests {
+			if strings.Contains(t.Name, only) {
+				filtered = append(filtered, t)
+			}
+		}
+		tests = filtered
+	}
 	if len(tests) == 0 {
-		return 0, 0, nil
+		return 0, 0, nil, nil
 	}
 	if label != "" {
 		fmt.Printf("\n=== %s ===\n", label)
 	}
+	colorGreen, colorRed, colorReset := "", "", ""
+	if isTTY() {
+		colorGreen = "\033[32m"
+		colorRed = "\033[31m"
+		colorReset = "\033[0m"
+	}
 	passed, failed := 0, 0
+	var failedTests []FailedTest
 	for _, test := range tests {
 		testEnv := env.Clone()
-		var runErr error
+		var errs []error
 		for _, bodyExpr := range test.Body {
 			_, newEnv, err := EvalToplevel(testEnv, bodyExpr, programArgs)
 			if err != nil {
-				runErr = err
-				break
+				errs = append(errs, err)
+				if _, isAssert := err.(*AssertError); !isAssert {
+					break // fatal error: stop this test
+				}
+				// assertion failure: continue collecting, keep last good env
+			} else {
+				testEnv = newEnv
 			}
-			testEnv = newEnv
 		}
-		if runErr != nil {
+		if len(errs) > 0 {
 			failed++
-			fmt.Printf("FAIL  %s\n", test.Name)
-			fmt.Printf("  %s\n", runErr.Error())
+			failedTests = append(failedTests, FailedTest{Name: test.Name, Line: test.Line})
+			fmt.Printf("%sFAIL%s  %s\n", colorRed, colorReset, test.Name)
+			for _, e := range errs {
+				fmt.Printf("  %s\n", e.Error())
+			}
 		} else {
 			passed++
-			fmt.Printf("PASS  %s\n", test.Name)
+			fmt.Printf("%sPASS%s  %s\n", colorGreen, colorReset, test.Name)
 		}
 	}
-	if len(tests) > 0 {
-		fmt.Printf("%d passed, %d failed\n", passed, failed)
-	}
-	return passed, failed, nil
+	fmt.Printf("%d passed, %d failed\n", passed, failed)
+	return passed, failed, failedTests, nil
 }
 
 // LoadPreludeForREPL loads the prelude for use in the REPL.

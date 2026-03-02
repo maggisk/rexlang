@@ -1348,6 +1348,7 @@ func (p *parser) parseImpl() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseTest() (ast.Expr, error) {
+	testLine := p.peek().Line
 	p.advance() // consume 'test'
 	tok := p.peek()
 	if tok.Kind != lexer.TokString {
@@ -1377,7 +1378,7 @@ func (p *parser) parseTest() (ast.Expr, error) {
 	if len(body) == 0 {
 		return nil, &ParseError{Msg: fmt.Sprintf("test '%s' has empty body", name)}
 	}
-	return ast.TestDecl{Name: name, Body: body}, nil
+	return ast.TestDecl{Name: name, Line: testLine, Body: body}, nil
 }
 
 // ---------------------------------------------------------------------------

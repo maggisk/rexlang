@@ -233,6 +233,7 @@ type ImplMethod struct {
 
 type TestDecl struct {
 	Name string
+	Line int
 	Body []Expr
 }
 

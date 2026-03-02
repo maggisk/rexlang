@@ -24,13 +24,39 @@ func main() {
 		return
 	}
 	if args[0] == "--test" {
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: rex --test <file.rex> [file.rex ...]")
+		var only string
+		var files []string
+		for _, a := range args[1:] {
+			if strings.HasPrefix(a, "--only=") {
+				only = strings.TrimPrefix(a, "--only=")
+			} else {
+				files = append(files, a)
+			}
+		}
+		if len(files) == 0 {
+			fmt.Fprintln(os.Stderr, "Usage: rex --test [--only=<pattern>] <file.rex> [file.rex ...]")
 			os.Exit(1)
 		}
 		totalFailed := 0
-		for _, path := range args[1:] {
-			totalFailed += runTests(path)
+		var allFailed []struct {
+			path string
+			t    eval.FailedTest
+		}
+		for _, path := range files {
+			n, tests := runTests(path, only)
+			totalFailed += n
+			for _, t := range tests {
+				allFailed = append(allFailed, struct {
+					path string
+					t    eval.FailedTest
+				}{path, t})
+			}
+		}
+		if len(allFailed) > 0 {
+			fmt.Printf("\nFailures:\n")
+			for _, f := range allFailed {
+				fmt.Printf("  %s  (%s:%d)\n", f.t.Name, f.path, f.t.Line)
+			}
 		}
 		if totalFailed > 0 {
 			os.Exit(1)
@@ -74,11 +100,11 @@ func runFile(path string, programArgs []string) {
 	}
 }
 
-func runTests(path string) int {
+func runTests(path string, only string) (int, []eval.FailedTest) {
 	source, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-		os.Exit(1)
+		printTestErr(path, "error", err)
+		return 1, nil
 	}
 	src := string(source)
 
@@ -96,36 +122,36 @@ func runTests(path string) int {
 	// Parse
 	exprs, err := parser.Parse(src)
 	if err != nil {
-		printErr("Lexer/Parse error", err)
-		os.Exit(1)
+		printTestErr(path, "Parse error", err)
+		return 1, nil
 	}
 
 	// Reorder top-level bindings by dependency
 	exprs, err = typechecker.ReorderToplevel(exprs)
 	if err != nil {
-		printErr("Type error", err)
-		os.Exit(1)
+		printTestErr(path, "Type error", err)
+		return 1, nil
 	}
 
 	// Type check with optional extra env
 	if extraTypeEnv != nil {
 		if _, err := typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv); err != nil {
-			printErr("Type error", err)
-			os.Exit(1)
+			printTestErr(path, "Type error", err)
+			return 1, nil
 		}
 	} else {
 		if _, err := typechecker.CheckProgram(exprs); err != nil {
-			printErr("Type error", err)
-			os.Exit(1)
+			printTestErr(path, "Type error", err)
+			return 1, nil
 		}
 	}
 
-	_, failed, err := eval.RunTests(exprs, nil, extraBuiltins, path)
+	_, failed, failedNames, err := eval.RunTests(exprs, nil, extraBuiltins, path, only)
 	if err != nil {
-		printErr("Error", err)
-		os.Exit(1)
+		printTestErr(path, "error", err)
+		return 1, nil
 	}
-	return failed
+	return failed, failedNames
 }
 
 // stdlibModuleForPath detects if path is inside the embedded stdlib.
@@ -244,6 +270,11 @@ func repl() {
 
 func printErr(kind string, err error) {
 	fmt.Fprintf(os.Stderr, "%s: %v\n", kind, err)
+}
+
+func printTestErr(path, kind string, err error) {
+	fmt.Println() // blank line to separate from any preceding test output
+	fmt.Fprintf(os.Stderr, "%s: %s: %v\n", path, kind, err)
 }
 
 // Stubs to detect lexer error vs others

@@ -117,6 +117,12 @@ func runtimeErr(format string, args ...interface{}) error {
 	return &RuntimeError{Msg: fmt.Sprintf(format, args...)}
 }
 
+// AssertError is returned when an assert statement fails.
+// Distinct from RuntimeError so RunTests can continue collecting failures.
+type AssertError struct{ Msg string }
+
+func (e *AssertError) Error() string { return e.Msg }
+
 // ---------------------------------------------------------------------------
 // Environment
 // ---------------------------------------------------------------------------
