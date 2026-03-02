@@ -35,13 +35,11 @@ let chained =
     in
     a + b
 
--- Using multi-binding with list operations
+-- Using pipe to chain list operations
 let total =
-    let xs = [1, 2, 3, 4, 5]
-        doubled = map (fn x -> x * 2) xs
-        sum = foldl (fn acc x -> acc + x) 0 doubled
-    in
-    sum
+    [1, 2, 3, 4, 5]
+        |> map (fn x -> x * 2)
+        |> foldl (fn acc x -> acc + x) 0
 
 test "multi-binding let blocks" =
     assert (result == 200)

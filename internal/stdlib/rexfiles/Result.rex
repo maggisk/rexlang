@@ -22,7 +22,7 @@ let isOk r =
 
 test "isOk" =
     assert (isOk (Ok 42))
-    assert (not (isOk (Err "oops")))
+    assert (Err "oops" |> isOk |> not)
 
 
 -- | Return true if the result is Err.
@@ -40,7 +40,7 @@ let isErr r =
 
 test "isErr" =
     assert (isErr (Err "oops"))
-    assert (not (isErr (Ok 42)))
+    assert (Ok 42 |> isErr |> not)
 
 
 -- # Extract
@@ -81,8 +81,8 @@ let map f r =
             Err e
 
 test "map" =
-    assert (withDefault 0 (map (fn x -> x * 2) (Ok 5)) == 10)
-    assert (isErr (map (fn x -> x * 2) (Err "oops")))
+    assert (Ok 5 |> map (fn x -> x * 2) |> withDefault 0 == 10)
+    assert (Err "oops" |> map (fn x -> x * 2) |> isErr)
 
 
 -- | Apply a function to the Err value; pass Ok through unchanged.
@@ -99,8 +99,8 @@ let mapErr f r =
             Err (f e)
 
 test "mapErr" =
-    assert (isOk (mapErr (fn e -> e ++ "!") (Ok 5)))
-    assert (isErr (mapErr (fn e -> e ++ "!") (Err "oops")))
+    assert (Ok 5 |> mapErr (fn e -> e ++ "!") |> isOk)
+    assert (Err "oops" |> mapErr (fn e -> e ++ "!") |> isErr)
 
 
 -- | Chain Result-returning functions (flatMap/bind).
@@ -118,9 +118,9 @@ let andThen f r =
             Err e
 
 test "andThen" =
-    assert (withDefault 0 (andThen (fn x -> Ok (x * 2)) (Ok 5)) == 10)
-    assert (isErr (andThen (fn x -> Ok (x * 2)) (Err "oops")))
-    assert (isErr (andThen (fn _ -> Err "nope") (Ok 5)))
+    assert (Ok 5 |> andThen (fn x -> Ok (x * 2)) |> withDefault 0 == 10)
+    assert (Err "oops" |> andThen (fn x -> Ok (x * 2)) |> isErr)
+    assert (Ok 5 |> andThen (fn _ -> Err "nope") |> isErr)
 
 
 -- # Convert
@@ -140,8 +140,8 @@ let toMaybe r =
             Nothing
 
 test "toMaybe" =
-    assert (toMaybe (Ok 42) == Just 42)
-    assert (toMaybe (Err "oops") == Nothing)
+    assert (Ok 42 |> toMaybe == Just 42)
+    assert (Err "oops" |> toMaybe == Nothing)
 
 
 -- | Convert Maybe to Result with a default error.

@@ -155,7 +155,7 @@ let singleton k v = Node 1 Empty k v Empty
 
 test "empty and singleton" =
     assert (isEmpty empty)
-    assert (not (isEmpty (singleton 1 10)))
+    assert (singleton 1 10 |> isEmpty |> not)
     assert (size (singleton 1 10) == 1)
 
 
@@ -178,17 +178,17 @@ let rec insert key val m =
                     Node h l key val r
 
 test "insert" =
-    let m = insert 2 20 (insert 1 10 empty)
+    let m = empty |> insert 1 10 |> insert 2 20
     assert (size m == 2)
-    assert (unwrap (lookup 1 m) == 10)
-    assert (unwrap (lookup 2 m) == 20)
+    assert (m |> lookup 1 |> unwrap == 10)
+    assert (m |> lookup 2 |> unwrap == 20)
     assert (member 1 m)
-    assert (not (member 3 m))
+    assert (m |> member 3 |> not)
 
 test "insert replaces existing key" =
-    let m = insert 1 99 (insert 1 10 empty)
+    let m = empty |> insert 1 10 |> insert 1 99
     assert (size m == 1)
-    assert (unwrap (lookup 1 m) == 99)
+    assert (m |> lookup 1 |> unwrap == 99)
 
 
 -- | Remove the minimum element, returning (minKey, minValue, remaining).
@@ -224,11 +224,11 @@ let rec remove key m =
                             rebalance (node l mk mv newR)
 
 test "remove" =
-    let m = insert 3 30 (insert 2 20 (insert 1 10 empty))
+    let m = empty |> insert 1 10 |> insert 2 20 |> insert 3 30
     let m2 = remove 2 m
     assert (size m2 == 2)
     assert (member 1 m2)
-    assert (not (member 2 m2))
+    assert (m2 |> member 2 |> not)
     assert (member 3 m2)
 
 
@@ -250,7 +250,7 @@ let rec update key f m =
 test "update" =
     let m = insert 1 10 empty
     let m2 = update 1 (fn v -> v + 5) m
-    assert (unwrap (lookup 1 m2) == 15)
+    assert (m2 |> lookup 1 |> unwrap == 15)
 
 
 -- | Build a map from a list of (key, value) pairs.
@@ -269,7 +269,7 @@ let fromList lst =
 test "fromList" =
     let m = fromList [(1, 10), (2, 20), (3, 30)]
     assert (size m == 3)
-    assert (unwrap (lookup 2 m) == 20)
+    assert (m |> lookup 2 |> unwrap == 20)
 
 
 -- # Fold
@@ -347,8 +347,8 @@ let rec map f m =
 test "map" =
     let m = fromList [(1, 10), (2, 20)]
     let m2 = map (fn v -> v * 2) m
-    assert (unwrap (lookup 1 m2) == 20)
-    assert (unwrap (lookup 2 m2) == 40)
+    assert (m2 |> lookup 1 |> unwrap == 20)
+    assert (m2 |> lookup 2 |> unwrap == 40)
 
 
 -- | Apply a function to every key-value pair in the map.
@@ -366,8 +366,8 @@ let rec mapWithKey f m =
 test "mapWithKey" =
     let m = fromList [(1, 10), (2, 20)]
     let m2 = mapWithKey (fn k v -> k + v) m
-    assert (unwrap (lookup 1 m2) == 11)
-    assert (unwrap (lookup 2 m2) == 22)
+    assert (m2 |> lookup 1 |> unwrap == 11)
+    assert (m2 |> lookup 2 |> unwrap == 22)
 
 
 -- | Keep only entries where the predicate returns true.
@@ -383,7 +383,7 @@ test "filter" =
     let m = fromList [(1, 10), (2, 20), (3, 30)]
     let m2 = filter (fn k v -> v > 15) m
     assert (size m2 == 2)
-    assert (not (member 1 m2))
+    assert (m2 |> member 1 |> not)
     assert (member 2 m2)
 
 
@@ -403,9 +403,9 @@ test "union" =
     let m2 = fromList [(2, 99), (3, 30)]
     let m3 = union m1 m2
     assert (size m3 == 3)
-    assert (unwrap (lookup 1 m3) == 10)
-    assert (unwrap (lookup 2 m3) == 20)
-    assert (unwrap (lookup 3 m3) == 30)
+    assert (m3 |> lookup 1 |> unwrap == 10)
+    assert (m3 |> lookup 2 |> unwrap == 20)
+    assert (m3 |> lookup 3 |> unwrap == 30)
 
 
 -- | Merge two maps with a conflict resolver.
@@ -426,7 +426,7 @@ test "unionWith" =
     let m2 = fromList [(2, 30), (3, 40)]
     let m3 = unionWith (fn a b -> a + b) m1 m2
     assert (size m3 == 3)
-    assert (unwrap (lookup 2 m3) == 50)
+    assert (m3 |> lookup 2 |> unwrap == 50)
 
 
 -- | Keep only keys present in both maps (values from m1).
@@ -442,8 +442,8 @@ test "intersect" =
     let m2 = fromList [(2, 99), (3, 88)]
     let m3 = intersect m1 m2
     assert (size m3 == 2)
-    assert (unwrap (lookup 2 m3) == 20)
-    assert (not (member 1 m3))
+    assert (m3 |> lookup 2 |> unwrap == 20)
+    assert (m3 |> member 1 |> not)
 
 
 -- | Intersect with a value combiner.
@@ -464,7 +464,7 @@ test "intersectWith" =
     let m2 = fromList [(2, 30), (3, 40)]
     let m3 = intersectWith (fn a b -> a + b) m1 m2
     assert (size m3 == 1)
-    assert (unwrap (lookup 2 m3) == 50)
+    assert (m3 |> lookup 2 |> unwrap == 50)
 
 
 -- | Keys in m1 but not in m2.
@@ -481,7 +481,7 @@ test "difference" =
     let m3 = difference m1 m2
     assert (size m3 == 2)
     assert (member 1 m3)
-    assert (not (member 2 m3))
+    assert (m3 |> member 2 |> not)
     assert (member 3 m3)
 
 
@@ -548,6 +548,6 @@ let all pred m =
 test "any and all" =
     let m = fromList [(1, 10), (2, 30)]
     assert (any (fn k v -> v > 20) m)
-    assert (not (any (fn k v -> v > 100) m))
+    assert (m |> any (fn k v -> v > 100) |> not)
     assert (all (fn k v -> v > 0) m)
-    assert (not (all (fn k v -> v > 20) m))
+    assert (m |> all (fn k v -> v > 20) |> not)

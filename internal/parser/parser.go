@@ -404,7 +404,7 @@ func (p *parser) parseCons() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseCompare() (ast.Expr, error) {
-	lhs, err := p.parseCons()
+	lhs, err := p.parsePipe()
 	if err != nil {
 		return nil, err
 	}
@@ -419,7 +419,7 @@ func (p *parser) parseCompare() (ast.Expr, error) {
 	k := p.peek().Kind
 	if op, ok := opMap[k]; ok {
 		p.advance()
-		rhs, err := p.parseCons()
+		rhs, err := p.parsePipe()
 		if err != nil {
 			return nil, err
 		}
@@ -473,13 +473,13 @@ func (p *parser) parseLogicOr() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parsePipe() (ast.Expr, error) {
-	lhs, err := p.parseLogicOr()
+	lhs, err := p.parseCons()
 	if err != nil {
 		return nil, err
 	}
 	for p.peek().Kind == lexer.TokPipeGt {
 		p.advance()
-		rhs, err := p.parseLogicOr()
+		rhs, err := p.parseCons()
 		if err != nil {
 			return nil, err
 		}
@@ -1388,7 +1388,7 @@ func (p *parser) parseAssert() (ast.Expr, error) {
 	tok := p.peek()
 	line := tok.Line
 	p.advance() // consume 'assert'
-	expr, err := p.parsePipe()
+	expr, err := p.parseLogicOr()
 	if err != nil {
 		return nil, err
 	}
@@ -1425,7 +1425,7 @@ func (p *parser) parseExpr() (ast.Expr, error) {
 	case lexer.TokAssert:
 		return p.parseAssert()
 	default:
-		return p.parsePipe()
+		return p.parseLogicOr()
 	}
 }
 

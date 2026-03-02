@@ -14,11 +14,11 @@ and isOdd n =
 test "isEven" =
     assert (isEven 0)
     assert (isEven 10)
-    assert (not (isEven 7))
+    assert (7 |> isEven |> not)
 
 test "isOdd" =
     assert (isOdd 1)
     assert (isOdd 11)
-    assert (not (isOdd 8))
+    assert (8 |> isOdd |> not)
 
 true

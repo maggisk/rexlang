@@ -13,7 +13,7 @@ let rec length xs =
 
 
 test "custom list length" =
-    assert (length (Cons 1 (Cons 2 (Cons 3 Nil))) == 3)
+    assert (Cons 1 (Cons 2 (Cons 3 Nil)) |> length == 3)
     assert (length Nil == 0)
 
 test "option pattern match" =
@@ -23,7 +23,7 @@ test "option pattern match" =
                 0
             Some x ->
                 x
-    assert (get (Some 42) == 42)
+    assert (Some 42 |> get == 42)
     assert (get None == 0)
 
 true

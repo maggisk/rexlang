@@ -2,7 +2,7 @@
 -- reordered by dependency, so order in the source doesn't matter.
 
 -- Use a function defined below
-let result = double (triple 2)
+let result = 2 |> triple |> double
 
 let double x = x * 2
 let triple x = x * 3

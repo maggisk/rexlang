@@ -16,7 +16,7 @@ let pmap f lst =
         )
     ) lst
     in
-    map (fn pid -> call pid (fn me -> me)) pids
+    pids |> map (fn pid -> call pid (fn me -> me))
 
 
 -- | Apply a function to each element in parallel, using at most n workers.
@@ -45,7 +45,7 @@ let pmapN n f lst =
         )
     ) (chunks lst)
     in
-    concat (map (fn pid -> call pid (fn me -> me)) pids)
+    pids |> map (fn pid -> call pid (fn me -> me)) |> concat
 
 
 test "pmap preserves order" =

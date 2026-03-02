@@ -35,7 +35,7 @@ let isEmpty lst =
 
 test "isEmpty" =
     assert (isEmpty [])
-    assert (not (isEmpty [1]))
+    assert ([1] |> isEmpty |> not)
 
 
 -- # Deconstruct
@@ -177,7 +177,7 @@ let rec foldr f acc lst =
             f h (foldr f acc t)
 
 test "foldr" =
-    assert (head (foldr (fn x acc -> x :: acc) [] [1, 2, 3]) == Just 1)
+    assert ([1, 2, 3] |> foldr (fn x acc -> x :: acc) [] |> head == Just 1)
 
 
 -- | Reduce a list using the first element as the initial accumulator.
@@ -235,7 +235,7 @@ let any pred lst =
 
 test "any" =
     assert (any (fn x -> x > 3) [1, 2, 3, 4])
-    assert (not (any (fn x -> x > 10) [1, 2, 3]))
+    assert ([1, 2, 3] |> any (fn x -> x > 10) |> not)
 
 
 -- | Determine if all elements satisfy the predicate.
@@ -248,7 +248,7 @@ let all pred lst =
 
 test "all" =
     assert (all (fn x -> x > 0) [1, 2, 3])
-    assert (not (all (fn x -> x > 2) [1, 2, 3]))
+    assert ([1, 2, 3] |> all (fn x -> x > 2) |> not)
 
 
 -- | Return the largest element, or Nothing for empty lists. Requires Ord.
@@ -346,7 +346,7 @@ let rec map f lst =
             f h :: map f t
 
 test "map" =
-    assert (sum (map (fn x -> x * 2) [1, 2, 3]) == 12)
+    assert ([1, 2, 3] |> map (fn x -> x * 2) |> sum == 12)
 
 
 -- | Apply a function to every element along with its index.
@@ -365,7 +365,7 @@ let indexedMap f lst =
     go 0 lst
 
 test "indexedMap" =
-    assert (sum (indexedMap (fn i x -> i) [10, 20, 30]) == 3)
+    assert ([10, 20, 30] |> indexedMap (fn i x -> i) |> sum == 3)
 
 
 -- | Keep only elements that satisfy the predicate.
@@ -384,7 +384,7 @@ let rec filter pred lst =
                 filter pred t
 
 test "filter" =
-    assert (length (filter (fn x -> x > 2) [1, 2, 3, 4, 5]) == 3)
+    assert ([1, 2, 3, 4, 5] |> filter (fn x -> x > 2) |> length == 3)
 
 
 -- | Map with a function returning Maybe, keeping only Just values.
@@ -404,7 +404,7 @@ let rec filterMap f lst =
                     filterMap f t
 
 test "filterMap" =
-    assert (filterMap (fn x -> if x > 2 then Just (x * 10) else Nothing) [1, 2, 3, 4] == [30, 40])
+    assert ([1, 2, 3, 4] |> filterMap (fn x -> if x > 2 then Just (x * 10) else Nothing) == [30, 40])
     assert (filterMap (fn x -> Nothing) [1, 2, 3] == [])
 
 
@@ -424,7 +424,7 @@ let rec reverse lst =
     go [] lst
 
 test "reverse" =
-    assert (head (reverse [1, 2, 3]) == Just 3)
+    assert ([1, 2, 3] |> reverse |> head == Just 3)
 
 
 -- # Combine
@@ -456,7 +456,7 @@ let concat lsts =
     foldr append [] lsts
 
 test "concat" =
-    assert (sum (concat [[1, 2], [3], [4, 5]]) == 15)
+    assert ([[1, 2], [3], [4, 5]] |> concat |> sum == 15)
 
 
 -- | Map then flatten.
@@ -465,7 +465,7 @@ test "concat" =
 --
 flatMap : (a -> [b]) -> [a] -> [b]
 let flatMap f lst =
-    concat (map f lst)
+    map f lst |> concat
 
 test "flatMap" =
     assert (flatMap (fn x -> [x, x]) [1, 2, 3] == [1, 1, 2, 2, 3, 3])
@@ -491,7 +491,7 @@ let rec zip xs ys =
 test "zip" =
     let pairs = zip [1, 2, 3] [4, 5, 6]
     assert (length pairs == 3)
-    assert (foldl (fn acc pair -> let (a, b) = pair in acc + a + b) 0 pairs == 21)
+    assert (pairs |> foldl (fn acc pair -> let (a, b) = pair in acc + a + b) 0 == 21)
 
 
 -- | Combine two lists element-wise with a function.
@@ -533,7 +533,7 @@ let unzip pairs =
     go [] [] pairs
 
 test "unzip" =
-    let (xs, ys) = unzip [(1, "a"), (2, "b"), (3, "c")]
+    let (xs, ys) = [(1, "a"), (2, "b"), (3, "c")] |> unzip
     assert (xs == [1, 2, 3])
     assert (ys == ["a", "b", "c"])
 
@@ -553,8 +553,8 @@ let rec intersperse sep lst =
             h :: sep :: intersperse sep t
 
 test "intersperse" =
-    assert (sum (intersperse 0 [1, 2, 3]) == 6)
-    assert (length (intersperse 0 [1, 2, 3]) == 5)
+    assert ([1, 2, 3] |> intersperse 0 |> sum == 6)
+    assert ([1, 2, 3] |> intersperse 0 |> length == 5)
 
 
 -- # Slice
@@ -576,7 +576,7 @@ let rec take n lst =
                 h :: take (n - 1) t
 
 test "take" =
-    assert (sum (take 2 [1, 2, 3, 4]) == 3)
+    assert ([1, 2, 3, 4] |> take 2 |> sum == 3)
 
 
 -- | Drop the first n elements of a list.
@@ -595,7 +595,7 @@ let rec drop n lst =
                 drop (n - 1) t
 
 test "drop" =
-    assert (sum (drop 2 [1, 2, 3, 4]) == 7)
+    assert ([1, 2, 3, 4] |> drop 2 |> sum == 7)
 
 
 -- | Take elements while predicate holds.
@@ -614,7 +614,7 @@ let rec takeWhile pred lst =
                 []
 
 test "takeWhile" =
-    assert (takeWhile (fn x -> x < 3) [1, 2, 3, 4] == [1, 2])
+    assert ([1, 2, 3, 4] |> takeWhile (fn x -> x < 3) == [1, 2])
     assert (takeWhile (fn x -> x < 0) [1, 2, 3] == [])
 
 
@@ -634,7 +634,7 @@ let rec dropWhile pred lst =
                 lst
 
 test "dropWhile" =
-    assert (dropWhile (fn x -> x < 3) [1, 2, 3, 4] == [3, 4])
+    assert ([1, 2, 3, 4] |> dropWhile (fn x -> x < 3) == [3, 4])
     assert (dropWhile (fn x -> x < 0) [1, 2, 3] == [1, 2, 3])
 
 
@@ -657,7 +657,7 @@ let span pred lst =
     go [] lst
 
 test "span" =
-    let (a, b) = span (fn x -> x < 3) [1, 2, 3, 4]
+    let (a, b) = [1, 2, 3, 4] |> span (fn x -> x < 3)
     assert (a == [1, 2])
     assert (b == [3, 4])
 
@@ -681,7 +681,7 @@ let rec find pred lst =
                 find pred t
 
 test "find" =
-    assert (find (fn x -> x > 2) [1, 2, 3, 4] == Just 3)
+    assert ([1, 2, 3, 4] |> find (fn x -> x > 2) == Just 3)
     assert (find (fn x -> x > 10) [1, 2, 3] == Nothing)
 
 
@@ -704,7 +704,7 @@ let partition pred lst =
     go [] [] lst
 
 test "partition" =
-    let (yes, no) = partition (fn x -> x > 2) [1, 2, 3, 4]
+    let (yes, no) = [1, 2, 3, 4] |> partition (fn x -> x > 2)
     assert (sum yes == 7)
     assert (sum no == 3)
 
@@ -723,7 +723,7 @@ let unique lst =
             [] ->
                 reverse acc
             [h|t] ->
-                if any (fn x -> x == h) acc then
+                if acc |> any (fn x -> x == h) then
                     go acc t
                 else
                     go (h :: acc) t
@@ -731,9 +731,9 @@ let unique lst =
     go [] lst
 
 test "unique" =
-    assert (unique [1, 2, 1, 3, 2] == [1, 2, 3])
+    assert ([1, 2, 1, 3, 2] |> unique == [1, 2, 3])
     assert (unique [] == [])
-    assert (unique [1, 1, 1] == [1])
+    assert ([1, 1, 1] |> unique == [1])
 
 
 -- | Remove duplicates by a key function (O(n²), uses == on keys).
@@ -749,7 +749,7 @@ let uniqueBy f lst =
                 reverse acc
             [h|t] ->
                 let key = f h in
-                if any (fn k -> k == key) seen then
+                if seen |> any (fn k -> k == key) then
                     go seen acc t
                 else
                     go (key :: seen) (h :: acc) t
@@ -768,8 +768,8 @@ test "uniqueBy" =
 -- sortWith is a builtin
 
 test "sortWith" =
-    assert (sortWith (fn a b -> compare a b) [5, 3, 1, 4, 2] == [1, 2, 3, 4, 5])
-    assert (sortWith (fn a b -> compare b a) [1, 2, 3] == [3, 2, 1])
+    assert ([5, 3, 1, 4, 2] |> sortWith (fn a b -> compare a b) == [1, 2, 3, 4, 5])
+    assert ([1, 2, 3] |> sortWith (fn a b -> compare b a) == [3, 2, 1])
 
 
 -- | Sort a list using the default compare function.
@@ -781,7 +781,7 @@ let sort lst =
     sortWith (fn a b -> compare a b) lst
 
 test "sort" =
-    assert (sort [3, 1, 4, 1, 5] == [1, 1, 3, 4, 5])
+    assert ([3, 1, 4, 1, 5] |> sort == [1, 1, 3, 4, 5])
     assert (sort [] == [])
 
 
@@ -794,4 +794,4 @@ let sortBy f lst =
     sortWith (fn a b -> compare (f a) (f b)) lst
 
 test "sortBy" =
-    assert (sortBy (fn x -> 0 - x) [3, 1, 2] == [3, 2, 1])
+    assert ([3, 1, 2] |> sortBy (fn x -> 0 - x) == [3, 2, 1])

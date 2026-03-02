@@ -190,24 +190,24 @@ test "escape in strings" =
     assert (stringify (JStr "line1\nline2") == "\"line1\\nline2\"")
 
 test "encodeArr and encodeObj" =
-    assert (stringify (encodeArr [JNull, JBool true]) == "[null, true]")
-    assert (stringify (encodeObj [("a", JNum 1.0), ("b", JNull)]) == "{\"a\": 1.0, \"b\": null}")
+    assert ([JNull, JBool true] |> encodeArr |> stringify == "[null, true]")
+    assert ([("a", JNum 1.0), ("b", JNull)] |> encodeObj |> stringify == "{\"a\": 1.0, \"b\": null}")
 
 test "parse valid JSON" =
     import std:Result (isOk, isErr)
-    assert (isOk (parse "null"))
-    assert (isOk (parse "true"))
-    assert (isOk (parse "42"))
-    assert (isOk (parse "\"hello\""))
-    assert (isOk (parse "[]"))
-    assert (isOk (parse "{}"))
-    assert (isOk (parse "[1, 2, 3]"))
-    assert (isOk (parse "{\"key\": \"value\"}"))
+    assert ("null" |> parse |> isOk)
+    assert ("true" |> parse |> isOk)
+    assert ("42" |> parse |> isOk)
+    assert ("\"hello\"" |> parse |> isOk)
+    assert ("[]" |> parse |> isOk)
+    assert ("{}" |> parse |> isOk)
+    assert ("[1, 2, 3]" |> parse |> isOk)
+    assert ("{\"key\": \"value\"}" |> parse |> isOk)
 
 test "parse invalid JSON" =
     import std:Result (isErr)
-    assert (isErr (parse "invalid"))
-    assert (isErr (parse "{unclosed"))
+    assert ("invalid" |> parse |> isErr)
+    assert ("{unclosed" |> parse |> isErr)
 
 test "getField" =
     let obj = ObjCons "x" (JNum 1.0) (ObjCons "y" (JStr "hi") ObjNil)

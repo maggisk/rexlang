@@ -30,7 +30,7 @@ test "built-in Ord" =
 
 test "built-in Eq" =
     assert (eq "hello" "hello")
-    assert (not (eq "a" "b"))
+    assert (eq "a" "b" |> not)
 
 test "custom trait" =
     assert (describe 42 == "positive")

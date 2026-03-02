@@ -30,4 +30,4 @@ let _ = send counter Inc
 let n = call counter Get
 let _ = send counter Stop
 
-println (toString n)
+n |> toString |> println

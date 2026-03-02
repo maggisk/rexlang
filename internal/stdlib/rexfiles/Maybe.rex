@@ -24,7 +24,7 @@ let isNothing x =
 
 test "isNothing" =
     assert (isNothing Nothing)
-    assert (not (isNothing (Just 5)))
+    assert (Just 5 |> isNothing |> not)
 
 
 -- | Return true if the value is Just.
@@ -42,7 +42,7 @@ let isSome x =
 
 test "isSome" =
     assert (isSome (Just 5))
-    assert (not (isSome Nothing))
+    assert (Nothing |> isSome |> not)
 
 
 -- # Extract
@@ -62,7 +62,7 @@ let fromMaybe default x =
             v
 
 test "fromMaybe" =
-    assert (fromMaybe 0 (Just 7) == 7)
+    assert (Just 7 |> fromMaybe 0 == 7)
     assert (fromMaybe 0 Nothing == 0)
 
 
@@ -75,7 +75,7 @@ withDefault : a -> Maybe a -> a
 let withDefault = fromMaybe
 
 test "withDefault" =
-    assert (withDefault 0 (Just 7) == 7)
+    assert (Just 7 |> withDefault 0 == 7)
     assert (withDefault 0 Nothing == 0)
 
 
@@ -96,7 +96,7 @@ let map f x =
             Just (f v)
 
 test "map" =
-    assert (map (fn x -> x * 2) (Just 5) == Just 10)
+    assert (Just 5 |> map (fn x -> x * 2) == Just 10)
     assert (map (fn x -> x * 2) Nothing == Nothing)
 
 
@@ -116,8 +116,8 @@ let andThen f x =
             f v
 
 test "andThen" =
-    assert (andThen (fn x -> Just (x * 2)) (Just 5) == Just 10)
-    assert (andThen (fn x -> Nothing) (Just 5) == Nothing)
+    assert (Just 5 |> andThen (fn x -> Just (x * 2)) == Just 10)
+    assert (Just 5 |> andThen (fn x -> Nothing) == Nothing)
     assert (andThen (fn x -> Just (x * 2)) Nothing == Nothing)
 
 
@@ -139,8 +139,8 @@ let filter pred x =
                 Nothing
 
 test "filter" =
-    assert (filter (fn x -> x > 3) (Just 5) == Just 5)
-    assert (filter (fn x -> x > 3) (Just 1) == Nothing)
+    assert (Just 5 |> filter (fn x -> x > 3) == Just 5)
+    assert (Just 1 |> filter (fn x -> x > 3) == Nothing)
     assert (filter (fn x -> x > 3) Nothing == Nothing)
 
 
@@ -181,5 +181,5 @@ let toResult err x =
             Err err
 
 test "toResult" =
-    assert (toResult "missing" (Just 5) == Ok 5)
+    assert (Just 5 |> toResult "missing" == Ok 5)
     assert (toResult "missing" Nothing == Err "missing")

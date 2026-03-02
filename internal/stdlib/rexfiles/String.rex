@@ -17,8 +17,8 @@ let isEmpty s =
 
 test "isEmpty" =
     assert (isEmpty "")
-    assert (not (isEmpty "x"))
-    assert (not (isEmpty " "))
+    assert ("x" |> isEmpty |> not)
+    assert (" " |> isEmpty |> not)
 
 
 -- length is a builtin
@@ -32,21 +32,21 @@ test "length" =
 
 test "contains" =
     assert (contains "ell" "hello")
-    assert (not (contains "xyz" "hello"))
+    assert ("hello" |> contains "xyz" |> not)
 
 
 -- startsWith is a builtin
 
 test "startsWith" =
     assert (startsWith "hel" "hello")
-    assert (not (startsWith "bye" "hello"))
+    assert ("hello" |> startsWith "bye" |> not)
 
 
 -- endsWith is a builtin
 
 test "endsWith" =
     assert (endsWith "llo" "hello")
-    assert (not (endsWith "bye" "hello"))
+    assert ("hello" |> endsWith "bye" |> not)
 
 
 -- charAt is a builtin
@@ -70,19 +70,19 @@ test "indexOf" =
 -- toUpper is a builtin
 
 test "toUpper" =
-    assert (toUpper "hello" == "HELLO")
+    assert ("hello" |> toUpper == "HELLO")
 
 
 -- toLower is a builtin
 
 test "toLower" =
-    assert (toLower "HELLO" == "hello")
+    assert ("HELLO" |> toLower == "hello")
 
 
 -- trim is a builtin
 
 test "trim" =
-    assert (trim "  hello  " == "hello")
+    assert ("  hello  " |> trim == "hello")
 
 
 -- trimLeft is a builtin
@@ -102,7 +102,7 @@ test "trimRight" =
 -- reverse is a builtin
 
 test "reverse" =
-    assert (reverse "hello" == "olleh")
+    assert ("hello" |> reverse == "olleh")
     assert (reverse "" == "")
     assert (reverse "a" == "a")
 
@@ -110,7 +110,7 @@ test "reverse" =
 -- replace is a builtin
 
 test "replace" =
-    assert (replace "l" "r" "hello" == "herro")
+    assert ("hello" |> replace "l" "r" == "herro")
 
 
 -- take is a builtin
