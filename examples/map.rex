@@ -9,6 +9,6 @@ test "map operations" =
     assert (M.lookup 1 m == Just 10)
     assert (M.lookup 2 m == Just 20)
     assert (M.lookup 3 m == Just 30)
-    assert (M.foldl (fn k v acc -> acc + v) 0 m == 60)
+    assert (M.foldl (\k v acc -> acc + v) 0 m == 60)
 
 true

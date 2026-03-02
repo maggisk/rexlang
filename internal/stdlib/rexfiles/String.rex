@@ -255,10 +255,10 @@ let dedent s =
                     i
             in go 0
         ls = lines s
-        nonEmpty = filter (fn l -> l != "") ls
+        nonEmpty = filter (\l -> l != "") ls
         indent =
-            foldl (fn acc l -> let n = countSpaces l in if n < acc then n else acc) 999999999 nonEmpty
-        stripped = map (fn l -> if l == "" then "" else drop indent l) ls
+            foldl (\acc l -> let n = countSpaces l in if n < acc then n else acc) 999999999 nonEmpty
+        stripped = map (\l -> if l == "" then "" else drop indent l) ls
         result = join "\n" stripped
     in
     if endsWith "\n" s then

@@ -22,7 +22,7 @@ test "list operations" =
     let xs = [1, 2, 3]
     assert (length xs == 3)
     assert (xs |> map double |> length == 3)
-    assert (xs |> map double |> foldl (fn a b -> a + b) 0 == 12)
+    assert (xs |> map double |> foldl (\a b -> a + b) 0 == 12)
 
 test "boolean logic" =
     assert (true && true)

@@ -134,8 +134,8 @@ case xs of
 
 ```
 [1, 2, 3, 4, 5]
-    |> filter (fn x -> x > 2)
-    |> map (fn x -> x * 10)
+    |> filter (\x -> x > 2)
+    |> map (\x -> x * 10)
     |> sum
 ```
 
@@ -303,6 +303,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | `std:Process` | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages |
 | `std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
 
+
 ## Examples
 
 | File | Description |
@@ -382,6 +383,8 @@ go test ./...
 ## Simmering
 
 Ideas worth keeping in mind but not yet committed to. May never happen.
+
+- **Point-free operator sections** — named operator functions (`add`, `mul`, …) enable `foldl add 0` and `map (mul 2)` without lambdas, but asymmetric operators are a trap: `map (sub 1)` reads "subtract 1" but computes `\x -> 1 - x`. Several languages solve this differently: Haskell has `(- 1)` operator sections; Scala uses `_` as a positional placeholder so `map(_ - 1)` unambiguously means `\x -> x - 1`; Elixir uses `&` capture (`&(&1 - 1)`).
 
 - **Extensible records (row polymorphism)** — functions over "any record with field `x`". Elm had these and [removed them in 0.19](https://elm-lang.org/news/small-assets-without-the-headache) because the complexity cost (error messages, type system machinery) outweighed the flexibility. Traits already cover many of the same use cases. WasmGC's fixed-layout structs also push against it. Worth revisiting only if plain records prove genuinely limiting in practice.
 - **Hot module reloading** — WasmGC separates code from the GC-managed heap, which makes this more tractable than classic linear-memory Wasm. Live GC references are typed and runtime-managed, so a host could in theory transfer them from an old module instance to a new one. The open questions are type layout compatibility across versions and the lack of standardized dynamic linking in the Wasm spec today. Needs more research before committing.

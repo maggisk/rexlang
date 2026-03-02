@@ -38,8 +38,8 @@ let chained =
 -- Using pipe to chain list operations
 let total =
     [1, 2, 3, 4, 5]
-        |> map (fn x -> x * 2)
-        |> foldl (fn acc x -> acc + x) 0
+        |> map (\x -> x * 2)
+        |> foldl (\acc x -> acc + x) 0
 
 test "multi-binding let blocks" =
     assert (result == 200)

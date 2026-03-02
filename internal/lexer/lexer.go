@@ -19,7 +19,7 @@ func (e *LexError) Error() string {
 
 var keywords = map[string]bool{
 	"let": true, "rec": true, "and": true, "in": true,
-	"if": true, "then": true, "else": true, "fn": true,
+	"if": true, "then": true, "else": true,
 	"case": true, "type": true, "of": true, "import": true,
 	"export": true, "as": true, "trait": true, "impl": true,
 	"where": true, "test": true, "assert": true,
@@ -301,6 +301,10 @@ func Tokenize(source string) ([]Token, error) {
 		case c == '/':
 			pos++
 			tokens = append(tokens, Token{Kind: TokSlash, Line: tokLine, Col: tokCol})
+
+		case c == '\\':
+			pos++
+			tokens = append(tokens, Token{Kind: TokBackslash, Line: tokLine, Col: tokCol})
 
 		case c == '!':
 			pos++

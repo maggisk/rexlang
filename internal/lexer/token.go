@@ -21,7 +21,7 @@ const (
 	TokIf     = "if"
 	TokThen   = "then"
 	TokElse   = "else"
-	TokFn     = "fn"
+	TokBackslash = "\\"
 	TokCase   = "case"
 	TokType   = "type"
 	TokOf     = "of"

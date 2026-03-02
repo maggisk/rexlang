@@ -685,7 +685,7 @@ func (p *parser) parseIf() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseFun() (ast.Expr, error) {
-	p.advance() // consume 'fn'
+	p.advance() // consume '\'
 	var params []string
 	for p.peek().Kind != lexer.TokArrow {
 		if p.peek().Kind == lexer.TokIdent {
@@ -1407,7 +1407,7 @@ func (p *parser) parseExpr() (ast.Expr, error) {
 		return p.parseLet()
 	case lexer.TokIf:
 		return p.parseIf()
-	case lexer.TokFn:
+	case lexer.TokBackslash:
 		return p.parseFun()
 	case lexer.TokCase:
 		return p.parseCase()

@@ -7,8 +7,8 @@ import std:List (map, length, take, drop, concat)
 -- Results are returned in the same order as the input list.
 pmap : (a -> b) -> [a] -> [b]
 let pmap f lst =
-    let pids = map (fn x ->
-        spawn (fn _ ->
+    let pids = map (\x ->
+        spawn (\_ ->
             let result = f x
                 caller = receive ()
             in
@@ -16,7 +16,7 @@ let pmap f lst =
         )
     ) lst
     in
-    pids |> map (fn pid -> call pid (fn me -> me))
+    pids |> map (\pid -> call pid (\me -> me))
 
 
 -- | Apply a function to each element in parallel, using at most n workers.
@@ -36,8 +36,8 @@ let pmapN n f lst =
             _ ->
                 take size l :: chunks (drop size l)
     in
-    let pids = map (fn chunk ->
-        spawn (fn _ ->
+    let pids = map (\chunk ->
+        spawn (\_ ->
             let result = map f chunk
                 caller = receive ()
             in
@@ -45,27 +45,27 @@ let pmapN n f lst =
         )
     ) (chunks lst)
     in
-    pids |> map (fn pid -> call pid (fn me -> me)) |> concat
+    pids |> map (\pid -> call pid (\me -> me)) |> concat
 
 
 test "pmap preserves order" =
-    let result = pmap (fn x -> x * 2) [1, 2, 3, 4, 5]
+    let result = pmap (\x -> x * 2) [1, 2, 3, 4, 5]
     assert (result == [2, 4, 6, 8, 10])
 
 test "pmap on empty list" =
-    let result = pmap (fn x -> x + 1) []
+    let result = pmap (\x -> x + 1) []
     assert (result == [])
 
 test "pmapN preserves order" =
-    let result = pmapN 2 (fn x -> x * 10) [1, 2, 3, 4, 5]
+    let result = pmapN 2 (\x -> x * 10) [1, 2, 3, 4, 5]
     assert (result == [10, 20, 30, 40, 50])
 
 test "pmapN on empty list" =
-    let result = pmapN 4 (fn x -> x + 1) []
+    let result = pmapN 4 (\x -> x + 1) []
     assert (result == [])
 
 test "pmapN with 1 worker" =
-    let result = pmapN 1 (fn x -> x * x) [1, 2, 3]
+    let result = pmapN 1 (\x -> x * x) [1, 2, 3]
     assert (result == [1, 4, 9])
 
 test "numCPU is positive" =

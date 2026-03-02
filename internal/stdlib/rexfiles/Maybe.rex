@@ -84,8 +84,8 @@ test "withDefault" =
 
 -- | Apply a function to the value inside Just, pass Nothing through.
 --
---     map (fn x -> x * 2) (Just 5) == Just 10
---     map (fn x -> x * 2) Nothing == Nothing
+--     map (\x -> x * 2) (Just 5) == Just 10
+--     map (\x -> x * 2) Nothing == Nothing
 --
 map : (a -> b) -> Maybe a -> Maybe b
 let map f x =
@@ -96,16 +96,16 @@ let map f x =
             Just (f v)
 
 test "map" =
-    assert (Just 5 |> map (fn x -> x * 2) == Just 10)
-    assert (map (fn x -> x * 2) Nothing == Nothing)
+    assert (Just 5 |> map (\x -> x * 2) == Just 10)
+    assert (map (\x -> x * 2) Nothing == Nothing)
 
 
 -- | Chain Maybe-returning functions (flatMap/bind).
 --   The function receives the unwrapped value and returns a Maybe.
 --
---     andThen (fn x -> Just (x * 2)) (Just 5) == Just 10
---     andThen (fn x -> Nothing) (Just 5) == Nothing
---     andThen (fn x -> Just (x * 2)) Nothing == Nothing
+--     andThen (\x -> Just (x * 2)) (Just 5) == Just 10
+--     andThen (\x -> Nothing) (Just 5) == Nothing
+--     andThen (\x -> Just (x * 2)) Nothing == Nothing
 --
 andThen : (a -> Maybe b) -> Maybe a -> Maybe b
 let andThen f x =
@@ -116,16 +116,16 @@ let andThen f x =
             f v
 
 test "andThen" =
-    assert (Just 5 |> andThen (fn x -> Just (x * 2)) == Just 10)
-    assert (Just 5 |> andThen (fn x -> Nothing) == Nothing)
-    assert (andThen (fn x -> Just (x * 2)) Nothing == Nothing)
+    assert (Just 5 |> andThen (\x -> Just (x * 2)) == Just 10)
+    assert (Just 5 |> andThen (\x -> Nothing) == Nothing)
+    assert (andThen (\x -> Just (x * 2)) Nothing == Nothing)
 
 
 -- | Keep Just if predicate holds, otherwise Nothing.
 --
---     filter (fn x -> x > 3) (Just 5) == Just 5
---     filter (fn x -> x > 3) (Just 1) == Nothing
---     filter (fn x -> x > 3) Nothing == Nothing
+--     filter (\x -> x > 3) (Just 5) == Just 5
+--     filter (\x -> x > 3) (Just 1) == Nothing
+--     filter (\x -> x > 3) Nothing == Nothing
 --
 filter : (a -> Bool) -> Maybe a -> Maybe a
 let filter pred x =
@@ -139,9 +139,9 @@ let filter pred x =
                 Nothing
 
 test "filter" =
-    assert (Just 5 |> filter (fn x -> x > 3) == Just 5)
-    assert (Just 1 |> filter (fn x -> x > 3) == Nothing)
-    assert (filter (fn x -> x > 3) Nothing == Nothing)
+    assert (Just 5 |> filter (\x -> x > 3) == Just 5)
+    assert (Just 1 |> filter (\x -> x > 3) == Nothing)
+    assert (filter (\x -> x > 3) Nothing == Nothing)
 
 
 -- | Return the first Just, or Nothing if both are Nothing.

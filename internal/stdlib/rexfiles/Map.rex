@@ -238,7 +238,7 @@ let rec update key f m =
 
 test "update" =
     let m = insert 1 10 empty
-    let m2 = update 1 (fn v -> v + 5) m
+    let m2 = update 1 (\v -> v + 5) m
     assert (m2 |> lookup 1 == Just 15)
 
 
@@ -278,7 +278,7 @@ let rec foldl f acc m =
 
 test "foldl" =
     let m = fromList [(1, 10), (2, 20), (3, 30)]
-    assert (foldl (fn k v acc -> acc + v) 0 m == 60)
+    assert (foldl (\k v acc -> acc + v) 0 m == 60)
 
 
 -- | Fold over key-value pairs from largest to smallest key.
@@ -300,19 +300,19 @@ let rec foldr f acc m =
 -- | Convert to a sorted list of (key, value) pairs.
 toList : Map k v -> [(k, v)]
 let toList m =
-    foldr (fn k v acc -> (k, v) :: acc) [] m
+    foldr (\k v acc -> (k, v) :: acc) [] m
 
 
 -- | Get all keys in sorted order.
 keys : Map k v -> [k]
 let keys m =
-    foldr (fn k v acc -> k :: acc) [] m
+    foldr (\k v acc -> k :: acc) [] m
 
 
 -- | Get all values in key order.
 values : Map k v -> [v]
 let values m =
-    foldr (fn k v acc -> v :: acc) [] m
+    foldr (\k v acc -> v :: acc) [] m
 
 test "keys and values" =
     import std:List (length)
@@ -335,14 +335,14 @@ let rec map f m =
 
 test "map" =
     let m = fromList [(1, 10), (2, 20)]
-    let m2 = map (fn v -> v * 2) m
+    let m2 = map (\v -> v * 2) m
     assert (m2 |> lookup 1 == Just 20)
     assert (m2 |> lookup 2 == Just 40)
 
 
 -- | Apply a function to every key-value pair in the map.
 --
---     mapWithKey (fn k v -> k + v) (fromList [(1, 10), (2, 20)]) == fromList [(1, 11), (2, 22)]
+--     mapWithKey (\k v -> k + v) (fromList [(1, 10), (2, 20)]) == fromList [(1, 11), (2, 22)]
 --
 mapWithKey : (k -> v -> w) -> Map k v -> Map k w
 let rec mapWithKey f m =
@@ -354,7 +354,7 @@ let rec mapWithKey f m =
 
 test "mapWithKey" =
     let m = fromList [(1, 10), (2, 20)]
-    let m2 = mapWithKey (fn k v -> k + v) m
+    let m2 = mapWithKey (\k v -> k + v) m
     assert (m2 |> lookup 1 == Just 11)
     assert (m2 |> lookup 2 == Just 22)
 
@@ -362,7 +362,7 @@ test "mapWithKey" =
 -- | Keep only entries where the predicate returns true.
 filter : (k -> v -> Bool) -> Map k v -> Map k v
 let filter pred m =
-    foldl (fn k v acc ->
+    foldl (\k v acc ->
         if pred k v then
             insert k v acc
         else
@@ -370,7 +370,7 @@ let filter pred m =
 
 test "filter" =
     let m = fromList [(1, 10), (2, 20), (3, 30)]
-    let m2 = filter (fn k v -> v > 15) m
+    let m2 = filter (\k v -> v > 15) m
     assert (size m2 == 2)
     assert (m2 |> member 1 |> not)
     assert (member 2 m2)
@@ -385,7 +385,7 @@ test "filter" =
 --
 union : Map k v -> Map k v -> Map k v
 let union m1 m2 =
-    foldl (fn k v acc -> insert k v acc) m2 m1
+    foldl (\k v acc -> insert k v acc) m2 m1
 
 test "union" =
     let m1 = fromList [(1, 10), (2, 20)]
@@ -399,11 +399,11 @@ test "union" =
 
 -- | Merge two maps with a conflict resolver.
 --
---     unionWith (fn a b -> a + b) (fromList [(1, 10)]) (fromList [(1, 20), (2, 30)])
+--     unionWith (\a b -> a + b) (fromList [(1, 10)]) (fromList [(1, 20), (2, 30)])
 --
 unionWith : (v -> v -> v) -> Map k v -> Map k v -> Map k v
 let unionWith f m1 m2 =
-    foldl (fn k v acc ->
+    foldl (\k v acc ->
         case lookup k acc of
             Just existing ->
                 insert k (f v existing) acc
@@ -413,7 +413,7 @@ let unionWith f m1 m2 =
 test "unionWith" =
     let m1 = fromList [(1, 10), (2, 20)]
     let m2 = fromList [(2, 30), (3, 40)]
-    let m3 = unionWith (fn a b -> a + b) m1 m2
+    let m3 = unionWith (\a b -> a + b) m1 m2
     assert (size m3 == 3)
     assert (m3 |> lookup 2 == Just 50)
 
@@ -424,7 +424,7 @@ test "unionWith" =
 --
 intersect : Map k v -> Map k v -> Map k v
 let intersect m1 m2 =
-    filter (fn k v -> member k m2) m1
+    filter (\k v -> member k m2) m1
 
 test "intersect" =
     let m1 = fromList [(1, 10), (2, 20), (3, 30)]
@@ -437,11 +437,11 @@ test "intersect" =
 
 -- | Intersect with a value combiner.
 --
---     intersectWith (fn a b -> a + b) (fromList [(1, 10), (2, 20)]) (fromList [(2, 30), (3, 40)])
+--     intersectWith (\a b -> a + b) (fromList [(1, 10), (2, 20)]) (fromList [(2, 30), (3, 40)])
 --
 intersectWith : (v -> v -> v) -> Map k v -> Map k v -> Map k v
 let intersectWith f m1 m2 =
-    foldl (fn k v acc ->
+    foldl (\k v acc ->
         case lookup k m2 of
             Just v2 ->
                 insert k (f v v2) acc
@@ -451,7 +451,7 @@ let intersectWith f m1 m2 =
 test "intersectWith" =
     let m1 = fromList [(1, 10), (2, 20)]
     let m2 = fromList [(2, 30), (3, 40)]
-    let m3 = intersectWith (fn a b -> a + b) m1 m2
+    let m3 = intersectWith (\a b -> a + b) m1 m2
     assert (size m3 == 1)
     assert (m3 |> lookup 2 == Just 50)
 
@@ -462,7 +462,7 @@ test "intersectWith" =
 --
 difference : Map k v -> Map k v -> Map k v
 let difference m1 m2 =
-    filter (fn k v -> not (member k m2)) m1
+    filter (\k v -> not (member k m2)) m1
 
 test "difference" =
     let m1 = fromList [(1, 10), (2, 20), (3, 30)]
@@ -519,24 +519,24 @@ test "findMin and findMax" =
 
 -- | Check if any key-value pair satisfies the predicate.
 --
---     any (fn k v -> v > 20) (fromList [(1, 10), (2, 30)]) == true
+--     any (\k v -> v > 20) (fromList [(1, 10), (2, 30)]) == true
 --
 any : (k -> v -> Bool) -> Map k v -> Bool
 let any pred m =
-    foldl (fn k v acc -> acc || pred k v) false m
+    foldl (\k v acc -> acc || pred k v) false m
 
 
 -- | Check if all key-value pairs satisfy the predicate.
 --
---     all (fn k v -> v > 0) (fromList [(1, 10), (2, 20)]) == true
+--     all (\k v -> v > 0) (fromList [(1, 10), (2, 20)]) == true
 --
 all : (k -> v -> Bool) -> Map k v -> Bool
 let all pred m =
-    foldl (fn k v acc -> acc && pred k v) true m
+    foldl (\k v acc -> acc && pred k v) true m
 
 test "any and all" =
     let m = fromList [(1, 10), (2, 30)]
-    assert (any (fn k v -> v > 20) m)
-    assert (m |> any (fn k v -> v > 100) |> not)
-    assert (all (fn k v -> v > 0) m)
-    assert (m |> all (fn k v -> v > 20) |> not)
+    assert (any (\k v -> v > 20) m)
+    assert (m |> any (\k v -> v > 100) |> not)
+    assert (all (\k v -> v > 0) m)
+    assert (m |> all (\k v -> v > 20) |> not)

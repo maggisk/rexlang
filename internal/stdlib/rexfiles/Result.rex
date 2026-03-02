@@ -69,8 +69,8 @@ test "withDefault" =
 
 -- | Apply a function to the Ok value; pass Err through unchanged.
 --
---     map (fn x -> x * 2) (Ok 5) == Ok 10
---     map (fn x -> x * 2) (Err "oops") == Err "oops"
+--     map (\x -> x * 2) (Ok 5) == Ok 10
+--     map (\x -> x * 2) (Err "oops") == Err "oops"
 --
 map : (a -> b) -> Result a e -> Result b e
 let map f r =
@@ -81,14 +81,14 @@ let map f r =
             Err e
 
 test "map" =
-    assert (Ok 5 |> map (fn x -> x * 2) |> withDefault 0 == 10)
-    assert (Err "oops" |> map (fn x -> x * 2) |> isErr)
+    assert (Ok 5 |> map (\x -> x * 2) |> withDefault 0 == 10)
+    assert (Err "oops" |> map (\x -> x * 2) |> isErr)
 
 
 -- | Apply a function to the Err value; pass Ok through unchanged.
 --
---     mapErr (fn e -> "error: " ++ e) (Err "oops") == Err "error: oops"
---     mapErr (fn e -> "error: " ++ e) (Ok 5) == Ok 5
+--     mapErr (\e -> "error: " ++ e) (Err "oops") == Err "error: oops"
+--     mapErr (\e -> "error: " ++ e) (Ok 5) == Ok 5
 --
 mapErr : (e -> f) -> Result a e -> Result a f
 let mapErr f r =
@@ -99,15 +99,15 @@ let mapErr f r =
             Err (f e)
 
 test "mapErr" =
-    assert (Ok 5 |> mapErr (fn e -> e ++ "!") |> isOk)
-    assert (Err "oops" |> mapErr (fn e -> e ++ "!") |> isErr)
+    assert (Ok 5 |> mapErr (\e -> e ++ "!") |> isOk)
+    assert (Err "oops" |> mapErr (\e -> e ++ "!") |> isErr)
 
 
 -- | Chain Result-returning functions (flatMap/bind).
 --
---     andThen (fn x -> Ok (x * 2)) (Ok 5) == Ok 10
---     andThen (fn x -> Ok (x * 2)) (Err "oops") == Err "oops"
---     andThen (fn x -> Err "nope") (Ok 5) == Err "nope"
+--     andThen (\x -> Ok (x * 2)) (Ok 5) == Ok 10
+--     andThen (\x -> Ok (x * 2)) (Err "oops") == Err "oops"
+--     andThen (\x -> Err "nope") (Ok 5) == Err "nope"
 --
 andThen : (a -> Result b e) -> Result a e -> Result b e
 let andThen f r =
@@ -118,9 +118,9 @@ let andThen f r =
             Err e
 
 test "andThen" =
-    assert (Ok 5 |> andThen (fn x -> Ok (x * 2)) |> withDefault 0 == 10)
-    assert (Err "oops" |> andThen (fn x -> Ok (x * 2)) |> isErr)
-    assert (Ok 5 |> andThen (fn _ -> Err "nope") |> isErr)
+    assert (Ok 5 |> andThen (\x -> Ok (x * 2)) |> withDefault 0 == 10)
+    assert (Err "oops" |> andThen (\x -> Ok (x * 2)) |> isErr)
+    assert (Ok 5 |> andThen (\_ -> Err "nope") |> isErr)
 
 
 -- # Convert

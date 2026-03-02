@@ -150,7 +150,7 @@ test "nth" =
 
 -- | Reduce a list from the left.
 --
---     foldl (fn acc x -> acc + x) 0 [1, 2, 3] == 6
+--     foldl (\acc x -> acc + x) 0 [1, 2, 3] == 6
 --
 foldl : (b -> a -> b) -> b -> [a] -> b
 let rec foldl f acc lst =
@@ -161,12 +161,12 @@ let rec foldl f acc lst =
             foldl f (f acc h) t
 
 test "foldl" =
-    assert (foldl (fn acc x -> acc + x) 0 [1, 2, 3] == 6)
+    assert (foldl (\acc x -> acc + x) 0 [1, 2, 3] == 6)
 
 
 -- | Reduce a list from the right.
 --
---     foldr (fn x acc -> x :: acc) [] [1, 2, 3] == [1, 2, 3]
+--     foldr (\x acc -> x :: acc) [] [1, 2, 3] == [1, 2, 3]
 --
 foldr : (a -> b -> b) -> b -> [a] -> b
 let rec foldr f acc lst =
@@ -177,13 +177,13 @@ let rec foldr f acc lst =
             f h (foldr f acc t)
 
 test "foldr" =
-    assert ([1, 2, 3] |> foldr (fn x acc -> x :: acc) [] |> head == Just 1)
+    assert ([1, 2, 3] |> foldr (\x acc -> x :: acc) [] |> head == Just 1)
 
 
 -- | Reduce a list using the first element as the initial accumulator.
 -- Crashes on empty list.
 --
---     foldl1 (fn a b -> a + b) [1, 2, 3] == 6
+--     foldl1 (\a b -> a + b) [1, 2, 3] == 6
 --
 foldl1 : (a -> a -> a) -> [a] -> a
 let foldl1 f lst =
@@ -194,8 +194,8 @@ let foldl1 f lst =
             foldl f h t
 
 test "foldl1" =
-    assert (foldl1 (fn a b -> a + b) [1, 2, 3] == 6)
-    assert (foldl1 (fn a b -> a + b) [42] == 42)
+    assert (foldl1 (\a b -> a + b) [1, 2, 3] == 6)
+    assert (foldl1 (\a b -> a + b) [42] == 42)
 
 
 -- # Aggregate
@@ -207,7 +207,7 @@ test "foldl1" =
 --
 sum : [Int] -> Int
 let sum lst =
-    foldl (fn acc x -> acc + x) 0 lst
+    foldl (\acc x -> acc + x) 0 lst
 
 test "sum" =
     assert (sum [1, 2, 3, 4, 5] == 15)
@@ -219,7 +219,7 @@ test "sum" =
 --
 product : [Int] -> Int
 let product lst =
-    foldl (fn acc x -> acc * x) 1 lst
+    foldl (\acc x -> acc * x) 1 lst
 
 test "product" =
     assert (product [1, 2, 3, 4] == 24)
@@ -227,28 +227,28 @@ test "product" =
 
 -- | Determine if any elements satisfy the predicate.
 --
---     any (fn x -> x > 3) [1, 2, 3, 4] == true
+--     any (\x -> x > 3) [1, 2, 3, 4] == true
 --
 any : (a -> Bool) -> [a] -> Bool
 let any pred lst =
-    foldl (fn acc x -> acc || pred x) false lst
+    foldl (\acc x -> acc || pred x) false lst
 
 test "any" =
-    assert (any (fn x -> x > 3) [1, 2, 3, 4])
-    assert ([1, 2, 3] |> any (fn x -> x > 10) |> not)
+    assert (any (\x -> x > 3) [1, 2, 3, 4])
+    assert ([1, 2, 3] |> any (\x -> x > 10) |> not)
 
 
 -- | Determine if all elements satisfy the predicate.
 --
---     all (fn x -> x > 0) [1, 2, 3] == true
+--     all (\x -> x > 0) [1, 2, 3] == true
 --
 all : (a -> Bool) -> [a] -> Bool
 let all pred lst =
-    foldl (fn acc x -> acc && pred x) true lst
+    foldl (\acc x -> acc && pred x) true lst
 
 test "all" =
-    assert (all (fn x -> x > 0) [1, 2, 3])
-    assert ([1, 2, 3] |> all (fn x -> x > 2) |> not)
+    assert (all (\x -> x > 0) [1, 2, 3])
+    assert ([1, 2, 3] |> all (\x -> x > 2) |> not)
 
 
 -- | Return the largest element, or Nothing for empty lists. Requires Ord.
@@ -261,7 +261,7 @@ let maximum lst =
         [] ->
             Nothing
         [h|t] ->
-            Just (foldl (fn a b ->
+            Just (foldl (\a b ->
                 case compare a b of
                     GT ->
                         a
@@ -283,7 +283,7 @@ let minimum lst =
         [] ->
             Nothing
         [h|t] ->
-            Just (foldl (fn a b ->
+            Just (foldl (\a b ->
                 case compare a b of
                     LT ->
                         a
@@ -335,7 +335,7 @@ test "range" =
 
 -- | Apply a function to every element of a list.
 --
---     map (fn x -> x * 2) [1, 2, 3] == [2, 4, 6]
+--     map (\x -> x * 2) [1, 2, 3] == [2, 4, 6]
 --
 map : (a -> b) -> [a] -> [b]
 let rec map f lst =
@@ -346,12 +346,12 @@ let rec map f lst =
             f h :: map f t
 
 test "map" =
-    assert ([1, 2, 3] |> map (fn x -> x * 2) |> sum == 12)
+    assert ([1, 2, 3] |> map (\x -> x * 2) |> sum == 12)
 
 
 -- | Apply a function to every element along with its index.
 --
---     indexedMap (fn i x -> i) ["a", "b", "c"] == [0, 1, 2]
+--     indexedMap (\i x -> i) ["a", "b", "c"] == [0, 1, 2]
 --
 indexedMap : (Int -> a -> b) -> [a] -> [b]
 let indexedMap f lst =
@@ -365,12 +365,12 @@ let indexedMap f lst =
     go 0 lst
 
 test "indexedMap" =
-    assert ([10, 20, 30] |> indexedMap (fn i x -> i) |> sum == 3)
+    assert ([10, 20, 30] |> indexedMap (\i x -> i) |> sum == 3)
 
 
 -- | Keep only elements that satisfy the predicate.
 --
---     filter (fn x -> x > 2) [1, 2, 3, 4] == [3, 4]
+--     filter (\x -> x > 2) [1, 2, 3, 4] == [3, 4]
 --
 filter : (a -> Bool) -> [a] -> [a]
 let rec filter pred lst =
@@ -384,12 +384,12 @@ let rec filter pred lst =
                 filter pred t
 
 test "filter" =
-    assert ([1, 2, 3, 4, 5] |> filter (fn x -> x > 2) |> length == 3)
+    assert ([1, 2, 3, 4, 5] |> filter (\x -> x > 2) |> length == 3)
 
 
 -- | Map with a function returning Maybe, keeping only Just values.
 --
---     filterMap (fn x -> if x > 2 then Just (x * 10) else Nothing) [1, 2, 3, 4] == [30, 40]
+--     filterMap (\x -> if x > 2 then Just (x * 10) else Nothing) [1, 2, 3, 4] == [30, 40]
 --
 filterMap : (a -> Maybe b) -> [a] -> [b]
 let rec filterMap f lst =
@@ -404,8 +404,8 @@ let rec filterMap f lst =
                     filterMap f t
 
 test "filterMap" =
-    assert ([1, 2, 3, 4] |> filterMap (fn x -> if x > 2 then Just (x * 10) else Nothing) == [30, 40])
-    assert (filterMap (fn x -> Nothing) [1, 2, 3] == [])
+    assert ([1, 2, 3, 4] |> filterMap (\x -> if x > 2 then Just (x * 10) else Nothing) == [30, 40])
+    assert (filterMap (\x -> Nothing) [1, 2, 3] == [])
 
 
 -- | Reverse a list.
@@ -461,15 +461,15 @@ test "concat" =
 
 -- | Map then flatten.
 --
---     flatMap (fn x -> [x, x]) [1, 2, 3] == [1, 1, 2, 2, 3, 3]
+--     flatMap (\x -> [x, x]) [1, 2, 3] == [1, 1, 2, 2, 3, 3]
 --
 flatMap : (a -> [b]) -> [a] -> [b]
 let flatMap f lst =
     map f lst |> concat
 
 test "flatMap" =
-    assert (flatMap (fn x -> [x, x]) [1, 2, 3] == [1, 1, 2, 2, 3, 3])
-    assert (flatMap (fn x -> []) [1, 2, 3] == [])
+    assert (flatMap (\x -> [x, x]) [1, 2, 3] == [1, 1, 2, 2, 3, 3])
+    assert (flatMap (\x -> []) [1, 2, 3] == [])
 
 
 -- | Pair up elements from two lists. Stops at the shorter list.
@@ -491,12 +491,12 @@ let rec zip xs ys =
 test "zip" =
     let pairs = zip [1, 2, 3] [4, 5, 6]
     assert (length pairs == 3)
-    assert (pairs |> foldl (fn acc pair -> let (a, b) = pair in acc + a + b) 0 == 21)
+    assert (pairs |> foldl (\acc pair -> let (a, b) = pair in acc + a + b) 0 == 21)
 
 
 -- | Combine two lists element-wise with a function.
 --
---     zipWith (fn a b -> a + b) [1, 2, 3] [10, 20, 30] == [11, 22, 33]
+--     zipWith (\a b -> a + b) [1, 2, 3] [10, 20, 30] == [11, 22, 33]
 --
 zipWith : (a -> b -> c) -> [a] -> [b] -> [c]
 let rec zipWith f xs ys =
@@ -511,9 +511,9 @@ let rec zipWith f xs ys =
                     f x y :: zipWith f xrest yrest
 
 test "zipWith" =
-    assert (zipWith (fn a b -> a + b) [1, 2, 3] [10, 20, 30] == [11, 22, 33])
-    assert (zipWith (fn a b -> a + b) [1, 2] [10] == [11])
-    assert (zipWith (fn a b -> a + b) [] [1, 2] == [])
+    assert (zipWith (\a b -> a + b) [1, 2, 3] [10, 20, 30] == [11, 22, 33])
+    assert (zipWith (\a b -> a + b) [1, 2] [10] == [11])
+    assert (zipWith (\a b -> a + b) [] [1, 2] == [])
 
 
 -- | Split a list of pairs into a pair of lists.
@@ -600,7 +600,7 @@ test "drop" =
 
 -- | Take elements while predicate holds.
 --
---     takeWhile (fn x -> x < 3) [1, 2, 3, 4] == [1, 2]
+--     takeWhile (\x -> x < 3) [1, 2, 3, 4] == [1, 2]
 --
 takeWhile : (a -> Bool) -> [a] -> [a]
 let rec takeWhile pred lst =
@@ -614,13 +614,13 @@ let rec takeWhile pred lst =
                 []
 
 test "takeWhile" =
-    assert ([1, 2, 3, 4] |> takeWhile (fn x -> x < 3) == [1, 2])
-    assert (takeWhile (fn x -> x < 0) [1, 2, 3] == [])
+    assert ([1, 2, 3, 4] |> takeWhile (\x -> x < 3) == [1, 2])
+    assert (takeWhile (\x -> x < 0) [1, 2, 3] == [])
 
 
 -- | Drop elements while predicate holds.
 --
---     dropWhile (fn x -> x < 3) [1, 2, 3, 4] == [3, 4]
+--     dropWhile (\x -> x < 3) [1, 2, 3, 4] == [3, 4]
 --
 dropWhile : (a -> Bool) -> [a] -> [a]
 let rec dropWhile pred lst =
@@ -634,13 +634,13 @@ let rec dropWhile pred lst =
                 lst
 
 test "dropWhile" =
-    assert ([1, 2, 3, 4] |> dropWhile (fn x -> x < 3) == [3, 4])
-    assert (dropWhile (fn x -> x < 0) [1, 2, 3] == [1, 2, 3])
+    assert ([1, 2, 3, 4] |> dropWhile (\x -> x < 3) == [3, 4])
+    assert (dropWhile (\x -> x < 0) [1, 2, 3] == [1, 2, 3])
 
 
 -- | Split a list at the point where the predicate stops holding.
 --
---     span (fn x -> x < 3) [1, 2, 3, 4] == ([1, 2], [3, 4])
+--     span (\x -> x < 3) [1, 2, 3, 4] == ([1, 2], [3, 4])
 --
 span : (a -> Bool) -> [a] -> ([a], [a])
 let span pred lst =
@@ -657,7 +657,7 @@ let span pred lst =
     go [] lst
 
 test "span" =
-    let (a, b) = [1, 2, 3, 4] |> span (fn x -> x < 3)
+    let (a, b) = [1, 2, 3, 4] |> span (\x -> x < 3)
     assert (a == [1, 2])
     assert (b == [3, 4])
 
@@ -667,7 +667,7 @@ test "span" =
 
 -- | Find the first element satisfying a predicate, or Nothing.
 --
---     find (fn x -> x > 2) [1, 2, 3, 4] == Just 3
+--     find (\x -> x > 2) [1, 2, 3, 4] == Just 3
 --
 find : (a -> Bool) -> [a] -> Maybe a
 let rec find pred lst =
@@ -681,13 +681,13 @@ let rec find pred lst =
                 find pred t
 
 test "find" =
-    assert ([1, 2, 3, 4] |> find (fn x -> x > 2) == Just 3)
-    assert (find (fn x -> x > 10) [1, 2, 3] == Nothing)
+    assert ([1, 2, 3, 4] |> find (\x -> x > 2) == Just 3)
+    assert (find (\x -> x > 10) [1, 2, 3] == Nothing)
 
 
 -- | Split a list into elements that pass and fail a predicate.
 --
---     partition (fn x -> x > 2) [1, 2, 3, 4] == ([3, 4], [1, 2])
+--     partition (\x -> x > 2) [1, 2, 3, 4] == ([3, 4], [1, 2])
 --
 partition : (a -> Bool) -> [a] -> ([a], [a])
 let partition pred lst =
@@ -704,7 +704,7 @@ let partition pred lst =
     go [] [] lst
 
 test "partition" =
-    let (yes, no) = [1, 2, 3, 4] |> partition (fn x -> x > 2)
+    let (yes, no) = [1, 2, 3, 4] |> partition (\x -> x > 2)
     assert (sum yes == 7)
     assert (sum no == 3)
 
@@ -723,7 +723,7 @@ let unique lst =
             [] ->
                 reverse acc
             [h|t] ->
-                if acc |> any (fn x -> x == h) then
+                if acc |> any (\x -> x == h) then
                     go acc t
                 else
                     go (h :: acc) t
@@ -739,7 +739,7 @@ test "unique" =
 -- | Remove duplicates by a key function (O(n²), uses == on keys).
 -- Keeps the first element for each distinct key.
 --
---     uniqueBy (fn x -> x % 3) [1, 2, 3, 4, 5] == [1, 2, 3]
+--     uniqueBy (\x -> x % 3) [1, 2, 3, 4, 5] == [1, 2, 3]
 --
 uniqueBy : (a -> b) -> [a] -> [a]
 let uniqueBy f lst =
@@ -749,7 +749,7 @@ let uniqueBy f lst =
                 reverse acc
             [h|t] ->
                 let key = f h in
-                if seen |> any (fn k -> k == key) then
+                if seen |> any (\k -> k == key) then
                     go seen acc t
                 else
                     go (key :: seen) (h :: acc) t
@@ -757,9 +757,9 @@ let uniqueBy f lst =
     go [] [] lst
 
 test "uniqueBy" =
-    assert (uniqueBy (fn x -> x % 3) [1, 2, 3, 4, 5] == [1, 2, 3])
-    assert (uniqueBy (fn x -> x) [1, 2, 1] == [1, 2])
-    assert (uniqueBy (fn x -> 0) [1, 2, 3] == [1])
+    assert (uniqueBy (\x -> x % 3) [1, 2, 3, 4, 5] == [1, 2, 3])
+    assert (uniqueBy (\x -> x) [1, 2, 1] == [1, 2])
+    assert (uniqueBy (\x -> 0) [1, 2, 3] == [1])
 
 
 -- # Sort
@@ -768,8 +768,8 @@ test "uniqueBy" =
 -- sortWith is a builtin
 
 test "sortWith" =
-    assert ([5, 3, 1, 4, 2] |> sortWith (fn a b -> compare a b) == [1, 2, 3, 4, 5])
-    assert ([1, 2, 3] |> sortWith (fn a b -> compare b a) == [3, 2, 1])
+    assert ([5, 3, 1, 4, 2] |> sortWith (\a b -> compare a b) == [1, 2, 3, 4, 5])
+    assert ([1, 2, 3] |> sortWith (\a b -> compare b a) == [3, 2, 1])
 
 
 -- | Sort a list using the default compare function.
@@ -778,7 +778,7 @@ test "sortWith" =
 --
 sort : [a] -> [a]
 let sort lst =
-    sortWith (fn a b -> compare a b) lst
+    sortWith (\a b -> compare a b) lst
 
 test "sort" =
     assert ([3, 1, 4, 1, 5] |> sort == [1, 1, 3, 4, 5])
@@ -787,11 +787,11 @@ test "sort" =
 
 -- | Sort a list by a derived key.
 --
---     sortBy (fn x -> 0 - x) [3, 1, 2] == [3, 2, 1]
+--     sortBy (\x -> 0 - x) [3, 1, 2] == [3, 2, 1]
 --
 sortBy : (a -> b) -> [a] -> [a]
 let sortBy f lst =
-    sortWith (fn a b -> compare (f a) (f b)) lst
+    sortWith (\a b -> compare (f a) (f b)) lst
 
 test "sortBy" =
-    assert ([3, 1, 2] |> sortBy (fn x -> 0 - x) == [3, 2, 1])
+    assert ([3, 1, 2] |> sortBy (\x -> 0 - x) == [3, 2, 1])

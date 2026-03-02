@@ -134,6 +134,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Json — parse (Go-backed), stringify (pure Rex), Json ADT, encode/decode helpers
 - [x] Process — actor model: `spawn`, `send`, `receive`, `self`, `call`; FIFO mailboxes (Go channels, cap 1024); `Pid a` opaque type; builtins injected into every program env automatically
 - [x] Parallel — `pmap`, `pmapN`, `numCPU`; parallel map over lists using actors; bounded parallelism via chunking
+- [x] Operator — named operator functions: `add`, `sub`, `mul`, `div`, `mod`, `eq`, `neq`, `lt`/`lte`/`gt`/`gte`, `cat` (`++`), `cons` (`::`), `flip`, `identity`, `const`; pure Rex, no builtins
 - JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
 - Date/Time (even basic)
 - Random numbers
