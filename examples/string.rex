@@ -7,5 +7,3 @@ test "split and join" =
 
 test "toUpper" =
     assert (toUpper "hello" == "HELLO")
-
-true

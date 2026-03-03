@@ -48,5 +48,3 @@ test "ordering pattern match" =
         GT ->
             "greater"
     assert (label == "less")
-
-true

@@ -42,5 +42,3 @@ let myNot b =
 test "boolean negation" =
     assert (myNot true == false)
     assert (myNot false == true)
-
-true

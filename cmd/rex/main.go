@@ -80,6 +80,12 @@ func runFile(path string, programArgs []string) {
 		os.Exit(1)
 	}
 
+	// Validate no bare expressions at top level
+	if err := eval.ValidateToplevel(exprs); err != nil {
+		printErr("Syntax error", err)
+		os.Exit(1)
+	}
+
 	// Reorder top-level bindings by dependency
 	exprs, err = typechecker.ReorderToplevel(exprs)
 	if err != nil {
@@ -88,15 +94,39 @@ func runFile(path string, programArgs []string) {
 	}
 
 	// Type check
-	if _, err := typechecker.CheckProgram(exprs); err != nil {
+	typeEnv, err := typechecker.CheckProgram(exprs)
+	if err != nil {
 		printErr("Type error", err)
 		os.Exit(1)
 	}
 
+	// Validate main exists and unifies with List String -> Int
+	mainScheme, ok := typeEnv["main"]
+	if !ok {
+		printErr("Type error", fmt.Errorf("no main function — add 'export let main args = ...'"))
+		os.Exit(1)
+	}
+	scheme, ok := mainScheme.(types.Scheme)
+	if !ok {
+		printErr("Type error", fmt.Errorf("main must be a function"))
+		os.Exit(1)
+	}
+	mainTy := typechecker.Instantiate(scheme)
+	expectedTy := types.TFun(types.TList(types.TString), types.TInt)
+	if _, err := types.Unify(mainTy, expectedTy); err != nil {
+		printErr("Type error", fmt.Errorf("main must have type List String -> Int, got %s", types.TypeToString(scheme.Ty)))
+		os.Exit(1)
+	}
+
 	// Evaluate
-	if _, err := eval.RunProgram(exprs, programArgs); err != nil {
+	result, err := eval.RunProgram(exprs, programArgs)
+	if err != nil {
 		printErr("Runtime error", err)
 		os.Exit(1)
+	}
+	exitCode := result.(eval.VInt).V
+	if exitCode != 0 {
+		os.Exit(exitCode)
 	}
 }
 
@@ -123,6 +153,12 @@ func runTests(path string, only string) (int, []eval.FailedTest) {
 	exprs, err := parser.Parse(src)
 	if err != nil {
 		printTestErr(path, "Parse error", err)
+		return 1, nil
+	}
+
+	// Validate no bare expressions at top level
+	if err := eval.ValidateToplevel(exprs); err != nil {
+		printTestErr(path, "Syntax error", err)
 		return 1, nil
 	}
 

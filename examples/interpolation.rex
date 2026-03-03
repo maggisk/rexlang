@@ -20,5 +20,3 @@ test "bool and float" =
 
 test "nested" =
     assert ("Nested: ${"hello " ++ show 42}" == "Nested: hello 42")
-
-true

@@ -22,5 +22,3 @@ test "fst and snd" =
 test "destructuring" =
     let (x, y) = (10, 20)
     assert (x + y == 30)
-
-true

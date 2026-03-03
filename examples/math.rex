@@ -11,5 +11,3 @@ test "clamp" =
 
 test "area" =
     assert (area 1.0 == pi)
-
-true

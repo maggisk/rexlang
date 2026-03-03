@@ -10,5 +10,3 @@ test "modulo" =
 test "isEven" =
     assert (isEven 4)
     assert (5 |> isEven |> not)
-
-true

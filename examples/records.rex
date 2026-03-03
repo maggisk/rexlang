@@ -86,5 +86,3 @@ test "nested update multiple fields" =
     assert (p2.name == "Bob")
     assert (p2.addr.city == "LA")
     assert (p2.addr.zip == "10001")
-
-p.fst

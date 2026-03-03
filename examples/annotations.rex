@@ -14,5 +14,3 @@ test "annotated functions" =
     assert (identity "hello" == "hello")
     assert (identity 42 == 42)
     assert (greet "Rex" == "Hello, Rex!")
-
-true

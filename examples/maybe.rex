@@ -16,5 +16,3 @@ test "map" =
 test "isNothing" =
     assert (isNothing Nothing)
     assert (Just 1 |> isNothing |> not)
-
-true

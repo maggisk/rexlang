@@ -12,5 +12,3 @@ test "pipe operator" =
     assert (3 |> inc |> double |> square == 64)
     assert (10 |> double == 20)
     assert (5 |> inc |> inc == 7)
-
-true

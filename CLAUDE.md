@@ -44,10 +44,11 @@ All commands run from the repo root:
 # build
 go build -o rex ./cmd/rex/
 
-# run a file
-./rex examples/factorial.rex
+# run a program (requires export let main)
+./rex examples/io.rex
+./rex examples/actors.rex arg1 arg2
 
-# run tests in a .rex file
+# run tests in a .rex file (no main required)
 ./rex --test examples/testing.rex
 ./rex --test internal/stdlib/rexfiles/List.rex
 
@@ -63,7 +64,9 @@ gofmt -w .
 
 ## Architecture notes
 
-- **Pipeline**: source → `lexer.Tokenize()` → `parser.Parse()` → `typechecker.CheckProgram()` → `eval.RunProgram()`
+- **Pipeline**: source → `lexer.Tokenize()` → `parser.Parse()` → `ValidateToplevel()` → `typechecker.CheckProgram()` → validate `main : List String -> Int` → `eval.RunProgram()` (which calls `main` with program args)
+- **Top-level restriction**: only declarations allowed at top level (`let`, `type`, `trait`, `impl`, `import`, `export`, `test`, type annotations). Bare expressions are rejected. Applies in both file mode and `--test` mode; REPL is exempt.
+- **`main` entry point**: programs run with `./rex file.rex` must define `export let main args = ...` where `main : List String -> Int`. `args` receives command-line arguments as a list of strings. The return value is the process exit code. `--test` mode does not require `main`.
 - **Language**: Go 1.24+. Single binary, no runtime dependency.
 - **Type inference**: `internal/typechecker` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types in `internal/types` (`TVar`, `TCon`, `Scheme`). Arithmetic operators (`+` `-` `*` `/`) require `Int` or `Float`; free type variables in arithmetic expressions default to `Int`. Use `toFloat` to convert before Float arithmetic. REPL shows `name : type` after each binding.
 - **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod`, `VInstances`, `VModule`, `VPid`, `VRecord` — all implement `Value` interface via `valueKind()`.
@@ -85,7 +88,8 @@ gofmt -w .
 ## Conventions
 
 - Every new language feature needs: lexer token (if needed) + AST node + parser rule + eval case + tests + example file
-- Example files in `examples/` end with a single expression whose value is asserted in `TestExampleFiles`
+- Example files in `examples/` are test-only (run with `--test`); programs that produce output have `export let main`
+- No bare expressions at top level in `.rex` files — only declarations
 - `gofmt -w .` before committing
 - Comments use `--` in `.rex` files
 - **Never commit or push unless explicitly asked** — each request is one-off, not a standing instruction
@@ -188,4 +192,5 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **std:Json**: `parse : String -> Result Json String` is Go-backed (`jsonParse` builtin in `builtins_core.go`). `stringify` is pure Rex. The Json ADT uses three mutually recursive types (`Json`, `JsonList`, `JsonObj`). `stringify` nests its helpers inside itself to avoid forward-reference issues. Json.rex imports `std:String (replace, toString)` for `escapeStr`.
 - **Stdlib test runner**: `RunTests` in `eval.go` runs test blocks. `cmd/rex/main.go --test` flag activates test runner. `test "name" = body` declares inline test blocks; `assert expr` checks a Bool at runtime. Normal execution skips tests. Tests are type-checked in all modes but only evaluated in test mode. Test body env is isolated (bindings don't leak).
 - **Multi-binding let**: `let a = 1 and b = 2 in a + b` — the `and` keyword chains multiple non-recursive bindings, mirroring the `and` syntax already used by `let rec` for mutual recursion. Parser-only change — desugars to nested `Let` AST nodes (typechecker and eval untouched). Function bindings work: `let f x = x * x and g y = y + 1 in ...`. Old chained `let...in...let...in` syntax unchanged.
+- **`main` entry point**: `export let main args = ...` with type `List String -> Int`. `RunProgram` evaluates all top-level declarations, then looks up `main` and calls it with program args as `List String`. The return `Int` is used as the process exit code. `--test` mode and REPL do not require `main`. `ValidateToplevel()` in `eval.go` rejects bare expressions; called early in both `runFile` and `runTests` in `cmd/rex/main.go`. Type validation uses `Instantiate` + `Unify` so `let main _ = 0` (type `a -> Int`) unifies with `List String -> Int`.
 - **std:Process**: Five builtins (`spawn`, `send`, `receive`, `self`, `call`) implemented entirely in Go (`ProcessBuiltins(selfPid VPid)`). `call` is Go-only because it needs to close over the caller's `selfPid` — a Rex implementation would capture the module-load-time mailbox instead. `spawn` injects per-goroutine `self` and `receive` into the spawned closure's env. `call` is `Pid b -> (Pid a -> b) -> a` — the message construction function receives the caller's pid. **Important**: recursive loops inside `spawn` must use `in` syntax (`let rec loop n = ... in loop 0`) so the loop body doesn't greedily consume the initial call. Capture `self` before `spawn` if the goroutine needs to reply to the spawning process.

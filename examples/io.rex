@@ -5,4 +5,6 @@ import std:IO (print)
 let greet name =
     print ("Hello, " ++ name ++ "!")
 
-greet "RexLang"
+export let main _ =
+    let _ = greet "RexLang" in
+    0

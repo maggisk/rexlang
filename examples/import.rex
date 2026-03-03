@@ -9,5 +9,3 @@ let evens = xs |> filter (\x -> x % 2 == 0)
 test "import std:List" =
     assert (sum doubled == 30)
     assert (sum evens == 6)
-
-true

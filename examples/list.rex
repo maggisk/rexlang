@@ -21,5 +21,3 @@ test "cons and pattern match" =
             assert (h == 0)
         _ ->
             assert false
-
-true

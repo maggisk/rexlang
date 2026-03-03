@@ -47,5 +47,3 @@ test "multi-binding let blocks" =
     assert (nested == 6)
     assert (chained == 30)
     assert (total == 30)
-
-true

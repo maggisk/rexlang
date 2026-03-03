@@ -29,5 +29,3 @@ test "practical: validate before compute" =
     let isValid xs = length xs > 0 && length xs < 10
     assert (isValid [1, 2, 3])
     assert (not (isValid []))
-
-true

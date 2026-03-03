@@ -20,5 +20,3 @@ test "isOdd" =
     assert (isOdd 1)
     assert (isOdd 11)
     assert (8 |> isOdd |> not)
-
-true

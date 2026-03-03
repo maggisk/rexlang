@@ -28,5 +28,3 @@ test "forward value chain" =
 
 test "forward ref with annotation" =
     assert greet "Rex" == "Hello, Rex"
-
-true

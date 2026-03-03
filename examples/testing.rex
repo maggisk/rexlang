@@ -28,5 +28,3 @@ test "boolean logic" =
     assert (true && true)
     assert (true || false)
     assert (not false)
-
-true

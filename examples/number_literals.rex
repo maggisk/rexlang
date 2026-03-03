@@ -34,5 +34,3 @@ test "underscore separators" =
     assert (million == 1000000)
     assert (hexColor == 0xFF00FF)
     assert (binByte == 0b11110000)
-
-true

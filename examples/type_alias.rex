@@ -47,5 +47,3 @@ test "parametric alias" =
 
 test "list alias" =
     assert (sum [1, 2, 3, 4, 5] == 15)
-
-greet "World"

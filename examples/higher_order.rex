@@ -13,5 +13,3 @@ test "apply" =
 test "compose" =
     assert (compose double inc 20 == 42)
     assert (compose inc double 20 == 41)
-
-true

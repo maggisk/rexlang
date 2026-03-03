@@ -15,5 +15,3 @@ test "fibonacci" =
     assert (fib 1 == 1)
     assert (fib 10 == 55)
     assert (fib 20 == 6765)
-
-true

@@ -1079,26 +1079,69 @@ func InitialEnv(programArgs []string) Env {
 }
 
 // ---------------------------------------------------------------------------
+// ValidateToplevel — reject bare expressions at top level
+// ---------------------------------------------------------------------------
+
+// ValidateToplevel checks that all top-level expressions are declarations.
+// Bare expressions (anything other than let, type, trait, impl, import, export, test,
+// or type annotations) produce an error.
+func ValidateToplevel(exprs []ast.Expr) error {
+	for _, expr := range exprs {
+		switch expr.(type) {
+		case ast.Let, ast.LetPat, ast.LetRec, ast.TypeDecl,
+			ast.TraitDecl, ast.ImplDecl, ast.Import, ast.Export,
+			ast.TestDecl, ast.TypeAnnotation:
+			// OK
+		default:
+			return fmt.Errorf("bare expression at top level — only declarations (let, type, trait, impl, import, export, test) are allowed")
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
 // RunProgram and RunTests
 // ---------------------------------------------------------------------------
 
 // RunProgram evaluates a list of pre-parsed (and reordered) top-level expressions.
+// After evaluating all declarations, it looks up and calls `main ()`, returning the Int result.
 func RunProgram(exprs []ast.Expr, programArgs []string) (Value, error) {
+	if err := ValidateToplevel(exprs); err != nil {
+		return nil, err
+	}
+
 	env, err := loadPreludeEval(programArgs)
 	if err != nil {
 		return nil, err
 	}
 	env = WithProcessBuiltins(env)
-	var last Value = VBool{V: false}
 	for _, expr := range exprs {
-		val, newEnv, err := EvalToplevel(env, expr, programArgs)
+		_, newEnv, err := EvalToplevel(env, expr, programArgs)
 		if err != nil {
 			return nil, err
 		}
-		last = val
 		env = newEnv
 	}
-	return last, nil
+
+	// Look up and call main with program args
+	mainVal, ok := env["main"]
+	if !ok {
+		return nil, fmt.Errorf("no main function — add 'export let main args = ...'")
+	}
+	mainFn, ok := mainVal.(VClosure)
+	if !ok {
+		return nil, fmt.Errorf("main must be a function, got %s", ValueToString(mainVal))
+	}
+	// Build List String from programArgs
+	argItems := make([]Value, len(programArgs))
+	for i, a := range programArgs {
+		argItems[i] = VString{V: a}
+	}
+	result, err := Eval(mainFn.Env.Extend(mainFn.Param, VList{Items: argItems}), mainFn.Body)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // isTTY reports whether stdout is a terminal.
@@ -1118,6 +1161,10 @@ type FailedTest struct {
 // only, if non-empty, restricts execution to tests whose name contains the substring.
 // The third return value is the list of failed tests with their source locations.
 func RunTests(exprs []ast.Expr, programArgs []string, extraBuiltins map[string]Value, label string, only string) (int, int, []FailedTest, error) {
+	if err := ValidateToplevel(exprs); err != nil {
+		return 0, 0, nil, err
+	}
+
 	env, err := loadPreludeEval(programArgs)
 	if err != nil {
 		return 0, 0, nil, err

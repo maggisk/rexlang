@@ -9,8 +9,8 @@ A functional programming language with algebraic data types, pattern matching, a
 ```bash
 go build -o rex ./cmd/rex/
 
-./rex examples/factorial.rex      # run a file
-./rex --test examples/*.rex # run tests
+./rex examples/io.rex             # run a program (requires main)
+./rex --test examples/factorial.rex  # run tests
 ./rex                             # start the REPL
 ```
 
@@ -223,6 +223,22 @@ let m = M.fromList [("a", 1), ("b", 2)]
 M.lookup "a" m    -- Just 1
 ```
 
+### Entry point
+
+Programs run with `./rex file.rex` need an `export let main` that takes command-line args and returns an exit code:
+
+```
+import std:IO (println)
+
+export let main args =
+    let _ = println "Hello, world!"
+    in 0
+```
+
+`main` must have type `List String -> Int`. Use `_` to ignore args: `export let main _ = 0`.
+
+Only declarations are allowed at the top level — bare expressions like `1 + 2` are rejected. The REPL is exempt from both rules.
+
 ### Built-in test framework
 
 ```
@@ -233,7 +249,7 @@ test "double works" =
     assert (double 0 == 0)
 ```
 
-Run with `--test`:
+Run with `--test` (no `main` required):
 
 ```bash
 ./rex --test myfile.rex
@@ -314,7 +330,6 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
 | `std:Process` | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages |
 | `std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
-
 
 ## Examples
 

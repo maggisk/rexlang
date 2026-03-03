@@ -79,6 +79,12 @@ func (tc *TypeChecker) instantiate(s types.Scheme) types.Type {
 	return types.SubstOnce(subst, s.Ty)
 }
 
+// Instantiate replaces quantified variables in a Scheme with fresh type variables.
+func Instantiate(s types.Scheme) types.Type {
+	tc := NewTypeChecker()
+	return tc.instantiate(s)
+}
+
 // ---------------------------------------------------------------------------
 // Pattern inference
 // ---------------------------------------------------------------------------

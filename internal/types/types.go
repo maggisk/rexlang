@@ -90,6 +90,31 @@ func TPid(a Type) Type {
 }
 
 // ---------------------------------------------------------------------------
+// Type equality (structural)
+// ---------------------------------------------------------------------------
+
+// TypesEqual checks structural equality of two types.
+func TypesEqual(a, b Type) bool {
+	switch at := a.(type) {
+	case TVar:
+		bt, ok := b.(TVar)
+		return ok && at.Name == bt.Name
+	case TCon:
+		bt, ok := b.(TCon)
+		if !ok || at.Name != bt.Name || len(at.Args) != len(bt.Args) {
+			return false
+		}
+		for i := range at.Args {
+			if !TypesEqual(at.Args[i], bt.Args[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
 // Record field metadata
 // ---------------------------------------------------------------------------
 

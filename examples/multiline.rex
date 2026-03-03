@@ -60,6 +60,3 @@ test "dedent with multi-line string" =
         </div>
         """
     assert html == "<div>\n    <p>hello</p>\n</div>\n"
-
-
-"done"

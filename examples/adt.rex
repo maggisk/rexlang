@@ -25,5 +25,3 @@ test "option pattern match" =
                 x
     assert (Some 42 |> get == 42)
     assert (get None == 0)
-
-true

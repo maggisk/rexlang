@@ -12,5 +12,3 @@ test "circle area" =
 
 test "hypotenuse" =
     assert (hypotenuse 3 4 == 5.0)
-
-true
