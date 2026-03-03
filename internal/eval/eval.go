@@ -447,6 +447,36 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			return nil, runtimeErr("type error: unary minus on %s", ValueToString(v))
 
 		case ast.Binop:
+			if e.Op == "And" {
+				l, err := Eval(env, e.Left)
+				if err != nil {
+					return nil, err
+				}
+				b, err := AsBool(l)
+				if err != nil {
+					return nil, err
+				}
+				if !b {
+					return VBool{V: false}, nil
+				}
+				expr = e.Right
+				continue
+			}
+			if e.Op == "Or" {
+				l, err := Eval(env, e.Left)
+				if err != nil {
+					return nil, err
+				}
+				b, err := AsBool(l)
+				if err != nil {
+					return nil, err
+				}
+				if b {
+					return VBool{V: true}, nil
+				}
+				expr = e.Right
+				continue
+			}
 			l, err := Eval(env, e.Left)
 			if err != nil {
 				return nil, err
