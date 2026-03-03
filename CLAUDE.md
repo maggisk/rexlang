@@ -125,7 +125,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 
 ### Module system
 - [x] Stdlib modules — `import std:List`, `import std:Map as M`, etc.
-- User modules — import your own `.rex` files
+- User modules — import your own `.rex` files. Note: `__instances__` merging on import is implemented (eval.go) but untested end-to-end — verify that a user module defining `impl` works when imported.
 - Opaque types — export a type without its constructor; consumers interact only through provided functions. Prerequisite: user modules. Syntax TBD.
 - Package system — third-party dependencies
 

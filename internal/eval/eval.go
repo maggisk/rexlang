@@ -912,6 +912,24 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 		if err != nil {
 			return nil, nil, err
 		}
+		// Merge module's __instances__ into caller's env so trait impls are available
+		newEnv := env.Clone()
+		if modInst, ok := mod.env["__instances__"]; ok {
+			if modVI, ok := modInst.(VInstances); ok {
+				merged := map[string]Value{}
+				if callerInst, ok := newEnv["__instances__"]; ok {
+					if callerVI, ok := callerInst.(VInstances); ok {
+						for k, v := range callerVI.M {
+							merged[k] = v
+						}
+					}
+				}
+				for k, v := range modVI.M {
+					merged[k] = v
+				}
+				newEnv["__instances__"] = VInstances{M: merged}
+			}
+		}
 		if e.Alias != "" {
 			modBindings := Env{}
 			for n := range mod.exports {
@@ -919,9 +937,8 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 					modBindings[n] = v
 				}
 			}
-			return VBool{V: false}, env.Extend(e.Alias, VModule{Name: e.Alias, Env: modBindings}), nil
+			return VBool{V: false}, newEnv.Extend(e.Alias, VModule{Name: e.Alias, Env: modBindings}), nil
 		}
-		newEnv := env.Clone()
 		for _, name := range e.Names {
 			if !mod.exports[name] {
 				return nil, nil, runtimeErr("'%s' is not exported by module '%s'", name, e.Module)
