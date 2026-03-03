@@ -365,6 +365,9 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		return tc.inferLetrec(env, typeDefs, subst, e)
 
 	case ast.LetPat:
+		if !isIrrefutable(e.Pat) {
+			return nil, nil, &types.TypeError{Msg: "refutable pattern in let binding: use `case` for patterns that may not match"}
+		}
 		s1, tBody, err := tc.infer(env, typeDefs, subst, e.Body)
 		if err != nil {
 			return nil, nil, err
@@ -899,20 +902,30 @@ func (tc *TypeChecker) inferLetrec(env TypeEnv, typeDefs map[string]types.Type, 
 }
 
 // checkExhaustive checks that a match is exhaustive.
+func isIrrefutable(p ast.Pattern) bool {
+	switch p := p.(type) {
+	case ast.PWild, ast.PVar, ast.PUnit, ast.PRecord:
+		return true
+	case ast.PTuple:
+		for _, sub := range p.Pats {
+			if !isIrrefutable(sub) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 func checkExhaustive(arms []ast.MatchArm, ctorFamilies map[string]map[string]bool) error {
 	pats := make([]ast.Pattern, len(arms))
 	for i, a := range arms {
 		pats[i] = a.Pat
 	}
 	for _, p := range pats {
-		if _, ok := p.(ast.PWild); ok {
+		if isIrrefutable(p) {
 			return nil
-		}
-		if _, ok := p.(ast.PVar); ok {
-			return nil
-		}
-		if _, ok := p.(ast.PRecord); ok {
-			return nil // record types have a single constructor, always exhaustive
 		}
 	}
 	// Bool patterns
@@ -988,9 +1001,10 @@ func checkExhaustive(arms []ast.MatchArm, ctorFamilies map[string]map[string]boo
 			if len(missing) > 0 {
 				return &types.TypeError{Msg: fmt.Sprintf("non-exhaustive patterns: missing %v", missing)}
 			}
+			return nil
 		}
 	}
-	return nil
+	return &types.TypeError{Msg: "non-exhaustive patterns: add a catch-all `_ ->` arm"}
 }
 
 func (tc *TypeChecker) inferMatch(env TypeEnv, typeDefs map[string]types.Type, subst types.Subst, e ast.Match) (types.Subst, types.Type, error) {
@@ -1329,6 +1343,9 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		}
 
 	case ast.LetPat:
+		if !isIrrefutable(e.Pat) {
+			return InferToplevelResult{}, &types.TypeError{Msg: "refutable pattern in let binding: use `case` for patterns that may not match"}
+		}
 		if e.InExpr == nil {
 			s1, tBody, err := tc.infer(env, typeDefs, subst, e.Body)
 			if err != nil {
@@ -1839,6 +1856,15 @@ func envTypeEnv() TypeEnv {
 	}
 }
 
+func resultTypeEnv() TypeEnv {
+	a := types.TVar{Name: "a"}
+	tRuntimeError := types.TCon{Name: "RuntimeError", Args: nil}
+	return TypeEnv{
+		// try : (() -> a) -> Result a RuntimeError
+		"try": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TFun(types.TUnit, a), types.TResult(a, tRuntimeError))},
+	}
+}
+
 func jsonTypeEnv() TypeEnv {
 	tJson := types.TCon{Name: "Json", Args: nil}
 	return TypeEnv{
@@ -1898,6 +1924,10 @@ func typeEnvForModule(name string) TypeEnv {
 		}
 	case "Env":
 		for k, v := range envTypeEnv() {
+			result[k] = v
+		}
+	case "Result":
+		for k, v := range resultTypeEnv() {
 			result[k] = v
 		}
 	case "Json":

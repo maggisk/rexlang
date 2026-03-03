@@ -1,5 +1,13 @@
 export type Result a e = Ok a | Err e
 
+export type RuntimeError = DivisionByZero | ModuloByZero
+
+
+-- # Recovery
+
+
+export try
+
 
 -- # Query
 
@@ -157,3 +165,13 @@ export let fromMaybe err m =
 test "fromMaybe" =
     assert (fromMaybe "missing" (Just 42) == Ok 42)
     assert (fromMaybe "missing" Nothing == Err "missing")
+
+
+test "try catches division by zero" =
+    assert (try (\_ -> 10 / 0) == Err DivisionByZero)
+
+test "try catches modulo by zero" =
+    assert (try (\_ -> 10 % 0) == Err ModuloByZero)
+
+test "try returns Ok on success" =
+    assert (try (\_ -> 10 / 2) == Ok 5)

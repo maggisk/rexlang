@@ -282,11 +282,23 @@ What the type system catches today:
 
 What can still fail at runtime:
 
-- **Non-exhaustive patterns** — `case` without a matching arm (exhaustiveness checking planned)
-- **Division by zero** — `x / 0` (value-dependent, inherently runtime)
-- **Mailbox overflow** — actor mailbox exceeds 1024 messages
+- **Division by zero** — `x / 0` (value-dependent, inherently runtime). Use `try` from `std:Result` to recover:
 
-IO operations like `readFile` and `getEnv` don't crash — they return `Result` or `Maybe`.
+```
+import std:Result (try, Ok, Err, DivisionByZero, ModuloByZero)
+
+case try (\_ -> 10 / 0) of
+    Ok n ->
+        n
+    Err (DivisionByZero) ->
+        0
+    Err (ModuloByZero) ->
+        0
+```
+
+- **Missing trait instance** — calling a trait method on a type without an `impl` (constraint tracking planned in Traits v2)
+
+Non-exhaustive patterns are caught at compile time — `case` expressions on ADTs, bools, and lists must cover all constructors, and literal/tuple patterns require a catch-all `_ ->` arm. Refutable patterns in `let` bindings are also rejected. IO operations like `readFile` and `getEnv` don't crash — they return `Result` or `Maybe`. Actor mailboxes are unbounded (Erlang-style) so `send` never fails.
 
 ## Standard library
 
@@ -294,7 +306,7 @@ IO operations like `readFile` and `getEnv` don't crash — they return `Result` 
 | --- | --- |
 | `std:List` | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
 | `std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
-| `std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr` |
+| `std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`, `toMaybe`, `fromMaybe`, `try` (catch div/mod by zero), `RuntimeError` ADT |
 | `std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT |
 | `std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `take`, `drop`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`, `dedent` |
 | `std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
@@ -354,7 +366,7 @@ go test ./...
 - [x] Multi-line strings — `"""..."""` triple-quoted strings
 - [x] Type aliases — `type Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation
-- [ ] Exhaustiveness checking — reject non-exhaustive `case` at compile time
+- [x] Exhaustiveness checking — reject non-exhaustive `case` at compile time; refutable `let` patterns rejected
 - [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - [x] Multi-binding let — Elm-style `let a = 1 / b = 2 / in / expr`

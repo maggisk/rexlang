@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/maggisk/rexlang/internal/ast"
@@ -69,15 +70,39 @@ type VInstances struct {
 
 var pidCounter int64
 
-// Mailbox is a buffered channel used as an actor's message queue.
+// Mailbox is an unbounded FIFO queue used as an actor's message queue.
 type Mailbox struct {
-	ch chan Value
-	id int64
+	mu   sync.Mutex
+	cond *sync.Cond
+	msgs []Value
+	id   int64
 }
 
 func newMailbox() *Mailbox {
 	id := atomic.AddInt64(&pidCounter, 1)
-	return &Mailbox{ch: make(chan Value, 1024), id: id}
+	mb := &Mailbox{id: id}
+	mb.cond = sync.NewCond(&mb.mu)
+	return mb
+}
+
+// Send appends a message to the mailbox. Never blocks.
+func (mb *Mailbox) Send(v Value) {
+	mb.mu.Lock()
+	mb.msgs = append(mb.msgs, v)
+	mb.cond.Signal()
+	mb.mu.Unlock()
+}
+
+// Receive removes and returns the first message, blocking until one is available.
+func (mb *Mailbox) Receive() Value {
+	mb.mu.Lock()
+	for len(mb.msgs) == 0 {
+		mb.cond.Wait()
+	}
+	v := mb.msgs[0]
+	mb.msgs = mb.msgs[1:]
+	mb.mu.Unlock()
+	return v
 }
 
 // VPid is a process identifier (an opaque handle to an actor mailbox).

@@ -67,7 +67,7 @@ gofmt -w .
 - **Language**: Go 1.24+. Single binary, no runtime dependency.
 - **Type inference**: `internal/typechecker` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types in `internal/types` (`TVar`, `TCon`, `Scheme`). Arithmetic operators (`+` `-` `*` `/`) require `Int` or `Float`; free type variables in arithmetic expressions default to `Int`. Use `toFloat` to convert before Float arithmetic. REPL shows `name : type` after each binding.
 - **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod`, `VInstances`, `VModule`, `VPid`, `VRecord` — all implement `Value` interface via `valueKind()`.
-- **Actors**: `VPid{Mailbox *Mailbox, ID int64}` is the process handle. `Mailbox.ch` is a buffered Go channel (capacity 1024). Five builtins: `spawn : (() -> b) -> Pid a`, `send : Pid a -> a -> ()`, `receive : () -> a`, `self : Pid a`, `call : Pid b -> (Pid a -> b) -> a`. Injected into every program's initial env automatically (no import required). `ProcessBuiltins(selfPid VPid)` returns them keyed to a specific mailbox. `WithProcessBuiltins(env Env) Env` creates a fresh main-process mailbox and injects them.
+- **Actors**: `VPid{Mailbox *Mailbox, ID int64}` is the process handle. `Mailbox` is an unbounded FIFO queue (mutex + cond + slice; Erlang-style — `Send` never blocks or fails). Five builtins: `spawn : (() -> b) -> Pid a`, `send : Pid a -> a -> ()`, `receive : () -> a`, `self : Pid a`, `call : Pid b -> (Pid a -> b) -> a`. Injected into every program's initial env automatically (no import required). `ProcessBuiltins(selfPid VPid)` returns them keyed to a specific mailbox. `WithProcessBuiltins(env Env) Env` creates a fresh main-process mailbox and injects them.
 - **Environment**: `Env = map[string]Value`; `Clone()` and `Extend()` for closure snapshots.
 - **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
 - **Type aliases**: `type Name = String` — transparent alias, fully interchangeable at the type level. Parametric: `type Pair a b = (a, b)`. Stored in `tc.typeAliases` (`TypeAliasInfo{Params, Body}`); non-parametric aliases also stored in `typeDefs` for direct lookup. Parser disambiguates from ADTs by checking for `|` after parsing the type sig. No runtime effect.
@@ -132,13 +132,13 @@ One blank line between top-level definitions; two blank lines between sections. 
 ### Stdlib
 - [x] List — map, filter, foldl, foldr, zip, concat, concatMap, range, repeat, find, partition, intersperse, indexedMap, maximum, minimum, …
 - [x] Map — AVL tree sorted map (insert, lookup, remove, fold, …)
-- [x] Result — Ok/Err, map, mapErr, andThen, withDefault
+- [x] Result — Ok/Err, map, mapErr, andThen, withDefault, try (catch div/mod by zero), RuntimeError ADT
 - [x] String — length, toUpper, toLower, trim, split, join, contains, charAt, substring, indexOf, replace, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, …
 - [x] Math — abs, min, max, pow, trig, log, exp, pi, e, clamp, …
 - [x] IO — readFile, writeFile, appendFile, fileExists, listDir (return Result)
 - [x] Env — getEnv (Maybe), getEnvOr, args
 - [x] Json — parse (Go-backed), stringify (pure Rex), Json ADT, encode/decode helpers
-- [x] Process — actor model: `spawn`, `send`, `receive`, `self`, `call`; FIFO mailboxes (Go channels, cap 1024); `Pid a` opaque type; builtins injected into every program env automatically
+- [x] Process — actor model: `spawn`, `send`, `receive`, `self`, `call`; unbounded FIFO mailboxes (Erlang-style); `Pid a` opaque type; builtins injected into every program env automatically
 - [x] Parallel — `pmap`, `pmapN`, `numCPU`; parallel map over lists using actors; bounded parallelism via chunking
 - JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
 - Date/Time (even basic)
@@ -150,7 +150,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - [x] Multi-binding let — Elm-style `let a = 1 / b = 2 / in / a + b` (parser-only desugaring)
 - Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`)
-- Exhaustiveness checking — static pass post-HM using `__ctor_families__`; reject incomplete case analysis at compile time
+- [x] Exhaustiveness checking — static pass post-HM using `__ctor_families__`; rejects non-exhaustive `case` (ADTs, bools, lists require all constructors; literals/tuples require catch-all `_ ->`); refutable `let` patterns rejected via `isIrrefutable` check
 - Typed holes — `?name` in expression position; typechecker infers the required type from surrounding context and reports it along with in-scope bindings; enables type-directed, incremental program construction. Never reaches eval. Implementation: `HoleExpr{Name string}` AST node; typechecker unifies hole with inferred type, collects into a holes report instead of a hard error. Use `?name` (not `_`) to avoid ambiguity with pattern wildcards.
 
 ### Error experience

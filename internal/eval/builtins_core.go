@@ -867,7 +867,7 @@ func jsonValToRex(v interface{}) (Value, error) {
 
 func makeReceiveBuiltin(mb *Mailbox) Value {
 	return makeBuiltin("receive", func(_ Value) (Value, error) {
-		return <-mb.ch, nil
+		return mb.Receive(), nil
 	})
 }
 
@@ -881,11 +881,7 @@ func ProcessBuiltins(selfPid VPid) map[string]Value {
 			if !ok {
 				return nil, runtimeErr("send: expected Pid, got %s", ValueToString(pidV))
 			}
-			select {
-			case pid.Mailbox.ch <- msgV:
-			default:
-				return nil, runtimeErr("send: mailbox full (capacity %d)", cap(pid.Mailbox.ch))
-			}
+			pid.Mailbox.Send(msgV)
 			return VUnit{}, nil
 		}),
 		"spawn": makeBuiltin("spawn", func(fnV Value) (Value, error) {
@@ -913,12 +909,8 @@ func ProcessBuiltins(selfPid VPid) map[string]Value {
 			if err != nil {
 				return nil, err
 			}
-			select {
-			case pid.Mailbox.ch <- msg:
-			default:
-				return nil, runtimeErr("call: target mailbox full")
-			}
-			return <-selfPid.Mailbox.ch, nil
+			pid.Mailbox.Send(msg)
+			return selfPid.Mailbox.Receive(), nil
 		}),
 	}
 }
@@ -953,6 +945,23 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 		for k, v := range ListBuiltins() {
 			result[k] = v
 		}
+	}
+	if name == "Result" {
+		result["try"] = makeBuiltin("try", func(fnV Value) (Value, error) {
+			val, err := ApplyValue(fnV, VUnit{})
+			if err != nil {
+				if re, ok := err.(*RuntimeError); ok {
+					switch re.Msg {
+					case "division by zero":
+						return VCtor{Name: "Err", Args: []Value{VCtor{Name: "DivisionByZero"}}}, nil
+					case "modulo by zero":
+						return VCtor{Name: "Err", Args: []Value{VCtor{Name: "ModuloByZero"}}}, nil
+					}
+				}
+				return nil, err
+			}
+			return VCtor{Name: "Ok", Args: []Value{val}}, nil
+		})
 	}
 	if name == "Json" {
 		for k, v := range JsonBuiltins() {
