@@ -1100,20 +1100,62 @@ func (p *parser) parseImport() (ast.Expr, error) {
 
 func (p *parser) parseExport() (ast.Expr, error) {
 	p.advance() // consume 'export'
-	name, err := p.expectIdent()
-	if err != nil {
-		return nil, err
-	}
-	names := []string{name}
-	for p.peek().Kind == lexer.TokComma {
-		p.advance()
-		n, err := p.expectIdent()
+	switch p.peek().Kind {
+	case lexer.TokLet:
+		expr, err := p.parseLet()
 		if err != nil {
 			return nil, err
 		}
-		names = append(names, n)
+		switch e := expr.(type) {
+		case ast.Let:
+			e.Exported = true
+			return e, nil
+		case ast.LetRec:
+			e.Exported = true
+			return e, nil
+		case ast.LetPat:
+			e.Exported = true
+			return e, nil
+		default:
+			return expr, nil
+		}
+	case lexer.TokType:
+		expr, err := p.parseTypeDecl()
+		if err != nil {
+			return nil, err
+		}
+		if td, ok := expr.(ast.TypeDecl); ok {
+			td.Exported = true
+			return td, nil
+		}
+		return expr, nil
+	case lexer.TokTrait:
+		expr, err := p.parseTraitDecl()
+		if err != nil {
+			return nil, err
+		}
+		if td, ok := expr.(ast.TraitDecl); ok {
+			td.Exported = true
+			return td, nil
+		}
+		return expr, nil
+	default:
+		// Standalone export: comma-separated ident list
+		name, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		names := []string{name}
+		for p.peek().Kind == lexer.TokComma {
+			p.advance()
+			n, err := p.expectIdent()
+			if err != nil {
+				return nil, err
+			}
+			names = append(names, n)
+		}
+		return ast.Export{Names: names}, nil
 	}
-	return ast.Export{Names: names}, nil
 }
 
 // ---------------------------------------------------------------------------

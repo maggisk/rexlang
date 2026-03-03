@@ -819,6 +819,31 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 				exports[n] = true
 			}
 		} else {
+			// Collect export names from Exported flags
+			switch e := expr.(type) {
+			case ast.Let:
+				if e.Exported && e.InExpr == nil {
+					exports[e.Name] = true
+				}
+			case ast.LetRec:
+				if e.Exported && e.InExpr == nil {
+					for _, b := range e.Bindings {
+						exports[b.Name] = true
+					}
+				}
+			case ast.TypeDecl:
+				if e.Exported {
+					for _, ctor := range e.Ctors {
+						exports[ctor.Name] = true
+					}
+				}
+			case ast.TraitDecl:
+				if e.Exported {
+					for _, m := range e.Methods {
+						exports[m.Name] = true
+					}
+				}
+			}
 			_, newEnv, err := EvalToplevel(env, expr, programArgs)
 			if err != nil {
 				return nil, err

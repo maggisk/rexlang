@@ -1,7 +1,4 @@
-export Ok, Err, isOk, isErr, withDefault, map, mapErr, andThen, toMaybe, fromMaybe
-
-
-type Result a e = Ok a | Err e
+export type Result a e = Ok a | Err e
 
 
 -- # Query
@@ -13,7 +10,7 @@ type Result a e = Ok a | Err e
 --     isOk (Err "oops") == false
 --
 isOk : Result a e -> Bool
-let isOk r =
+export let isOk r =
     case r of
         Ok _ ->
             true
@@ -31,7 +28,7 @@ test "isOk" =
 --     isErr (Ok 42) == false
 --
 isErr : Result a e -> Bool
-let isErr r =
+export let isErr r =
     case r of
         Ok _ ->
             false
@@ -52,7 +49,7 @@ test "isErr" =
 --     withDefault 0 (Err "oops") == 0
 --
 withDefault : a -> Result a e -> a
-let withDefault default r =
+export let withDefault default r =
     case r of
         Ok x ->
             x
@@ -73,7 +70,7 @@ test "withDefault" =
 --     map (\x -> x * 2) (Err "oops") == Err "oops"
 --
 map : (a -> b) -> Result a e -> Result b e
-let map f r =
+export let map f r =
     case r of
         Ok x ->
             Ok (f x)
@@ -91,7 +88,7 @@ test "map" =
 --     mapErr (\e -> "error: " ++ e) (Ok 5) == Ok 5
 --
 mapErr : (e -> f) -> Result a e -> Result a f
-let mapErr f r =
+export let mapErr f r =
     case r of
         Ok x ->
             Ok x
@@ -110,7 +107,7 @@ test "mapErr" =
 --     andThen (\x -> Err "nope") (Ok 5) == Err "nope"
 --
 andThen : (a -> Result b e) -> Result a e -> Result b e
-let andThen f r =
+export let andThen f r =
     case r of
         Ok x ->
             f x
@@ -132,7 +129,7 @@ test "andThen" =
 --     toMaybe (Err "oops") == Nothing
 --
 toMaybe : Result a e -> Maybe a
-let toMaybe r =
+export let toMaybe r =
     case r of
         Ok x ->
             Just x
@@ -150,7 +147,7 @@ test "toMaybe" =
 --     fromMaybe "missing" Nothing == Err "missing"
 --
 fromMaybe : e -> Maybe a -> Result a e
-let fromMaybe err m =
+export let fromMaybe err m =
     case m of
         Just x ->
             Ok x

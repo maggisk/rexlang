@@ -8,6 +8,12 @@
 
 RexLang is a functional language with algebraic data types and pattern matching. The implementation is a Go tree-walking interpreter that ships as a single static binary — no runtime dependency. The long-term plan is a **WasmGC compilation backend** — producing `.wasm` binaries that run in browsers (native) and on servers via a Wasm runtime (Wasmtime, Wasmer, WasmEdge).
 
+## Language goals
+
+- **No runtime errors** — the type system should catch mistakes at compile time; the ideal is an Elm-style guarantee where a well-typed program cannot crash at runtime
+- **Readability** — code should be easy to read and understand without knowing the language deeply; a good target for AI code generation
+- **Mainstream over ML** — when a design choice comes up, prefer the convention from mainstream languages (TypeScript, Rust, Python, Go) over ML-family tradition (Haskell, OCaml, SML); RexLang is not trying to be another ML
+
 ## Repository layout
 
 ```
@@ -170,7 +176,8 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **No hot reloading** for now
 - **Exhaustiveness checking**: planned static pass (post-HM); `__ctor_families__` registry in type env tracks constructor siblings
 - **No guards in pattern matching** (not planned)
-- **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to embedded stdlib files (`internal/stdlib/rexfiles/`). Full `module Foo` declarations come after HM inference. `export name, ...` in module files declares public API.
+- **Import system**: Two forms: `import std:List (map, filter)` — selective unqualified import; `import std:List as L` — qualified import, all exports via `L.map`, `L.length`, etc. `std:` namespace resolves to embedded stdlib files (`internal/stdlib/rexfiles/`). Full `module Foo` declarations come after HM inference.
+- **Export system**: Per-definition exports (TS-style): `export let`, `export let rec`, `export type`, `export trait` — keeps export intent local to each definition. `Exported bool` field on `Let`, `LetRec`, `LetPat`, `TypeDecl`, `TraitDecl` AST nodes. `export type` auto-exports all constructors. Standalone `export name, ...` still supported for re-exporting builtins/imports. Both `CheckModule()` and `loadModule()` collect export names from `Exported` flags while processing nodes normally. Old top-of-file `export` lists replaced in all stdlib files.
 - **`length` name collision**: resolved via qualified imports — `import std:List as L` and `import std:String as S` then use `L.length` vs `S.length`.
 - **Traits v1**: `trait`/`impl` with Rust-style naming. Single-parameter traits only. Runtime dispatch (no type-level constraints). Prelude auto-loaded with `Ordering`, `Eq`, `Ord`, `Show` and instances for `Int`, `Float`, `String`, `Bool`. Comparison operators (`<`, `>`, `<=`, `>=`) extended to String (lexicographic) and Bool (`false < true`). `where` is a keyword.
 - **String interpolation**: `"hello ${expr}"` syntax. Lexer scans `${...}` with mutual recursion (`skipInterp`/`skipString`) to handle nested strings; emits `TokInterp` containing `[]InterpPart`. Parser produces `ast.StringInterp{Parts []Expr}`. Typechecker allows any type per part, returns `TString`. Eval dispatches `Show:TypeName:show` from `__instances__` for each part (short-circuits VString). `\$` produces literal `$`. Strings without `${` produce normal `TokString` (backward compatible). `showInt`/`showFloat` builtins in CoreBuiltins + InitialTypeEnv for Prelude's Show instances.

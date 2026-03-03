@@ -1672,6 +1672,33 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 		} else if _, ok := expr.(ast.TestDecl); ok {
 			// skip test blocks in imported modules
 		} else {
+			// Collect export names from Exported flags
+			switch e := expr.(type) {
+			case ast.Let:
+				if e.Exported && e.InExpr == nil {
+					exports[e.Name] = true
+				}
+			case ast.LetRec:
+				if e.Exported && e.InExpr == nil {
+					for _, b := range e.Bindings {
+						exports[b.Name] = true
+					}
+				}
+			case ast.LetPat:
+				// LetPat exports are unusual; skip for now
+			case ast.TypeDecl:
+				if e.Exported {
+					for _, ctor := range e.Ctors {
+						exports[ctor.Name] = true
+					}
+				}
+			case ast.TraitDecl:
+				if e.Exported {
+					for _, m := range e.Methods {
+						exports[m.Name] = true
+					}
+				}
+			}
 			res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 			if err != nil {
 				return nil, err

@@ -1,4 +1,4 @@
-export length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, isEmpty, charAt, substring, indexOf, replace, take, drop, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, dedent, reverse, toList, fromList, trimLeft, trimRight
+export length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, charAt, substring, indexOf, replace, take, drop, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, reverse, toList, fromList, trimLeft, trimRight
 
 import std:List (map, filter, foldl)
 
@@ -12,7 +12,7 @@ import std:List (map, filter, foldl)
 --     isEmpty "hi" == false
 --
 isEmpty : String -> Bool
-let isEmpty s =
+export let isEmpty s =
     s == ""
 
 test "isEmpty" =
@@ -244,7 +244,7 @@ test "parseFloat" =
 --     dedent "  hi\n    there\n" == "hi\n  there\n"
 --
 dedent : String -> String
-let dedent s =
+export let dedent s =
     let countSpaces line =
             let rec go i =
                 if i >= length line then

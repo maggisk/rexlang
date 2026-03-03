@@ -104,6 +104,7 @@ type If struct {
 type Let struct {
 	Name      string
 	Recursive bool
+	Exported  bool
 	Body      Expr
 	InExpr    Expr // nil = top-level
 }
@@ -130,6 +131,7 @@ type MatchArm struct {
 
 type TypeDecl struct {
 	Name         string
+	Exported     bool
 	Params       []string
 	Ctors        []CtorDef
 	RecordFields []RecordFieldDef // non-nil for record types (mutually exclusive with Ctors)
@@ -177,12 +179,14 @@ type ListLit struct{ Items []Expr }
 type TupleLit struct{ Items []Expr }
 
 type LetPat struct {
-	Pat    Pattern
-	Body   Expr
-	InExpr Expr // nil = top-level
+	Exported bool
+	Pat      Pattern
+	Body     Expr
+	InExpr   Expr // nil = top-level
 }
 
 type LetRec struct {
+	Exported bool
 	Bindings []LetRecBinding
 	InExpr   Expr // nil = top-level
 }
@@ -208,9 +212,10 @@ type Export struct{ Names []string }
 // Trait/impl declarations
 
 type TraitDecl struct {
-	Name    string
-	Param   string
-	Methods []TraitMethod
+	Name     string
+	Exported bool
+	Param    string
+	Methods  []TraitMethod
 }
 
 type TraitMethod struct {
