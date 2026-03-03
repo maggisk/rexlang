@@ -45,15 +45,15 @@ let rec fact n =
     else
         n * fact (n - 1)
 
--- Elm-style multi-binding let blocks
+-- Multi-binding let blocks
 let a = 3
-    b = 4
-    square x = x * x
+and b = 4
+and square x = x * x
 in
 square a + square b
 ```
 
-Definition order doesn't matter — top-level bindings are automatically sorted by dependency. Mutual recursion still requires explicit `let rec … and …`.
+Definition order doesn't matter — top-level bindings are automatically sorted by dependency. Mutual recursion requires explicit `let rec … and …`; non-recursive multi-binding uses `let … and … in`.
 
 ```
 let result = double 5             -- forward reference: double is defined below
@@ -346,7 +346,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `examples/parallel.rex` | Parallel map with `std:Parallel` |
 | `examples/multiline.rex` | Multi-line strings with `"""` |
 | `examples/number_literals.rex` | Hex, octal, binary literals and underscore separators |
-| `examples/let_block.rex` | Multi-binding let blocks (Elm-style) |
+| `examples/let_block.rex` | Multi-binding let blocks with `and` |
 | `examples/forward_ref.rex` | Forward references between top-level bindings |
 | `examples/testing.rex` | Built-in test framework |
 
@@ -369,7 +369,7 @@ go test ./...
 - [x] Exhaustiveness checking — reject non-exhaustive `case` at compile time; refutable `let` patterns rejected
 - [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
-- [x] Multi-binding let — Elm-style `let a = 1 / b = 2 / in / expr`
+- [x] Multi-binding let — `let a = 1 and b = 2 in expr`
 - [ ] User modules — import your own `.rex` files
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
 

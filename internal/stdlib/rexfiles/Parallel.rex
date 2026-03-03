@@ -10,7 +10,7 @@ export let pmap f lst =
     let pids = map (\x ->
         spawn (\_ ->
             let result = f x
-                caller = receive ()
+            and caller = receive ()
             in
             send caller result
         )
@@ -24,7 +24,7 @@ export let pmap f lst =
 pmapN : Int -> (a -> b) -> [a] -> [b]
 export let pmapN n f lst =
     let total = length lst
-        size = if total == 0 then
+    and size = if total == 0 then
                     1
                 else
                     (total + n - 1) / n
@@ -39,7 +39,7 @@ export let pmapN n f lst =
     let pids = map (\chunk ->
         spawn (\_ ->
             let result = map f chunk
-                caller = receive ()
+            and caller = receive ()
             in
             send caller result
         )

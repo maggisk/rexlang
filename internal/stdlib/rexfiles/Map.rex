@@ -16,8 +16,8 @@ let height m =
 -- | Smart constructor — computes height from children.
 let node l k v r =
     let lh = height l
-        rh = height r
-        h = if lh > rh then
+    and rh = height r
+    and h = if lh > rh then
                 lh + 1
             else
                 rh + 1
@@ -269,7 +269,7 @@ export let rec foldl f acc m =
             acc
         Node _ l k v r ->
             let acc1 = foldl f acc l
-                acc2 = f k v acc1
+            and acc2 = f k v acc1
             in
             foldl f acc2 r
 
@@ -286,7 +286,7 @@ export let rec foldr f acc m =
             acc
         Node _ l k v r ->
             let acc1 = foldr f acc r
-                acc2 = f k v acc1
+            and acc2 = f k v acc1
             in
             foldr f acc2 l
 

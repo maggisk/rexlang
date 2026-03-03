@@ -254,12 +254,12 @@ export let dedent s =
                 else
                     i
             in go 0
-        ls = lines s
-        nonEmpty = filter (\l -> l != "") ls
-        indent =
+    and ls = lines s
+    and nonEmpty = filter (\l -> l != "") ls
+    and indent =
             foldl (\acc l -> let n = countSpaces l in if n < acc then n else acc) 999999999 nonEmpty
-        stripped = map (\l -> if l == "" then "" else drop indent l) ls
-        result = join "\n" stripped
+    and stripped = map (\l -> if l == "" then "" else drop indent l) ls
+    and result = join "\n" stripped
     in
     if endsWith "\n" s then
         result ++ "\n"

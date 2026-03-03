@@ -1,37 +1,37 @@
--- Multi-binding let blocks (Elm-style)
+-- Multi-binding let blocks using `and`
 
 import std:List (map, foldl)
 
 -- Multiple simple bindings
 let result =
     let width = 10
-        height = 20
-        area = width * height
+    and height = 20
+    and area = width * height
     in
     area
 
 -- With function bindings
 let hypotenuse =
     let square x = x * x
-        a = 3
-        b = 4
+    and a = 3
+    and b = 4
     in
     square a + square b
 
 -- Nested multi-binding
 let nested =
     let x = 1
-        y = 2
+    and y = 2
     in
     let a = x + y
-        b = a * 2
+    and b = a * 2
     in
     b
 
 -- Bindings can reference earlier ones
 let chained =
     let a = 10
-        b = a + 10
+    and b = a + 10
     in
     a + b
 

@@ -24,7 +24,6 @@ type parser struct {
 	tokens     []lexer.Token
 	pos        int
 	caseArmCol int // offside rule column; -1 = unrestricted
-	letBindCol int // exact-match offside for multi-binding let; -1 = inactive
 }
 
 func isUppercase(s string) bool {
@@ -95,7 +94,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 			if part.Literal {
 				exprParts = append(exprParts, ast.StringLit{Value: part.Str})
 			} else {
-				subParser := &parser{tokens: part.Tokens, pos: 0, caseArmCol: -1, letBindCol: -1}
+				subParser := &parser{tokens: part.Tokens, pos: 0, caseArmCol: -1}
 				expr, err := subParser.parseExpr()
 				if err != nil {
 					return nil, err
@@ -289,9 +288,6 @@ func (p *parser) parseApp() (ast.Expr, error) {
 	}
 	for isAtomStart(p.peek().Kind) {
 		if p.caseArmCol >= 0 && p.peek().Col <= p.caseArmCol {
-			break
-		}
-		if p.letBindCol >= 0 && p.peek().Kind == lexer.TokIdent && p.peek().Col == p.letBindCol {
 			break
 		}
 		arg, err := p.parseAtom()
@@ -521,7 +517,6 @@ func (p *parser) parseLet() (ast.Expr, error) {
 	if recursive {
 		p.advance()
 	}
-	nameCol := p.peek().Col
 	name, err := p.expectIdent()
 	if err != nil {
 		return nil, err
@@ -538,15 +533,6 @@ func (p *parser) parseLet() (ast.Expr, error) {
 		return nil, err
 	}
 
-	// For non-recursive lets, set exact-match offside rule so body parsing
-	// stops at an ident at nameCol (the next binding in a multi-binding let).
-	// Uses letBindCol (exact match) instead of caseArmCol (<=) to allow
-	// arguments that wrap to columns below nameCol.
-	savedLBC := p.letBindCol
-	if !recursive {
-		p.letBindCol = nameCol
-	}
-
 	body, err := p.parseExpr()
 	if err != nil {
 		return nil, err
@@ -556,9 +542,54 @@ func (p *parser) parseLet() (ast.Expr, error) {
 		body = ast.Fun{Param: params[i], Body: body}
 	}
 
-	// Mutual recursion: let rec f ... = ... and g ... = ...
-	if recursive && p.peek().Kind == lexer.TokAnd {
-		bindings := []ast.LetRecBinding{{Name: name, Body: body}}
+	// Multiple bindings: let [rec] f ... = ... and g ... = ...
+	if p.peek().Kind == lexer.TokAnd {
+		if recursive {
+			// Mutual recursion: let rec f = ... and g = ...
+			bindings := []ast.LetRecBinding{{Name: name, Body: body}}
+			for p.peek().Kind == lexer.TokAnd {
+				p.advance()
+				name2, err := p.expectIdent()
+				if err != nil {
+					return nil, err
+				}
+				var params2 []string
+				for p.peek().Kind == lexer.TokIdent {
+					param, err := p.expectIdent()
+					if err != nil {
+						return nil, err
+					}
+					params2 = append(params2, param)
+				}
+				if err := p.expect(lexer.TokEq); err != nil {
+					return nil, err
+				}
+				body2, err := p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				for i := len(params2) - 1; i >= 0; i-- {
+					body2 = ast.Fun{Param: params2[i], Body: body2}
+				}
+				bindings = append(bindings, ast.LetRecBinding{Name: name2, Body: body2})
+			}
+			var inExpr ast.Expr
+			if p.peek().Kind == lexer.TokIn {
+				p.advance()
+				inExpr, err = p.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+			}
+			return ast.LetRec{Bindings: bindings, InExpr: inExpr}, nil
+		}
+
+		// Multi-binding let: let a = 1 and b = 2 in ...
+		type letBinding struct {
+			name string
+			body ast.Expr
+		}
+		bindings := []letBinding{{name, body}}
 		for p.peek().Kind == lexer.TokAnd {
 			p.advance()
 			name2, err := p.expectIdent()
@@ -583,8 +614,9 @@ func (p *parser) parseLet() (ast.Expr, error) {
 			for i := len(params2) - 1; i >= 0; i-- {
 				body2 = ast.Fun{Param: params2[i], Body: body2}
 			}
-			bindings = append(bindings, ast.LetRecBinding{Name: name2, Body: body2})
+			bindings = append(bindings, letBinding{name2, body2})
 		}
+
 		var inExpr ast.Expr
 		if p.peek().Kind == lexer.TokIn {
 			p.advance()
@@ -593,46 +625,13 @@ func (p *parser) parseLet() (ast.Expr, error) {
 				return nil, err
 			}
 		}
-		return ast.LetRec{Bindings: bindings, InExpr: inExpr}, nil
-	}
-
-	// Multi-binding let: additional bindings at the same column as the first name
-	type letBinding struct {
-		name string
-		body ast.Expr
-	}
-	bindings := []letBinding{{name, body}}
-
-	if !recursive {
-		for p.peek().Col == nameCol && p.peek().Kind == lexer.TokIdent {
-			name2, err := p.expectIdent()
-			if err != nil {
-				return nil, err
-			}
-			var params2 []string
-			for p.peek().Kind == lexer.TokIdent {
-				param, err := p.expectIdent()
-				if err != nil {
-					return nil, err
-				}
-				params2 = append(params2, param)
-			}
-			if err := p.expect(lexer.TokEq); err != nil {
-				return nil, err
-			}
-			body2, err := p.parseExpr()
-			if err != nil {
-				return nil, err
-			}
-			for i := len(params2) - 1; i >= 0; i-- {
-				body2 = ast.Fun{Param: params2[i], Body: body2}
-			}
-			bindings = append(bindings, letBinding{name2, body2})
+		// Desugar multi-binding: [a=1, b=2, c=3] + inExpr → Let{a,1, Let{b,2, Let{c,3, inExpr}}}
+		result := ast.Let{Name: bindings[len(bindings)-1].name, Body: bindings[len(bindings)-1].body, InExpr: inExpr}
+		for i := len(bindings) - 2; i >= 0; i-- {
+			result = ast.Let{Name: bindings[i].name, Body: bindings[i].body, InExpr: result}
 		}
+		return result, nil
 	}
-
-	// Restore offside rule before parsing inExpr
-	p.letBindCol = savedLBC
 
 	var inExpr ast.Expr
 	if p.peek().Kind == lexer.TokIn {
@@ -643,14 +642,7 @@ func (p *parser) parseLet() (ast.Expr, error) {
 		}
 	}
 
-	// Desugar multi-binding: [a=1, b=2, c=3] + inExpr → Let{a,1, Let{b,2, Let{c,3, inExpr}}}
-	result := ast.Let{Name: bindings[len(bindings)-1].name, Body: bindings[len(bindings)-1].body, InExpr: inExpr}
-	for i := len(bindings) - 2; i >= 0; i-- {
-		result = ast.Let{Name: bindings[i].name, Body: bindings[i].body, InExpr: result}
-	}
-	// Preserve Recursive flag on the outermost Let (only relevant for single-binding let rec)
-	result.Recursive = recursive
-	return result, nil
+	return ast.Let{Name: name, Body: body, InExpr: inExpr, Recursive: recursive}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1494,7 +1486,7 @@ func (p *parser) parseTypeAnnotation() (ast.Expr, error) {
 
 // ParseTokens parses a token list into a list of top-level expressions.
 func ParseTokens(tokens []lexer.Token) ([]ast.Expr, error) {
-	p := &parser{tokens: tokens, pos: 0, caseArmCol: -1, letBindCol: -1}
+	p := &parser{tokens: tokens, pos: 0, caseArmCol: -1}
 	var exprs []ast.Expr
 	for {
 		if p.peek().Kind == lexer.TokEOF {
