@@ -51,9 +51,13 @@ and b = 4
 and square x = x * x
 in
 square a + square b
+
+-- Mutual recursion: functions defined together with `and`
+let rec ping n = if n == 0 then "done" else pong (n - 1)
+and pong n = ping n
 ```
 
-Definition order doesn't matter — top-level bindings are automatically sorted by dependency. Mutual recursion requires explicit `let rec … and …`; non-recursive multi-binding uses `let … and … in`.
+Definition order doesn't matter — top-level bindings are automatically sorted by dependency. Mutually recursive functions must be defined together with `let rec … and …`. The `and` keyword works the same way for non-recursive multi-binding (`let … and … in`).
 
 ```
 let result = double 5             -- forward reference: double is defined below

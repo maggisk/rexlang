@@ -89,11 +89,7 @@ export let rec size m =
 -- | Check if the map is empty.
 isEmpty : Map k v -> Bool
 export let isEmpty m =
-    case m of
-        Empty ->
-            true
-        Node _ _ _ _ _ ->
-            false
+    m == Empty
 
 
 -- | Look up a key, returning Just value or Nothing.
