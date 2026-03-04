@@ -1400,6 +1400,14 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		modCtorFamilies := modResult.CtorFamilies
 		modTraits := modResult.Traits
 		modInstances := modResult.TraitInstances
+		modRecordFields := modResult.RecordFields
+		modTypeDefs := modResult.TypeDefs
+		// Merge module type definitions into caller's typeDefs
+		if modTypeDefs != nil {
+			for k, v := range modTypeDefs {
+				typeDefs[k] = v
+			}
+		}
 		if e.Alias != "" {
 			modules := map[string]TypeEnv{}
 			if m, ok := env["__modules__"]; ok {
@@ -1413,17 +1421,20 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 			ctorFamilies := mergeFamilies(env, modCtorFamilies)
 			traits := mergeTraits(env, modTraits)
 			instances := mergeInstances(env, modInstances)
+			recFields := mergeRecordFields(env, modRecordFields)
 			newEnv := env.clone()
 			newEnv["__modules__"] = modules
 			newEnv["__ctor_families__"] = ctorFamilies
 			newEnv["__traits__"] = traits
 			newEnv["__trait_instances__"] = instances
+			newEnv["__record_fields__"] = recFields
 			return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: newEnv, TypeDefs: typeDefs}, nil
 		}
 		newEnv := env.clone()
 		ctorFamilies := mergeFamilies(env, modCtorFamilies)
 		traits := mergeTraits(env, modTraits)
 		instances := mergeInstances(env, modInstances)
+		recFields := mergeRecordFields(env, modRecordFields)
 		for _, name := range e.Names {
 			v, ok := modEnv[name]
 			if !ok {
@@ -1437,6 +1448,7 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		newEnv["__ctor_families__"] = ctorFamilies
 		newEnv["__traits__"] = traits
 		newEnv["__trait_instances__"] = instances
+		newEnv["__record_fields__"] = recFields
 		return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: newEnv, TypeDefs: typeDefs}, nil
 
 	case ast.Export:
@@ -1636,6 +1648,8 @@ type ModuleResult struct {
 	CtorFamilies   map[string]map[string]bool
 	Traits         map[string]TraitInfo
 	TraitInstances map[string]map[string]bool
+	RecordFields   map[string]types.RecordInfo
+	TypeDefs       map[string]types.Type
 }
 
 var (
@@ -1853,11 +1867,20 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 		}
 	}
 
+	recordFields := map[string]types.RecordInfo{}
+	if rf, ok := env["__record_fields__"]; ok {
+		if rfm, ok := rf.(map[string]types.RecordInfo); ok {
+			recordFields = rfm
+		}
+	}
+
 	result := &ModuleResult{
 		Env:            exportedEnv,
 		CtorFamilies:   ctorFamilies,
 		Traits:         traits,
 		TraitInstances: instances,
+		RecordFields:   recordFields,
+		TypeDefs:       typeDefs,
 	}
 	moduleCacheMu.Lock()
 	moduleCache[moduleName] = result
@@ -2589,6 +2612,21 @@ func mergeTraits(env TypeEnv, extra map[string]TraitInfo) map[string]TraitInfo {
 	if t, ok := env["__traits__"]; ok {
 		if tm, ok := t.(map[string]TraitInfo); ok {
 			for k, v := range tm {
+				result[k] = v
+			}
+		}
+	}
+	for k, v := range extra {
+		result[k] = v
+	}
+	return result
+}
+
+func mergeRecordFields(env TypeEnv, extra map[string]types.RecordInfo) map[string]types.RecordInfo {
+	result := map[string]types.RecordInfo{}
+	if rf, ok := env["__record_fields__"]; ok {
+		if rfm, ok := rf.(map[string]types.RecordInfo); ok {
+			for k, v := range rfm {
 				result[k] = v
 			}
 		}

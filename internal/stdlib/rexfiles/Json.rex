@@ -23,8 +23,21 @@ parse : String -> Result Json String
 export let parse s =
     jsonParse s
 
+test "parse valid JSON" =
+    import Std:Result (isOk)
+    assert ("null" |> parse |> isOk)
+    assert ("true" |> parse |> isOk)
+    assert ("42" |> parse |> isOk)
+    assert ("\"hello\"" |> parse |> isOk)
+    assert ("[]" |> parse |> isOk)
+    assert ("{}" |> parse |> isOk)
+    assert ("[1, 2, 3]" |> parse |> isOk)
+    assert ("{\"key\": \"value\"}" |> parse |> isOk)
 
--- # Stringify helpers
+test "parse invalid JSON" =
+    import Std:Result (isErr)
+    assert ("invalid" |> parse |> isErr)
+    assert ("{unclosed" |> parse |> isErr)
 
 
 -- # Stringify
@@ -53,16 +66,16 @@ export let rec stringify j =
             ArrCons x (ArrNil) ->
                 stringify x
             ArrCons x rest ->
-                stringify x ++ ", " ++ strArr rest
+                "${stringify x}, ${strArr rest}"
     in
     let rec strObj obj =
         case obj of
             ObjNil ->
                 ""
             ObjCons k v (ObjNil) ->
-                "\"" ++ escapeStr k ++ "\": " ++ stringify v
+                "\"${escapeStr k}\": ${stringify v}"
             ObjCons k v rest ->
-                "\"" ++ escapeStr k ++ "\": " ++ stringify v ++ ", " ++ strObj rest
+                "\"${escapeStr k}\": ${stringify v}, ${strObj rest}"
     in
     case j of
         JNull ->
@@ -75,11 +88,34 @@ export let rec stringify j =
         JNum n ->
             toString n
         JStr s ->
-            "\"" ++ escapeStr s ++ "\""
+            "\"${escapeStr s}\""
         JArr arr ->
-            "[" ++ strArr arr ++ "]"
+            "[${strArr arr}]"
         JObj obj ->
-            "{" ++ strObj obj ++ "}"
+            "{${strObj obj}}"
+
+test "stringify primitives" =
+    assert (stringify JNull == "null")
+    assert (stringify (JBool true) == "true")
+    assert (stringify (JBool false) == "false")
+    assert (stringify (JStr "hi") == "\"hi\"")
+
+test "stringify number" =
+    assert (stringify (JNum 0.0) == "0.0")
+    assert (stringify (JNum 3.14) == "3.14")
+
+test "stringify array" =
+    assert (stringify (JArr ArrNil) == "[]")
+    assert (stringify (JArr (ArrCons JNull ArrNil)) == "[null]")
+    assert (stringify (JArr (ArrCons (JBool true) (ArrCons (JBool false) ArrNil))) == "[true, false]")
+
+test "stringify object" =
+    assert (stringify (JObj ObjNil) == "{}")
+    assert (stringify (JObj (ObjCons "x" (JNum 1.0) ObjNil)) == "{\"x\": 1.0}")
+
+test "escape in strings" =
+    assert (stringify (JStr "say \"hi\"") == "\"say \\\"hi\\\"\"")
+    assert (stringify (JStr "line1\nline2") == "\"line1\\nline2\"")
 
 
 -- # Encode helpers
@@ -125,6 +161,10 @@ export let encodeObj pairs =
     in
     JObj (fromList pairs)
 
+test "encodeArr and encodeObj" =
+    assert ([JNull, JBool true] |> encodeArr |> stringify == "[null, true]")
+    assert ([("a", JNum 1.0), ("b", JNull)] |> encodeObj |> stringify == "{\"a\": 1.0, \"b\": null}")
+
 
 -- # Decode helpers
 
@@ -141,6 +181,12 @@ export let rec getField key obj =
             else
                 getField key rest
 
+test "getField" =
+    let obj = ObjCons "x" (JNum 1.0) (ObjCons "y" (JStr "hi") ObjNil)
+    assert (getField "x" obj == Just (JNum 1.0))
+    assert (getField "z" obj == Nothing)
+
+
 -- | Convert a JsonList to a Rex list.
 arrayToList : JsonList -> [Json]
 export let rec arrayToList arr =
@@ -149,6 +195,7 @@ export let rec arrayToList arr =
             []
         ArrCons x rest ->
             x :: arrayToList rest
+
 
 -- | Convert a Rex list to a JsonList.
 listToArray : [Json] -> JsonList
@@ -159,55 +206,3 @@ export let listToArray lst =
             [h|t] -> ArrCons h (fromList t)
     in
     fromList lst
-
-
--- # Tests
-
-
-test "stringify primitives" =
-    assert (stringify JNull == "null")
-    assert (stringify (JBool true) == "true")
-    assert (stringify (JBool false) == "false")
-    assert (stringify (JStr "hi") == "\"hi\"")
-
-test "stringify number" =
-    assert (stringify (JNum 0.0) == "0.0")
-    assert (stringify (JNum 3.14) == "3.14")
-
-test "stringify array" =
-    assert (stringify (JArr ArrNil) == "[]")
-    assert (stringify (JArr (ArrCons JNull ArrNil)) == "[null]")
-    assert (stringify (JArr (ArrCons (JBool true) (ArrCons (JBool false) ArrNil))) == "[true, false]")
-
-test "stringify object" =
-    assert (stringify (JObj ObjNil) == "{}")
-    assert (stringify (JObj (ObjCons "x" (JNum 1.0) ObjNil)) == "{\"x\": 1.0}")
-
-test "escape in strings" =
-    assert (stringify (JStr "say \"hi\"") == "\"say \\\"hi\\\"\"")
-    assert (stringify (JStr "line1\nline2") == "\"line1\\nline2\"")
-
-test "encodeArr and encodeObj" =
-    assert ([JNull, JBool true] |> encodeArr |> stringify == "[null, true]")
-    assert ([("a", JNum 1.0), ("b", JNull)] |> encodeObj |> stringify == "{\"a\": 1.0, \"b\": null}")
-
-test "parse valid JSON" =
-    import Std:Result (isOk, isErr)
-    assert ("null" |> parse |> isOk)
-    assert ("true" |> parse |> isOk)
-    assert ("42" |> parse |> isOk)
-    assert ("\"hello\"" |> parse |> isOk)
-    assert ("[]" |> parse |> isOk)
-    assert ("{}" |> parse |> isOk)
-    assert ("[1, 2, 3]" |> parse |> isOk)
-    assert ("{\"key\": \"value\"}" |> parse |> isOk)
-
-test "parse invalid JSON" =
-    import Std:Result (isErr)
-    assert ("invalid" |> parse |> isErr)
-    assert ("{unclosed" |> parse |> isErr)
-
-test "getField" =
-    let obj = ObjCons "x" (JNum 1.0) (ObjCons "y" (JStr "hi") ObjNil)
-    assert (getField "x" obj == Just (JNum 1.0))
-    assert (getField "z" obj == Nothing)

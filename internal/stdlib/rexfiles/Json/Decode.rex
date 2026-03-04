@@ -2,20 +2,35 @@ import Std:Json (JNull, JBool, JStr, JNum, JArr, JObj, ObjNil, ObjCons, parse, g
 import Std:Result (Ok, Err)
 import Std:Math (round, toFloat)
 import Std:Map as Map
+import Std:String (join)
 
 
 -- # Types
 
 
+-- | A structured decode error with path, message, and the JSON value that failed.
+export type DecodeError = { path : [String], message : String, value : Json }
+
+
+-- | Convert a DecodeError to a human-readable string.
+errorToString : DecodeError -> String
+export let errorToString err =
+    let pathStr = if err.path == [] then
+            ""
+        else
+            join "." err.path ++ ": "
+    in pathStr ++ err.message
+
+
 -- | A decoder that extracts a value of type `a` from JSON.
-export type Decoder a = Decoder (Json -> Result a String)
+export type Decoder a = Decoder (Json -> Result a DecodeError)
 
 
 -- # Runners
 
 
 -- | Run a decoder on a Json value.
-run : Decoder a -> Json -> Result a String
+run : Decoder a -> Json -> Result a DecodeError
 export let run decoder json =
     case decoder of
         Decoder f ->
@@ -23,16 +38,16 @@ export let run decoder json =
 
 
 -- | Parse a JSON string and run a decoder on the result.
-decodeString : Decoder a -> String -> Result a String
+decodeString : Decoder a -> String -> Result a DecodeError
 export let decodeString decoder str =
     case parse str of
         Err e ->
-            Err e
+            Err (DecodeError { path = [], message = e, value = JNull })
         Ok json ->
             run decoder json
 
 test "decodeString with invalid JSON" =
-    assert (decodeString string "not json" == Err "invalid character 'o' in literal null (expecting 'u')")
+    assert (decodeString string "not json" == Err (DecodeError { path = [], message = "invalid character 'o' in literal null (expecting 'u')", value = JNull }))
 
 
 -- # Base decoders
@@ -46,11 +61,11 @@ export let string =
             JStr s ->
                 Ok s
             _ ->
-                Err "expected a String")
+                Err (DecodeError { path = [], message = "expected a String", value = json }))
 
 test "string decoder" =
     assert (decodeString string "\"hello\"" == Ok "hello")
-    assert (decodeString string "42" == Err "expected a String")
+    assert (decodeString string "42" == Err (DecodeError { path = [], message = "expected a String", value = JNum 42.0 }))
 
 
 -- | Decode a JSON integer.
@@ -62,14 +77,14 @@ export let int =
                 if toFloat (round n) == n then
                     Ok (round n)
                 else
-                    Err "expected an Int but got a Float"
+                    Err (DecodeError { path = [], message = "expected an Int but got a Float", value = json })
             _ ->
-                Err "expected an Int")
+                Err (DecodeError { path = [], message = "expected an Int", value = json }))
 
 test "int decoder" =
     assert (decodeString int "42" == Ok 42)
-    assert (decodeString int "3.14" == Err "expected an Int but got a Float")
-    assert (decodeString int "\"hi\"" == Err "expected an Int")
+    assert (decodeString int "3.14" == Err (DecodeError { path = [], message = "expected an Int but got a Float", value = JNum 3.14 }))
+    assert (decodeString int "\"hi\"" == Err (DecodeError { path = [], message = "expected an Int", value = JStr "hi" }))
 
 
 -- | Decode a JSON float.
@@ -80,12 +95,12 @@ export let float =
             JNum n ->
                 Ok n
             _ ->
-                Err "expected a Float")
+                Err (DecodeError { path = [], message = "expected a Float", value = json }))
 
 test "float decoder" =
     assert (decodeString float "3.14" == Ok 3.14)
     assert (decodeString float "42" == Ok 42.0)
-    assert (decodeString float "true" == Err "expected a Float")
+    assert (decodeString float "true" == Err (DecodeError { path = [], message = "expected a Float", value = JBool true }))
 
 
 -- | Decode a JSON boolean.
@@ -96,12 +111,12 @@ export let bool =
             JBool b ->
                 Ok b
             _ ->
-                Err "expected a Bool")
+                Err (DecodeError { path = [], message = "expected a Bool", value = json }))
 
 test "bool decoder" =
     assert (decodeString bool "true" == Ok true)
     assert (decodeString bool "false" == Ok false)
-    assert (decodeString bool "1" == Err "expected a Bool")
+    assert (decodeString bool "1" == Err (DecodeError { path = [], message = "expected a Bool", value = JNum 1.0 }))
 
 
 -- | Decode a JSON null, succeeding with the given default value.
@@ -112,12 +127,12 @@ export let null default =
             JNull ->
                 Ok default
             _ ->
-                Err "expected null")
+                Err (DecodeError { path = [], message = "expected null", value = json }))
 
 test "null decoder" =
     assert (decodeString (null 0) "null" == Ok 0)
     assert (decodeString (null "default") "null" == Ok "default")
-    assert (decodeString (null 0) "42" == Err "expected null")
+    assert (decodeString (null 0) "42" == Err (DecodeError { path = [], message = "expected null", value = JNum 42.0 }))
 
 
 -- # Object decoders
@@ -131,17 +146,45 @@ export let field key decoder =
             JObj obj ->
                 case getField key obj of
                     Just val ->
-                        run decoder val
+                        case run decoder val of
+                            Ok v ->
+                                Ok v
+                            Err e ->
+                                Err ({ e | path = key :: e.path })
                     Nothing ->
-                        Err ("field '" ++ key ++ "' not found")
+                        Err (DecodeError { path = [key], message = "field '${key}' not found", value = json })
             _ ->
-                Err "expected an Object")
+                Err (DecodeError { path = [], message = "expected an Object", value = json }))
 
 test "field decoder" =
     let json = """{"name": "Alice", "age": 30}"""
     assert (decodeString (field "name" string) json == Ok "Alice")
     assert (decodeString (field "age" int) json == Ok 30)
-    assert (decodeString (field "missing" string) json == Err "field 'missing' not found")
+    let missingResult =
+        case decodeString (field "missing" string) json of
+            Err e ->
+                e.message == "field 'missing' not found" && e.path == ["missing"]
+            _ ->
+                false
+    assert missingResult
+
+test "field path tracking" =
+    let json = """{"user": {"name": 42}}"""
+    let result = decodeString (field "user" (field "name" string)) json
+    let pathOk =
+        case result of
+            Err e ->
+                e.path == ["user", "name"] && e.message == "expected a String"
+            _ ->
+                false
+    assert pathOk
+    let strOk =
+        case result of
+            Err e ->
+                errorToString e == "user.name: expected a String"
+            _ ->
+                false
+    assert strOk
 
 
 -- | Decode a value at a nested path in a JSON object.
@@ -157,6 +200,17 @@ test "at decoder" =
     let json = """{"user": {"name": "Bob"}}"""
     assert (decodeString (at ["user", "name"] string) json == Ok "Bob")
 
+test "at path tracking" =
+    let json = """{"user": {"name": 42}}"""
+    let result = decodeString (at ["user", "name"] string) json
+    let ok =
+        case result of
+            Err e ->
+                e.path == ["user", "name"]
+            _ ->
+                false
+    assert ok
+
 
 -- # Array decoders
 
@@ -167,10 +221,14 @@ export let index i decoder =
     let rec nth n lst =
         case lst of
             [] ->
-                Err ("index " ++ show i ++ " out of range")
+                Err (DecodeError { path = ["[${i}]"], message = "index ${i} out of range", value = JNull })
             [h|t] ->
                 if n == 0 then
-                    run decoder h
+                    case run decoder h of
+                        Ok v ->
+                            Ok v
+                        Err e ->
+                            Err ({ e | path = "[${i}]" :: e.path })
                 else
                     nth (n - 1) t
     in
@@ -179,28 +237,45 @@ export let index i decoder =
             JArr arr ->
                 nth i (arrayToList arr)
             _ ->
-                Err "expected an Array")
+                Err (DecodeError { path = [], message = "expected an Array", value = json }))
 
 test "index decoder" =
     let json = "[10, 20, 30]"
     assert (decodeString (index 0 int) json == Ok 10)
     assert (decodeString (index 2 int) json == Ok 30)
-    assert (decodeString (index 5 int) json == Err "index 5 out of range")
+    let indexErr =
+        case decodeString (index 5 int) json of
+            Err e ->
+                e.message == "index 5 out of range" && e.path == ["[5]"]
+            _ ->
+                false
+    assert indexErr
+
+test "index path tracking" =
+    let json = """[1, "bad", 3]"""
+    let result = decodeString (index 1 int) json
+    let ok =
+        case result of
+            Err e ->
+                e.path == ["[1]"] && e.message == "expected an Int"
+            _ ->
+                false
+    assert ok
 
 
 -- | Decode a JSON array, applying the given decoder to each element.
 list : Decoder a -> Decoder [a]
 export let list decoder =
-    let rec decodeAll items =
+    let rec decodeAll idx items =
         case items of
             [] ->
                 Ok []
             [h|t] ->
                 case run decoder h of
                     Err e ->
-                        Err e
+                        Err ({ e | path = "[${idx}]" :: e.path })
                     Ok val ->
-                        case decodeAll t of
+                        case decodeAll (idx + 1) t of
                             Err e ->
                                 Err e
                             Ok rest ->
@@ -209,15 +284,40 @@ export let list decoder =
     Decoder (\json ->
         case json of
             JArr arr ->
-                decodeAll (arrayToList arr)
+                decodeAll 0 (arrayToList arr)
             _ ->
-                Err "expected an Array")
+                Err (DecodeError { path = [], message = "expected an Array", value = json }))
 
 test "list decoder" =
     assert (decodeString (list int) "[1, 2, 3]" == Ok [1, 2, 3])
     assert (decodeString (list string) """["a", "b"]""" == Ok ["a", "b"])
     assert (decodeString (list int) "[]" == Ok [])
-    assert (decodeString (list int) """[1, "x"]""" == Err "expected an Int")
+    let listErr =
+        case decodeString (list int) """[1, "x"]""" of
+            Err e ->
+                e.path == ["[1]"] && e.message == "expected an Int"
+            _ ->
+                false
+    assert listErr
+
+test "list path tracking" =
+    let json = """[{"name": "Alice"}, {"name": 42}]"""
+    let decoder = list (field "name" string)
+    let result = decodeString decoder json
+    let pathOk =
+        case result of
+            Err e ->
+                e.path == ["[1]", "name"] && e.message == "expected a String"
+            _ ->
+                false
+    assert pathOk
+    let strOk =
+        case result of
+            Err e ->
+                errorToString e == "[1].name: expected a String"
+            _ ->
+                false
+    assert strOk
 
 
 -- # Dict decoder
@@ -233,7 +333,7 @@ export let dict decoder =
             ObjCons k v rest ->
                 case run decoder v of
                     Err e ->
-                        Err ("in key '" ++ k ++ "': " ++ e)
+                        Err ({ e | path = k :: e.path })
                     Ok val ->
                         case decodeEntries rest of
                             Err e ->
@@ -246,7 +346,7 @@ export let dict decoder =
             JObj obj ->
                 decodeEntries obj
             _ ->
-                Err "expected an Object")
+                Err (DecodeError { path = [], message = "expected an Object", value = json }))
 
 test "dict decoder" =
     import Std:Result (withDefault)
@@ -254,6 +354,16 @@ test "dict decoder" =
     let m = withDefault Map.empty result
     assert (Map.lookup "a" m == Just 1)
     assert (Map.lookup "b" m == Just 2)
+
+test "dict path tracking" =
+    let result = decodeString (dict int) """{"a": 1, "b": "bad"}"""
+    let ok =
+        case result of
+            Err e ->
+                e.path == ["b"] && e.message == "expected an Int"
+            _ ->
+                false
+    assert ok
 
 
 -- # Combinators
@@ -343,7 +453,7 @@ export let oneOf decoders =
     let rec tryAll ds json =
         case ds of
             [] ->
-                Err "oneOf: all decoders failed"
+                Err (DecodeError { path = [], message = "oneOf: all decoders failed", value = json })
             [d|rest] ->
                 case run d json of
                     Ok val ->
@@ -395,7 +505,13 @@ export let nullable decoder =
 test "nullable decoder" =
     assert (decodeString (nullable int) "42" == Ok (Just 42))
     assert (decodeString (nullable int) "null" == Ok Nothing)
-    assert (decodeString (nullable int) "\"hi\"" == Err "expected an Int")
+    let nullErr =
+        case decodeString (nullable int) "\"hi\"" of
+            Err e ->
+                e.message == "expected an Int"
+            _ ->
+                false
+    assert nullErr
 
 
 -- | Decode a field that may be absent from the object. Returns `Nothing`
@@ -414,9 +530,9 @@ export let optionalField key decoder =
                             Ok v ->
                                 Ok (Just v)
                             Err e ->
-                                Err ("in field '" ++ key ++ "': " ++ e)
+                                Err ({ e | path = key :: e.path })
             _ ->
-                Err "expected an Object")
+                Err (DecodeError { path = [], message = "expected an Object", value = json }))
 
 test "optionalField decoder" =
     let json1 = """{"name": "Alice", "age": 30}"""
@@ -425,7 +541,13 @@ test "optionalField decoder" =
     assert (decodeString (optionalField "age" int) json1 == Ok (Just 30))
     assert (decodeString (optionalField "age" int) json2 == Ok Nothing)
     assert (decodeString (optionalField "missing" int) json1 == Ok Nothing)
-    assert (decodeString (optionalField "age" int) json3 == Err "in field 'age': expected an Int")
+    let optErr =
+        case decodeString (optionalField "age" int) json3 of
+            Err e ->
+                e.path == ["age"] && e.message == "expected an Int"
+            _ ->
+                false
+    assert optErr
 
 
 -- | A decoder that always succeeds with the given value.
@@ -447,13 +569,27 @@ export let decode = succeed
 -- | A decoder that always fails with the given message.
 fail : String -> Decoder a
 export let fail msg =
-    Decoder (\_ -> Err msg)
+    Decoder (\json -> Err (DecodeError { path = [], message = msg, value = json }))
 
 test "succeed and fail" =
     assert (decodeString (succeed 42) "null" == Ok 42)
-    assert (decodeString (fail "nope") "null" == Err "nope")
+    let failErr =
+        case decodeString (fail "nope") "null" of
+            Err e ->
+                e.message == "nope"
+            _ ->
+                false
+    assert failErr
 
 test "nested object decoding with map2" =
     let json = """{"name": "Alice", "scores": [95, 87, 92]}"""
     let decoder = map2 (\name scores -> (name, scores)) (field "name" string) (field "scores" (list int))
     assert (decodeString decoder json == Ok ("Alice", [95, 87, 92]))
+
+test "errorToString formatting" =
+    let e1 = DecodeError { path = [], message = "expected a String", value = JNull }
+    assert (errorToString e1 == "expected a String")
+    let e2 = DecodeError { path = ["user", "name"], message = "expected a String", value = JNull }
+    assert (errorToString e2 == "user.name: expected a String")
+    let e3 = DecodeError { path = ["items", "[0]", "name"], message = "expected a String", value = JNull }
+    assert (errorToString e3 == "items.[0].name: expected a String")

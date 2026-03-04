@@ -1,4 +1,4 @@
-import Std:Json.Decode (decodeString, field, string, int, float, bool, list, map2, decode, with, oneOf, maybe, nullable, optionalField, at, succeed)
+import Std:Json.Decode (decodeString, field, string, int, float, bool, list, map2, decode, with, oneOf, maybe, nullable, optionalField, at, succeed, errorToString)
 import Std:Result (Ok, Err)
 
 
@@ -59,7 +59,13 @@ test "optional fields" =
     assert (decodeString decoder """{"host": "localhost", "port": 8080}""" == Ok (Config { host = "localhost", port = Just 8080 }))
     assert (decodeString decoder """{"host": "localhost"}""" == Ok (Config { host = "localhost", port = Nothing }))
     -- type mismatch still fails (unlike maybe)
-    assert (decodeString decoder """{"host": "localhost", "port": "bad"}""" == Err "in field 'port': expected an Int")
+    let typeErr =
+        case decodeString decoder """{"host": "localhost", "port": "bad"}""" of
+            Err e ->
+                e.path == ["port"] && e.message == "expected an Int"
+            _ ->
+                false
+    assert typeErr
 
 
 -- Use decode/with to decode many fields without needing mapN
@@ -90,3 +96,18 @@ test "andThen for tagged types" =
             else
                 fail "unknown type")
     assert (decodeString decoder json == Ok (Point { x = 10, y = 20 }))
+
+
+-- Error messages include paths for nested structures
+
+test "error path tracking" =
+    let json = """{"users": [{"name": "Alice"}, {"name": 42}]}"""
+    let decoder = field "users" (list (field "name" string))
+    let result = decodeString decoder json
+    let ok =
+        case result of
+            Err e ->
+                errorToString e == "users.[1].name: expected a String"
+            _ ->
+                false
+    assert ok

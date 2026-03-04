@@ -75,7 +75,7 @@ gofmt -w .
 - **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
 - **Type aliases**: `type alias Name = String` — transparent alias, fully interchangeable at the type level. Parametric: `type alias Pair a b = (a, b)`. Stored in `tc.typeAliases` (`TypeAliasInfo{Params, Body}`); non-parametric aliases also stored in `typeDefs` for direct lookup. The `alias` keyword after `type` unambiguously distinguishes aliases from ADTs (no heuristic needed). No runtime effect.
 - **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
-- **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }` or positional: `Person "Alice" 30`. The type name is a positional constructor function (`VRecordCtorFn`) that supports currying and can be passed as a higher-order function (e.g., `map2 Person ...`). Field access: `p.name` (chained: `p.addr.city`; lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Update: `{ alice | name = "Bob" }` — creates a new record with changed fields. Nested dot-path updates: `{ model | user.name = "Alice" }` — recursively clones and updates nested records. Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`).
+- **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }` or positional: `Person "Alice" 30`. The type name is a positional constructor function (`VRecordCtorFn`) that supports currying and can be passed as a higher-order function (e.g., `map2 Person ...`). Field access: `p.name` (chained: `p.addr.city`; lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Update: `{ alice | name = "Bob" }` — creates a new record with changed fields. Nested dot-path updates: `{ model | user.name = "Alice" }` — recursively clones and updates nested records. Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`). Module imports propagate `__record_fields__` and `TypeDefs` via `ModuleResult`, so record types defined in imported modules can be constructed, accessed, and updated by the importer.
 - **Multi-binding let**: `let a = 1 and b = 2 in a + b` — the `and` keyword chains multiple bindings in a single `let` block. Parser-only — desugars to nested `Let` AST nodes. Works for both `let` and `let rec` (which already used `and` for mutual recursion). Old chained `let...in...let...in` syntax also works.
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
 - **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded with `Eq`, `Ord`, `Show`. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
@@ -93,6 +93,7 @@ gofmt -w .
 - `gofmt -w .` before committing
 - Comments use `--` in `.rex` files
 - **Never commit or push unless explicitly asked** — each request is one-off, not a standing instruction
+- **Prefer the pipe operator `|>`** when writing Rex code — use it to make data flow read left-to-right instead of deeply nesting function calls. E.g., `list |> map f |> filter g` over `filter g (map f list)`.
 
 ### `.rex` formatting style (Elm-inspired)
 
@@ -147,7 +148,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Json — parse (Go-backed), stringify (pure Rex), Json ADT, encode/decode helpers
 - [x] Process — actor model: `spawn`, `send`, `receive`, `self`, `call`; unbounded FIFO mailboxes (Erlang-style); `Pid a` opaque type; builtins injected into every program env automatically
 - [x] Parallel — `pmap`, `pmapN`, `numCPU`; parallel map over lists using actors; bounded parallelism via chunking
-- [x] Json.Decode — Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`, `map2`, `decode`, `with`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail`
+- [x] Json.Decode — Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`, `map2`, `decode`, `with`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail`; structured `DecodeError` record (`path`, `message`, `value`) with path tracking through `field`/`index`/`list`/`dict`/`optionalField`; `errorToString` for human-readable messages
 - Date/Time (even basic)
 - Random numbers
 

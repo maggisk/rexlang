@@ -124,22 +124,22 @@ type VRecord struct {
 	Fields   map[string]Value
 }
 
-func (VInt) valueKind()         {}
-func (VInstances) valueKind()   {}
-func (VFloat) valueKind()       {}
-func (VString) valueKind()      {}
-func (VBool) valueKind()        {}
-func (VUnit) valueKind()        {}
-func (VList) valueKind()        {}
-func (VTuple) valueKind()       {}
-func (VCtor) valueKind()        {}
-func (VCtorFn) valueKind()      {}
-func (VClosure) valueKind()     {}
-func (VBuiltin) valueKind()     {}
-func (VModule) valueKind()      {}
-func (VTraitMethod) valueKind() {}
-func (VPid) valueKind()         {}
-func (VRecord) valueKind()        {}
+func (VInt) valueKind()          {}
+func (VInstances) valueKind()    {}
+func (VFloat) valueKind()        {}
+func (VString) valueKind()       {}
+func (VBool) valueKind()         {}
+func (VUnit) valueKind()         {}
+func (VList) valueKind()         {}
+func (VTuple) valueKind()        {}
+func (VCtor) valueKind()         {}
+func (VCtorFn) valueKind()       {}
+func (VClosure) valueKind()      {}
+func (VBuiltin) valueKind()      {}
+func (VModule) valueKind()       {}
+func (VTraitMethod) valueKind()  {}
+func (VPid) valueKind()          {}
+func (VRecord) valueKind()       {}
 func (VRecordCtorFn) valueKind() {}
 
 // RuntimeError is a runtime error.
