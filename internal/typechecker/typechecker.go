@@ -1273,6 +1273,12 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 			}
 			recordFields[e.Name] = ri
 			newEnv["__record_fields__"] = recordFields
+			// Register positional constructor function: field1 -> field2 -> ... -> RecordType
+			var ctorTy types.Type = adtTy
+			for i := len(fieldInfos) - 1; i >= 0; i-- {
+				ctorTy = types.TFun(fieldInfos[i].Type, ctorTy)
+			}
+			newEnv[e.Name] = types.Scheme{Vars: e.Params, Ty: ctorTy}
 			return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: newEnv, TypeDefs: newTypeDefs}, nil
 		}
 
@@ -1801,6 +1807,9 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 				if e.Exported {
 					for _, ctor := range e.Ctors {
 						exports[ctor.Name] = true
+					}
+					if len(e.RecordFields) > 0 {
+						exports[e.Name] = true
 					}
 				}
 			case ast.TraitDecl:

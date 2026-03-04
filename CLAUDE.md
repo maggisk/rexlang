@@ -32,8 +32,8 @@ internal/
     eval.go        Eval(), EvalToplevel(), RunProgram(), RunTests(), REPL helpers
     builtins_core.go  All builtins: core, math, string, IO, env, JSON
   stdlib/
-    embed.go       //go:embed rexfiles/*.rex; Source(name) string
-    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Process, Parallel)
+    embed.go       //go:embed all:rexfiles; Source(name) string (dots → subdirs)
+    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Json/Decode, Process, Parallel)
 ```
 
 ## Development commands
@@ -69,13 +69,13 @@ gofmt -w .
 - **`main` entry point**: programs run with `./rex file.rex` must define `export let main args = ...` where `main : List String -> Int`. `args` receives command-line arguments as a list of strings. The return value is the process exit code. `--test` mode does not require `main`.
 - **Language**: Go 1.24+. Single binary, no runtime dependency.
 - **Type inference**: `internal/typechecker` implements Algorithm W (Hindley-Milner); runs after parse, before eval; type errors are fatal. Types in `internal/types` (`TVar`, `TCon`, `Scheme`). Arithmetic operators (`+` `-` `*` `/`) require `Int` or `Float`; free type variables in arithmetic expressions default to `Int`. Use `toFloat` to convert before Float arithmetic. REPL shows `name : type` after each binding.
-- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VBuiltin`, `VTraitMethod`, `VInstances`, `VModule`, `VPid`, `VRecord` — all implement `Value` interface via `valueKind()`.
+- **Values**: `VInt`, `VFloat`, `VString`, `VBool`, `VClosure`, `VCtor`, `VCtorFn`, `VRecordCtorFn`, `VBuiltin`, `VTraitMethod`, `VInstances`, `VModule`, `VPid`, `VRecord` — all implement `Value` interface via `valueKind()`.
 - **Actors**: `VPid{Mailbox *Mailbox, ID int64}` is the process handle. `Mailbox` is an unbounded FIFO queue (mutex + cond + slice; Erlang-style — `Send` never blocks or fails). Five builtins: `spawn : (() -> b) -> Pid a`, `send : Pid a -> a -> ()`, `receive : () -> a`, `self : Pid a`, `call : Pid b -> (Pid a -> b) -> a`. Injected into every program's initial env automatically (no import required). `ProcessBuiltins(selfPid VPid)` returns them keyed to a specific mailbox. `WithProcessBuiltins(env Env) Env` creates a fresh main-process mailbox and injects them.
 - **Environment**: `Env = map[string]Value`; `Clone()` and `Extend()` for closure snapshots.
 - **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
 - **Type aliases**: `type Name = String` — transparent alias, fully interchangeable at the type level. Parametric: `type Pair a b = (a, b)`. Stored in `tc.typeAliases` (`TypeAliasInfo{Params, Body}`); non-parametric aliases also stored in `typeDefs` for direct lookup. Parser disambiguates from ADTs by checking for `|` after parsing the type sig. No runtime effect.
 - **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
-- **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }`. Field access: `p.name` (chained: `p.addr.city`; lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Update: `{ alice | name = "Bob" }` — creates a new record with changed fields. Nested dot-path updates: `{ model | user.name = "Alice" }` — recursively clones and updates nested records. Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`).
+- **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }` or positional: `Person "Alice" 30`. The type name is a positional constructor function (`VRecordCtorFn`) that supports currying and can be passed as a higher-order function (e.g., `map2 Person ...`). Field access: `p.name` (chained: `p.addr.city`; lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Update: `{ alice | name = "Bob" }` — creates a new record with changed fields. Nested dot-path updates: `{ model | user.name = "Alice" }` — recursively clones and updates nested records. Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`).
 - **Multi-binding let**: `let a = 1 and b = 2 in a + b` — the `and` keyword chains multiple bindings in a single `let` block. Parser-only — desugars to nested `Let` AST nodes. Works for both `let` and `let rec` (which already used `and` for mutual recursion). Old chained `let...in...let...in` syntax also works.
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
 - **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded with `Eq`, `Ord`, `Show`. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
@@ -144,7 +144,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Json — parse (Go-backed), stringify (pure Rex), Json ADT, encode/decode helpers
 - [x] Process — actor model: `spawn`, `send`, `receive`, `self`, `call`; unbounded FIFO mailboxes (Erlang-style); `Pid a` opaque type; builtins injected into every program env automatically
 - [x] Parallel — `pmap`, `pmapN`, `numCPU`; parallel map over lists using actors; bounded parallelism via chunking
-- JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
+- [x] Json.Decode — Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`–`map5`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail`
 - Date/Time (even basic)
 - Random numbers
 

@@ -38,6 +38,14 @@ type VCtorFn struct {
 	AccArgs   []Value // built in reverse; reversed when Remaining==1
 }
 
+// VRecordCtorFn is a positional constructor function for record types.
+type VRecordCtorFn struct {
+	TypeName   string
+	FieldNames []string
+	Remaining  int
+	AccArgs    []Value
+}
+
 type VClosure struct {
 	Param string
 	Body  ast.Expr
@@ -131,7 +139,8 @@ func (VBuiltin) valueKind()     {}
 func (VModule) valueKind()      {}
 func (VTraitMethod) valueKind() {}
 func (VPid) valueKind()         {}
-func (VRecord) valueKind()      {}
+func (VRecord) valueKind()        {}
+func (VRecordCtorFn) valueKind() {}
 
 // RuntimeError is a runtime error.
 type RuntimeError struct{ Msg string }
@@ -332,6 +341,8 @@ func ValueToString(v Value) string {
 		return "(" + val.Name + " " + strings.Join(parts, " ") + ")"
 	case VCtorFn:
 		return fmt.Sprintf("<ctor %s>", val.Name)
+	case VRecordCtorFn:
+		return fmt.Sprintf("<record ctor %s>", val.TypeName)
 	case VList:
 		parts := make([]string, len(val.Items))
 		for i, item := range val.Items {

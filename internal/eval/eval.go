@@ -38,6 +38,21 @@ func ApplyValue(fn, arg Value) (Value, error) {
 			Remaining: f.Remaining - 1,
 			AccArgs:   append([]Value{arg}, f.AccArgs...),
 		}, nil
+	case VRecordCtorFn:
+		newAcc := append(f.AccArgs, arg)
+		if f.Remaining == 1 {
+			fields := make(map[string]Value, len(f.FieldNames))
+			for i, name := range f.FieldNames {
+				fields[name] = newAcc[i]
+			}
+			return VRecord{TypeName: f.TypeName, Fields: fields}, nil
+		}
+		return VRecordCtorFn{
+			TypeName:   f.TypeName,
+			FieldNames: f.FieldNames,
+			Remaining:  f.Remaining - 1,
+			AccArgs:    newAcc,
+		}, nil
 	}
 	return nil, runtimeErr("cannot apply %s as a function", ValueToString(fn))
 }
@@ -536,6 +551,21 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 					Remaining: fn.Remaining - 1,
 					AccArgs:   append([]Value{arg}, fn.AccArgs...),
 				}, nil
+			case VRecordCtorFn:
+				newAcc := append(fn.AccArgs, arg)
+				if fn.Remaining == 1 {
+					fields := make(map[string]Value, len(fn.FieldNames))
+					for i, name := range fn.FieldNames {
+						fields[name] = newAcc[i]
+					}
+					return VRecord{TypeName: fn.TypeName, Fields: fields}, nil
+				}
+				return VRecordCtorFn{
+					TypeName:   fn.TypeName,
+					FieldNames: fn.FieldNames,
+					Remaining:  fn.Remaining - 1,
+					AccArgs:    newAcc,
+				}, nil
 			case VBuiltin:
 				return fn.Fn(arg)
 			case VTraitMethod:
@@ -921,6 +951,9 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 					for _, ctor := range e.Ctors {
 						exports[ctor.Name] = true
 					}
+					if len(e.RecordFields) > 0 {
+						exports[e.Name] = true
+					}
 				}
 			case ast.TraitDecl:
 				if e.Exported {
@@ -958,7 +991,12 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 	case ast.TypeDecl:
 		newEnv := env.Clone()
 		if len(e.RecordFields) > 0 {
-			// Record type — store field info for runtime (used by FieldAccess pattern matching)
+			// Record type — register positional constructor function
+			fieldNames := make([]string, len(e.RecordFields))
+			for i, f := range e.RecordFields {
+				fieldNames[i] = f.Name
+			}
+			newEnv[e.Name] = VRecordCtorFn{TypeName: e.Name, FieldNames: fieldNames, Remaining: len(e.RecordFields)}
 			return VBool{V: false}, newEnv, nil
 		}
 		for _, ctor := range e.Ctors {

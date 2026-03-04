@@ -4,14 +4,16 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"strings"
 )
 
-//go:embed rexfiles/*.rex
+//go:embed all:rexfiles
 var stdlibFS embed.FS
 
-// Source returns the source code for a stdlib module by name (e.g. "Prelude").
+// Source returns the source code for a stdlib module by name (e.g. "Prelude", "Json.Decode").
 func Source(name string) (string, error) {
-	data, err := fs.ReadFile(stdlibFS, "rexfiles/"+name+".rex")
+	path := strings.ReplaceAll(name, ".", "/")
+	data, err := fs.ReadFile(stdlibFS, "rexfiles/"+path+".rex")
 	if err != nil {
 		return "", fmt.Errorf("unknown stdlib module: %s", name)
 	}

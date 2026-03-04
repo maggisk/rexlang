@@ -87,6 +87,7 @@ type Tree a = Leaf | Node (Tree a) a (Tree a)
 type Person = { name : String, age : Int }
 
 let alice = Person { name = "Alice", age = 30 }
+let bob = Person "Bob" 25       -- positional constructor
 alice.name    -- "Alice"
 
 -- update (creates a new record)
@@ -108,7 +109,7 @@ let p = Pair { fst = 1, snd = "hello" }
 p.fst    -- 1
 ```
 
-Records are nominal — tied to a `type` declaration. The type name is required for construction and pattern matching. Updates with `{ rec | field = val }` are immutable — they return a new record. Nested dot-paths (`addr.city`) recursively update inner records.
+Records are nominal — tied to a `type` declaration. The type name doubles as a positional constructor function (`Person "Alice" 30`), which supports partial application and can be passed as a higher-order function (e.g., `map2 Person ...`). Updates with `{ rec | field = val }` are immutable — they return a new record. Nested dot-paths (`addr.city`) recursively update inner records.
 
 ### Type aliases
 
@@ -337,6 +338,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `Std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
 | `Std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`, `toMaybe`, `fromMaybe`, `try` (catch div/mod by zero), `RuntimeError` ADT |
 | `Std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT |
+| `Std:Json.Decode` | Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`–`map5`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail` |
 | `Std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `take`, `drop`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`, `dedent` |
 | `Std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
 | `Std:IO` | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`) |
@@ -377,6 +379,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `examples/let_block.rex` | Multi-binding let blocks with `and` |
 | `examples/forward_ref.rex` | Forward references between top-level bindings |
 | `examples/testing.rex` | Built-in test framework |
+| `examples/json_decode.rex` | JSON decoder combinators with `Std:Json.Decode` |
 | `examples/user_modules/` | User module imports with `src/` directory |
 
 ## Running tests
@@ -405,7 +408,7 @@ go test ./...
 ### Stdlib
 
 - [x] JSON — `Std:Json` with ADT, `parse`/`stringify`, encode/decode helpers
-- [ ] JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
+- [x] JSON decoder combinators — `Std:Json.Decode` with Elm-style `field`, `map2`, `oneOf`, `andThen`, `list`, `dict`, `maybe`
 - [ ] Date/Time
 - [ ] Random numbers
 

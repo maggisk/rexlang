@@ -1054,6 +1054,22 @@ func (p *parser) parseImport() (ast.Expr, error) {
 			return nil, err
 		}
 		module = nsOrName + ":" + rest
+		// Consume dot-separated segments: Std:Json.Decode
+		for p.peek().Kind == lexer.TokDot {
+			if p.pos+1 < len(p.tokens) {
+				next := p.tokens[p.pos+1]
+				if next.Kind == lexer.TokIdent && isUppercase(next.Value.(string)) {
+					p.advance() // consume '.'
+					part, err := p.expectIdent()
+					if err != nil {
+						return nil, err
+					}
+					module = module + "." + part
+					continue
+				}
+			}
+			break
+		}
 	} else {
 		// User module — consume dot-separated path: Lib.Helpers
 		module = nsOrName
