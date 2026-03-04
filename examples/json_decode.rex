@@ -1,4 +1,4 @@
-import Std:Json.Decode (decodeString, field, string, int, float, bool, list, map2, map3, oneOf, maybe, nullable, optionalField, at, succeed)
+import Std:Json.Decode (decodeString, field, string, int, float, bool, list, map2, decode, with, oneOf, maybe, nullable, optionalField, at, succeed)
 import Std:Result (Ok, Err)
 
 
@@ -60,6 +60,20 @@ test "optional fields" =
     assert (decodeString decoder """{"host": "localhost"}""" == Ok (Config { host = "localhost", port = Nothing }))
     -- type mismatch still fails (unlike maybe)
     assert (decodeString decoder """{"host": "localhost", "port": "bad"}""" == Err "in field 'port': expected an Int")
+
+
+-- Use decode/with to decode many fields without needing mapN
+
+type Player = { name : String, score : Int, active : Bool }
+
+test "decode/with for many fields" =
+    let json = """{"name": "Alice", "score": 100, "active": true}"""
+    let decoder =
+        decode Player
+            |> with (field "name" string)
+            |> with (field "score" int)
+            |> with (field "active" bool)
+    assert (decodeString decoder json == Ok (Player { name = "Alice", score = 100, active = true }))
 
 
 -- Use andThen for dependent decoding

@@ -936,6 +936,10 @@ func (p *parser) parseCase() (ast.Expr, error) {
 
 func (p *parser) parseTypeDecl() (ast.Expr, error) {
 	p.advance() // consume 'type'
+	isAlias := p.peek().Kind == lexer.TokAlias
+	if isAlias {
+		p.advance() // consume 'alias'
+	}
 	nameTok := p.peek()
 	name, err := p.expectIdent()
 	if err != nil {
@@ -958,6 +962,14 @@ func (p *parser) parseTypeDecl() (ast.Expr, error) {
 	}
 	if err := p.expect(lexer.TokEq); err != nil {
 		return nil, err
+	}
+	// Type alias: type alias Name = TypeSig
+	if isAlias {
+		ty, err := p.parseTypeSig()
+		if err != nil {
+			return nil, err
+		}
+		return ast.TypeDecl{Name: name, Params: params, AliasType: ty}, nil
 	}
 	// Record type: type Name = { field : Type, ... }
 	if p.peek().Kind == lexer.TokLBrace {
@@ -984,17 +996,6 @@ func (p *parser) parseTypeDecl() (ast.Expr, error) {
 			return nil, err
 		}
 		return ast.TypeDecl{Name: name, Params: params, RecordFields: fields}, nil
-	}
-	// Alias detection: try parsing as type signature, then check for |
-	if p.peek().Kind != lexer.TokPipe {
-		savedPos := p.pos
-		ty, err := p.parseTypeSig()
-		if err == nil && p.peek().Kind != lexer.TokPipe {
-			// No | follows — this is a type alias
-			return ast.TypeDecl{Name: name, Params: params, AliasType: ty}, nil
-		}
-		// Has | or parse failed — restore and parse as ADT
-		p.pos = savedPos
 	}
 
 	if p.peek().Kind == lexer.TokPipe {

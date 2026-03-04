@@ -1,19 +1,19 @@
 -- Type aliases: transparent alternative names for existing types
 
 -- Simple alias
-type Name = String
+type alias Name = String
 
 greet : Name -> String
 let greet name = "Hello, " ++ name
 
 -- Function type alias
-type Predicate a = a -> Bool
+type alias Predicate a = a -> Bool
 
 isPositive : Predicate Int
 let isPositive n = n > 0
 
 -- Parametric alias
-type Pair a b = (a, b)
+type alias Pair a b = (a, b)
 
 swap : Pair a b -> Pair b a
 let swap p =
@@ -22,7 +22,7 @@ let swap p =
             (b, a)
 
 -- Alias for list type
-type IntList = [Int]
+type alias IntList = [Int]
 
 sum : IntList -> Int
 let rec sum lst =

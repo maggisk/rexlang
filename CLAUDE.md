@@ -73,7 +73,7 @@ gofmt -w .
 - **Actors**: `VPid{Mailbox *Mailbox, ID int64}` is the process handle. `Mailbox` is an unbounded FIFO queue (mutex + cond + slice; Erlang-style — `Send` never blocks or fails). Five builtins: `spawn : (() -> b) -> Pid a`, `send : Pid a -> a -> ()`, `receive : () -> a`, `self : Pid a`, `call : Pid b -> (Pid a -> b) -> a`. Injected into every program's initial env automatically (no import required). `ProcessBuiltins(selfPid VPid)` returns them keyed to a specific mailbox. `WithProcessBuiltins(env Env) Env` creates a fresh main-process mailbox and injects them.
 - **Environment**: `Env = map[string]Value`; `Clone()` and `Extend()` for closure snapshots.
 - **Tail calls**: the evaluator uses a trampoline `for {}` loop for tail-recursive functions.
-- **Type aliases**: `type Name = String` — transparent alias, fully interchangeable at the type level. Parametric: `type Pair a b = (a, b)`. Stored in `tc.typeAliases` (`TypeAliasInfo{Params, Body}`); non-parametric aliases also stored in `typeDefs` for direct lookup. Parser disambiguates from ADTs by checking for `|` after parsing the type sig. No runtime effect.
+- **Type aliases**: `type alias Name = String` — transparent alias, fully interchangeable at the type level. Parametric: `type alias Pair a b = (a, b)`. Stored in `tc.typeAliases` (`TypeAliasInfo{Params, Body}`); non-parametric aliases also stored in `typeDefs` for direct lookup. The `alias` keyword after `type` unambiguously distinguishes aliases from ADTs (no heuristic needed). No runtime effect.
 - **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
 - **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }` or positional: `Person "Alice" 30`. The type name is a positional constructor function (`VRecordCtorFn`) that supports currying and can be passed as a higher-order function (e.g., `map2 Person ...`). Field access: `p.name` (chained: `p.addr.city`; lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Update: `{ alice | name = "Bob" }` — creates a new record with changed fields. Nested dot-path updates: `{ model | user.name = "Alice" }` — recursively clones and updates nested records. Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`).
 - **Multi-binding let**: `let a = 1 and b = 2 in a + b` — the `and` keyword chains multiple bindings in a single `let` block. Parser-only — desugars to nested `Let` AST nodes. Works for both `let` and `let rec` (which already used `and` for mutual recursion). Old chained `let...in...let...in` syntax also works.
@@ -114,26 +114,29 @@ else
         ...
 ```
 
-One blank line between top-level definitions; two blank lines between sections. Stdlib modules use `-- # Section` headers and `-- | doc` comments above each function.
+One blank line between top-level definitions; two blank lines between sections. Stdlib modules use `-- # Section` headers and `-- | doc` comments above each function. Every stdlib function should have its tests immediately after its definition — not grouped at the bottom of the file.
 
 ## Planned work (ordered by dependency)
 
 ### Data structures & types
+
 - [x] Map/Dict — `Std:Map` AVL tree, sorted by `Ord` trait
 - [x] Records — `type Person = { name : String, age : Int }`, field access, pattern matching, update syntax `{ rec | field = val }` with nested dot-paths
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
-- [x] Type aliases — `type Name = String` (lightweight, distinct from ADTs)
+- [x] Type aliases — `type alias Name = String`
 - [x] Multi-line strings — `"""..."""` triple-quoted, first newline stripped, escapes and interpolation work as normal
 - [x] Number literals — hex (`0xFF`), octal (`0o77`), binary (`0b1010`), underscores (`1_000_000`)
 - Char type vs expanded String — decide later
 
 ### Module system
+
 - [x] Stdlib modules — `import Std:List`, `import Std:Map as M`, etc.
 - [x] User modules — `import Utils`, `import Lib.Helpers as H`; resolved from `src/` directory in cwd; dots map to directories; circular imports detected
 - Opaque types — export a type without its constructor; consumers interact only through provided functions. Prerequisite: user modules. Syntax TBD.
 - Package system — third-party dependencies
 
 ### Stdlib
+
 - [x] List — map, filter, foldl, foldr, zip, concat, concatMap, range, repeat, find, partition, intersperse, indexedMap, maximum, minimum, …
 - [x] Map — AVL tree sorted map (insert, lookup, remove, fold, …)
 - [x] Result — Ok/Err, map, mapErr, andThen, withDefault, try (catch div/mod by zero), RuntimeError ADT
@@ -144,11 +147,12 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Json — parse (Go-backed), stringify (pure Rex), Json ADT, encode/decode helpers
 - [x] Process — actor model: `spawn`, `send`, `receive`, `self`, `call`; unbounded FIFO mailboxes (Erlang-style); `Pid a` opaque type; builtins injected into every program env automatically
 - [x] Parallel — `pmap`, `pmapN`, `numCPU`; parallel map over lists using actors; bounded parallelism via chunking
-- [x] Json.Decode — Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`–`map5`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail`
+- [x] Json.Decode — Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`, `map2`, `decode`, `with`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail`
 - Date/Time (even basic)
 - Random numbers
 
 ### Language ergonomics
+
 - [x] Traits v1 — `trait`/`impl`, runtime dispatch, `Eq`/`Ord` in Prelude
 - [x] Test framework — `test "name" = …` / `assert expr`, `--test` flag
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
@@ -158,14 +162,17 @@ One blank line between top-level definitions; two blank lines between sections. 
 - Typed holes — `?name` in expression position; typechecker infers the required type from surrounding context and reports it along with in-scope bindings; enables type-directed, incremental program construction. Never reaches eval. Implementation: `HoleExpr{Name string}` AST node; typechecker unifies hole with inferred type, collects into a holes report instead of a hard error. Use `?name` (not `_`) to avoid ambiguity with pattern wildcards.
 
 ### Error experience
+
 - Better error messages — source locations, span info
 - Stack traces on runtime errors (maybe)
 
 ### Compilation
+
 - IR design (A-normal form; ADTs map to WasmGC `struct` subtypes)
 - WasmGC backend: emit WAT (WebAssembly Text) → `wasm-tools` assemble → `.wasm`
 
 ### Before going public
+
 - `go install` support for the `rex` CLI
 - Polish README (installation instructions, more examples)
 - REPL history (`readline` + `~/.rexlang_history`)

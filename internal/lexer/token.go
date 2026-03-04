@@ -31,6 +31,7 @@ const (
 	TokTrait     = "trait"
 	TokImpl      = "impl"
 	TokWhere     = "where"
+	TokAlias     = "alias"
 	TokTest      = "test"
 	TokAssert    = "assert"
 

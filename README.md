@@ -114,10 +114,10 @@ Records are nominal — tied to a `type` declaration. The type name doubles as a
 ### Type aliases
 
 ```
-type Name = String
-type Predicate a = a -> Bool
-type Pair a b = (a, b)
-type IntList = [Int]
+type alias Name = String
+type alias Predicate a = a -> Bool
+type alias Pair a b = (a, b)
+type alias IntList = [Int]
 ```
 
 Type aliases are transparent — `Name` and `String` are fully interchangeable. They support type parameters and work with annotations.
@@ -338,7 +338,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `Std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
 | `Std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`, `toMaybe`, `fromMaybe`, `try` (catch div/mod by zero), `RuntimeError` ADT |
 | `Std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT |
-| `Std:Json.Decode` | Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`–`map5`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail` |
+| `Std:Json.Decode` | Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`, `map2`, `decode`, `with`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail` |
 | `Std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `take`, `drop`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`, `dedent` |
 | `Std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
 | `Std:IO` | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`) |
@@ -396,7 +396,7 @@ go test ./...
 - [x] Records — nominal records with field access, pattern matching, update syntax with nested dot-paths
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - [x] Multi-line strings — `"""..."""` triple-quoted strings
-- [x] Type aliases — `type Name = String`
+- [x] Type aliases — `type alias Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation
 - [x] Exhaustiveness checking — reject non-exhaustive `case` at compile time; refutable `let` patterns rejected
 - [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development

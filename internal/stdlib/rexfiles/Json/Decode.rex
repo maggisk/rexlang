@@ -8,7 +8,7 @@ import Std:Map as Map
 
 
 -- | A decoder that extracts a value of type `a` from JSON.
-export type Decoder a = | Decoder (Json -> Result a String)
+export type Decoder a = Decoder (Json -> Result a String)
 
 
 -- # Runners
@@ -31,6 +31,9 @@ export let decodeString decoder str =
         Ok json ->
             run decoder json
 
+test "decodeString with invalid JSON" =
+    assert (decodeString string "not json" == Err "invalid character 'o' in literal null (expecting 'u')")
+
 
 -- # Base decoders
 
@@ -44,6 +47,10 @@ export let string =
                 Ok s
             _ ->
                 Err "expected a String")
+
+test "string decoder" =
+    assert (decodeString string "\"hello\"" == Ok "hello")
+    assert (decodeString string "42" == Err "expected a String")
 
 
 -- | Decode a JSON integer.
@@ -59,6 +66,11 @@ export let int =
             _ ->
                 Err "expected an Int")
 
+test "int decoder" =
+    assert (decodeString int "42" == Ok 42)
+    assert (decodeString int "3.14" == Err "expected an Int but got a Float")
+    assert (decodeString int "\"hi\"" == Err "expected an Int")
+
 
 -- | Decode a JSON float.
 float : Decoder Float
@@ -69,6 +81,11 @@ export let float =
                 Ok n
             _ ->
                 Err "expected a Float")
+
+test "float decoder" =
+    assert (decodeString float "3.14" == Ok 3.14)
+    assert (decodeString float "42" == Ok 42.0)
+    assert (decodeString float "true" == Err "expected a Float")
 
 
 -- | Decode a JSON boolean.
@@ -81,6 +98,11 @@ export let bool =
             _ ->
                 Err "expected a Bool")
 
+test "bool decoder" =
+    assert (decodeString bool "true" == Ok true)
+    assert (decodeString bool "false" == Ok false)
+    assert (decodeString bool "1" == Err "expected a Bool")
+
 
 -- | Decode a JSON null, succeeding with the given default value.
 null : a -> Decoder a
@@ -91,6 +113,11 @@ export let null default =
                 Ok default
             _ ->
                 Err "expected null")
+
+test "null decoder" =
+    assert (decodeString (null 0) "null" == Ok 0)
+    assert (decodeString (null "default") "null" == Ok "default")
+    assert (decodeString (null 0) "42" == Err "expected null")
 
 
 -- # Object decoders
@@ -110,6 +137,12 @@ export let field key decoder =
             _ ->
                 Err "expected an Object")
 
+test "field decoder" =
+    let json = """{"name": "Alice", "age": 30}"""
+    assert (decodeString (field "name" string) json == Ok "Alice")
+    assert (decodeString (field "age" int) json == Ok 30)
+    assert (decodeString (field "missing" string) json == Err "field 'missing' not found")
+
 
 -- | Decode a value at a nested path in a JSON object.
 at : [String] -> Decoder a -> Decoder a
@@ -119,6 +152,10 @@ export let rec at keys decoder =
             decoder
         [k|rest] ->
             field k (at rest decoder)
+
+test "at decoder" =
+    let json = """{"user": {"name": "Bob"}}"""
+    assert (decodeString (at ["user", "name"] string) json == Ok "Bob")
 
 
 -- # Array decoders
@@ -143,6 +180,12 @@ export let index i decoder =
                 nth i (arrayToList arr)
             _ ->
                 Err "expected an Array")
+
+test "index decoder" =
+    let json = "[10, 20, 30]"
+    assert (decodeString (index 0 int) json == Ok 10)
+    assert (decodeString (index 2 int) json == Ok 30)
+    assert (decodeString (index 5 int) json == Err "index 5 out of range")
 
 
 -- | Decode a JSON array, applying the given decoder to each element.
@@ -169,6 +212,12 @@ export let list decoder =
                 decodeAll (arrayToList arr)
             _ ->
                 Err "expected an Array")
+
+test "list decoder" =
+    assert (decodeString (list int) "[1, 2, 3]" == Ok [1, 2, 3])
+    assert (decodeString (list string) """["a", "b"]""" == Ok ["a", "b"])
+    assert (decodeString (list int) "[]" == Ok [])
+    assert (decodeString (list int) """[1, "x"]""" == Err "expected an Int")
 
 
 -- # Dict decoder
@@ -199,6 +248,13 @@ export let dict decoder =
             _ ->
                 Err "expected an Object")
 
+test "dict decoder" =
+    import Std:Result (withDefault)
+    let result = decodeString (dict int) """{"a": 1, "b": 2}"""
+    let m = withDefault Map.empty result
+    assert (Map.lookup "a" m == Just 1)
+    assert (Map.lookup "b" m == Just 2)
+
 
 -- # Combinators
 
@@ -212,6 +268,10 @@ export let map f decoder =
                 Ok (f val)
             Err e ->
                 Err e)
+
+test "map decoder" =
+    let decoder = map (\s -> s ++ "!") string
+    assert (decodeString decoder "\"hi\"" == Ok "hi!")
 
 
 -- | Combine two decoders.
@@ -228,74 +288,32 @@ export let map2 f da db =
                     Ok b ->
                         Ok (f a b))
 
-
--- | Combine three decoders.
-map3 : (a -> b -> c -> d) -> Decoder a -> Decoder b -> Decoder c -> Decoder d
-export let map3 f da db dc =
-    Decoder (\json ->
-        case run da json of
-            Err e ->
-                Err e
-            Ok a ->
-                case run db json of
-                    Err e ->
-                        Err e
-                    Ok b ->
-                        case run dc json of
-                            Err e ->
-                                Err e
-                            Ok c ->
-                                Ok (f a b c))
+test "map2 decoder" =
+    let json = """{"x": 1, "y": 2}"""
+    let decoder = map2 (\x y -> x + y) (field "x" int) (field "y" int)
+    assert (decodeString decoder json == Ok 3)
 
 
--- | Combine four decoders.
-map4 : (a -> b -> c -> d -> e) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e
-export let map4 f da db dc dd =
-    Decoder (\json ->
-        case run da json of
-            Err e ->
-                Err e
-            Ok a ->
-                case run db json of
-                    Err e ->
-                        Err e
-                    Ok b ->
-                        case run dc json of
-                            Err e ->
-                                Err e
-                            Ok c ->
-                                case run dd json of
-                                    Err e ->
-                                        Err e
-                                    Ok d ->
-                                        Ok (f a b c d))
+-- | Apply a decoder of a function to a decoder of a value. Enables
+-- decoding any number of fields by chaining with `decode` and `|>`:
+--
+--     decode Player
+--         |> with (field "name" string)
+--         |> with (field "score" int)
+with : Decoder a -> Decoder (a -> b) -> Decoder b
+export let with da df =
+    map2 (\f a -> f a) df da
 
-
--- | Combine five decoders.
-map5 : (a -> b -> c -> d -> e -> f) -> Decoder a -> Decoder b -> Decoder c -> Decoder d -> Decoder e -> Decoder f
-export let map5 f da db dc dd de =
-    Decoder (\json ->
-        case run da json of
-            Err ea ->
-                Err ea
-            Ok a ->
-                case run db json of
-                    Err eb ->
-                        Err eb
-                    Ok b ->
-                        case run dc json of
-                            Err ec ->
-                                Err ec
-                            Ok c ->
-                                case run dd json of
-                                    Err ed ->
-                                        Err ed
-                                    Ok d ->
-                                        case run de json of
-                                            Err ee ->
-                                                Err ee
-                                            Ok e ->
-                                                Ok (f a b c d e))
+test "with decoder" =
+    let json = """{"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}"""
+    let decoder =
+        decode (\a b c d e -> a + b + c + d + e)
+            |> with (field "a" int)
+            |> with (field "b" int)
+            |> with (field "c" int)
+            |> with (field "d" int)
+            |> with (field "e" int)
+    assert (decodeString decoder json == Ok 15)
 
 
 -- | Chain decoders — use the result of one decoder to pick the next.
@@ -307,6 +325,16 @@ export let andThen f decoder =
                 Err e
             Ok val ->
                 run (f val) json)
+
+test "andThen decoder" =
+    let json = """{"type": "greeting", "message": "hello"}"""
+    let decoder =
+        field "type" string |> andThen (\t ->
+            if t == "greeting" then
+                field "message" string
+            else
+                fail "unknown type")
+    assert (decodeString decoder json == Ok "hello")
 
 
 -- | Try a list of decoders, succeeding with the first one that works.
@@ -325,6 +353,11 @@ export let oneOf decoders =
     in
     Decoder (\json -> tryAll decoders json)
 
+test "oneOf decoder" =
+    let decoder = oneOf [int |> map toFloat, float]
+    assert (decodeString decoder "42" == Ok 42.0)
+    assert (decodeString decoder "3.14" == Ok 3.14)
+
 
 -- | Try a decoder, wrapping the result in Maybe.
 -- Note: swallows all errors. Prefer `nullable` or `optionalField` for
@@ -337,6 +370,10 @@ export let maybe decoder =
                 Ok (Just val)
             Err _ ->
                 Ok Nothing)
+
+test "maybe decoder" =
+    assert (decodeString (maybe int) "42" == Ok (Just 42))
+    assert (decodeString (maybe int) "\"hi\"" == Ok Nothing)
 
 
 -- | Decode a value that may be null. Succeeds with `Just val` if the
@@ -354,6 +391,11 @@ export let nullable decoder =
                         Ok (Just val)
                     Err e ->
                         Err e)
+
+test "nullable decoder" =
+    assert (decodeString (nullable int) "42" == Ok (Just 42))
+    assert (decodeString (nullable int) "null" == Ok Nothing)
+    assert (decodeString (nullable int) "\"hi\"" == Err "expected an Int")
 
 
 -- | Decode a field that may be absent from the object. Returns `Nothing`
@@ -376,113 +418,6 @@ export let optionalField key decoder =
             _ ->
                 Err "expected an Object")
 
-
--- | A decoder that always succeeds with the given value.
-succeed : a -> Decoder a
-export let succeed val =
-    Decoder (\_ -> Ok val)
-
-
--- | A decoder that always fails with the given message.
-fail : String -> Decoder a
-export let fail msg =
-    Decoder (\_ -> Err msg)
-
-
--- # Tests
-
-
-test "string decoder" =
-    assert (decodeString string "\"hello\"" == Ok "hello")
-    assert (decodeString string "42" == Err "expected a String")
-
-test "int decoder" =
-    assert (decodeString int "42" == Ok 42)
-    assert (decodeString int "3.14" == Err "expected an Int but got a Float")
-    assert (decodeString int "\"hi\"" == Err "expected an Int")
-
-test "float decoder" =
-    assert (decodeString float "3.14" == Ok 3.14)
-    assert (decodeString float "42" == Ok 42.0)
-    assert (decodeString float "true" == Err "expected a Float")
-
-test "bool decoder" =
-    assert (decodeString bool "true" == Ok true)
-    assert (decodeString bool "false" == Ok false)
-    assert (decodeString bool "1" == Err "expected a Bool")
-
-test "null decoder" =
-    assert (decodeString (null 0) "null" == Ok 0)
-    assert (decodeString (null "default") "null" == Ok "default")
-    assert (decodeString (null 0) "42" == Err "expected null")
-
-test "field decoder" =
-    let json = """{"name": "Alice", "age": 30}"""
-    assert (decodeString (field "name" string) json == Ok "Alice")
-    assert (decodeString (field "age" int) json == Ok 30)
-    assert (decodeString (field "missing" string) json == Err "field 'missing' not found")
-
-test "at decoder" =
-    let json = """{"user": {"name": "Bob"}}"""
-    assert (decodeString (at ["user", "name"] string) json == Ok "Bob")
-
-test "index decoder" =
-    let json = "[10, 20, 30]"
-    assert (decodeString (index 0 int) json == Ok 10)
-    assert (decodeString (index 2 int) json == Ok 30)
-    assert (decodeString (index 5 int) json == Err "index 5 out of range")
-
-test "list decoder" =
-    assert (decodeString (list int) "[1, 2, 3]" == Ok [1, 2, 3])
-    assert (decodeString (list string) """["a", "b"]""" == Ok ["a", "b"])
-    assert (decodeString (list int) "[]" == Ok [])
-    assert (decodeString (list int) """[1, "x"]""" == Err "expected an Int")
-
-test "dict decoder" =
-    import Std:Result (withDefault)
-    let result = decodeString (dict int) """{"a": 1, "b": 2}"""
-    let m = withDefault Map.empty result
-    assert (Map.lookup "a" m == Just 1)
-    assert (Map.lookup "b" m == Just 2)
-
-test "map decoder" =
-    let decoder = map (\s -> s ++ "!") string
-    assert (decodeString decoder "\"hi\"" == Ok "hi!")
-
-test "map2 decoder" =
-    let json = """{"x": 1, "y": 2}"""
-    let decoder = map2 (\x y -> x + y) (field "x" int) (field "y" int)
-    assert (decodeString decoder json == Ok 3)
-
-test "map3 decoder" =
-    let json = """{"a": 1, "b": 2, "c": 3}"""
-    let decoder = map3 (\a b c -> a + b + c) (field "a" int) (field "b" int) (field "c" int)
-    assert (decodeString decoder json == Ok 6)
-
-test "andThen decoder" =
-    let json = """{"type": "greeting", "message": "hello"}"""
-    let decoder =
-        field "type" string |> andThen (\t ->
-            if t == "greeting" then
-                field "message" string
-            else
-                fail "unknown type")
-    assert (decodeString decoder json == Ok "hello")
-
-test "oneOf decoder" =
-    let decoder = oneOf [int |> map toFloat, float]
-    assert (decodeString decoder "42" == Ok 42.0)
-    assert (decodeString decoder "3.14" == Ok 3.14)
-
-test "maybe decoder" =
-    assert (decodeString (maybe int) "42" == Ok (Just 42))
-    assert (decodeString (maybe int) "\"hi\"" == Ok Nothing)
-
-test "nullable decoder" =
-    assert (decodeString (nullable int) "42" == Ok (Just 42))
-    assert (decodeString (nullable int) "null" == Ok Nothing)
-    assert (decodeString (nullable int) "\"hi\"" == Err "expected an Int")
-
 test "optionalField decoder" =
     let json1 = """{"name": "Alice", "age": 30}"""
     let json2 = """{"name": "Bob"}"""
@@ -492,6 +427,28 @@ test "optionalField decoder" =
     assert (decodeString (optionalField "missing" int) json1 == Ok Nothing)
     assert (decodeString (optionalField "age" int) json3 == Err "in field 'age': expected an Int")
 
+
+-- | A decoder that always succeeds with the given value.
+succeed : a -> Decoder a
+export let succeed val =
+    Decoder (\_ -> Ok val)
+
+
+-- | Start a decoding pipeline. Alias for `succeed`, reads naturally
+-- when chained with `with`:
+--
+--     decode Player
+--         |> with (field "name" string)
+--         |> with (field "score" int)
+decode : a -> Decoder a
+export let decode = succeed
+
+
+-- | A decoder that always fails with the given message.
+fail : String -> Decoder a
+export let fail msg =
+    Decoder (\_ -> Err msg)
+
 test "succeed and fail" =
     assert (decodeString (succeed 42) "null" == Ok 42)
     assert (decodeString (fail "nope") "null" == Err "nope")
@@ -500,6 +457,3 @@ test "nested object decoding with map2" =
     let json = """{"name": "Alice", "scores": [95, 87, 92]}"""
     let decoder = map2 (\name scores -> (name, scores)) (field "name" string) (field "scores" (list int))
     assert (decodeString decoder json == Ok ("Alice", [95, 87, 92]))
-
-test "decodeString with invalid JSON" =
-    assert (decodeString string "not json" == Err "invalid character 'o' in literal null (expecting 'u')")
