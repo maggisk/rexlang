@@ -25,7 +25,7 @@ test "chained || short-circuits at first true" =
     assert ((false || true || loop ()) == true)
 
 test "practical: validate before compute" =
-    import std:List (length)
+    import Std:List (length)
     let isValid xs = length xs > 0 && length xs < 10
     assert (isValid [1, 2, 3])
     assert (not (isValid []))

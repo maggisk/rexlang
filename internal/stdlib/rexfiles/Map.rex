@@ -308,7 +308,7 @@ export let values m =
     foldr (\k v acc -> v :: acc) [] m
 
 test "keys and values" =
-    import std:List (length)
+    import Std:List (length)
     let m = fromList [(3, 30), (1, 10), (2, 20)]
     assert (length (keys m) == 3)
     assert (length (values m) == 3)

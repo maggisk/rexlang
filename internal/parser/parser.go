@@ -1047,6 +1047,7 @@ func (p *parser) parseImport() (ast.Expr, error) {
 	}
 	var module string
 	if p.peek().Kind == lexer.TokColon {
+		// Namespaced import: Std:List
 		p.advance()
 		rest, err := p.expectIdent()
 		if err != nil {
@@ -1054,7 +1055,24 @@ func (p *parser) parseImport() (ast.Expr, error) {
 		}
 		module = nsOrName + ":" + rest
 	} else {
+		// User module — consume dot-separated path: Lib.Helpers
 		module = nsOrName
+		for p.peek().Kind == lexer.TokDot {
+			// Check if next token after dot is an uppercase ident (module path)
+			if p.pos+1 < len(p.tokens) {
+				next := p.tokens[p.pos+1]
+				if next.Kind == lexer.TokIdent && isUppercase(next.Value.(string)) {
+					p.advance() // consume '.'
+					part, err := p.expectIdent()
+					if err != nil {
+						return nil, err
+					}
+					module = module + "." + part
+					continue
+				}
+			}
+			break
+		}
 	}
 	if p.peek().Kind == lexer.TokAs {
 		p.advance()

@@ -1,6 +1,6 @@
 -- Maybe module examples
 
-import std:Maybe (Nothing, Just, isNothing, fromMaybe, map)
+import Std:Maybe (Nothing, Just, isNothing, fromMaybe, map)
 
 
 let double x = x * 2

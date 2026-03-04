@@ -3,7 +3,7 @@ export Nothing, Just, isNothing, isSome, fromMaybe, map, andThen, withDefault, f
 
 type Maybe a = Nothing | Just a
 
-import std:Result (Ok, Err)
+import Std:Result (Ok, Err)
 
 
 -- # Query

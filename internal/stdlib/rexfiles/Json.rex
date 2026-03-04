@@ -1,4 +1,4 @@
-import std:String (replace, toString)
+import Std:String (replace, toString)
 
 
 -- # Types
@@ -192,7 +192,7 @@ test "encodeArr and encodeObj" =
     assert ([("a", JNum 1.0), ("b", JNull)] |> encodeObj |> stringify == "{\"a\": 1.0, \"b\": null}")
 
 test "parse valid JSON" =
-    import std:Result (isOk, isErr)
+    import Std:Result (isOk, isErr)
     assert ("null" |> parse |> isOk)
     assert ("true" |> parse |> isOk)
     assert ("42" |> parse |> isOk)
@@ -203,7 +203,7 @@ test "parse valid JSON" =
     assert ("{\"key\": \"value\"}" |> parse |> isOk)
 
 test "parse invalid JSON" =
-    import std:Result (isErr)
+    import Std:Result (isErr)
     assert ("invalid" |> parse |> isErr)
     assert ("{unclosed" |> parse |> isErr)
 

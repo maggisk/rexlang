@@ -1,6 +1,6 @@
 -- Math module examples
 
-import std:Math (clamp, pi, degrees)
+import Std:Math (clamp, pi, degrees)
 
 let area r = pi * r * r
 

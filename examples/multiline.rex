@@ -1,4 +1,4 @@
-import std:String (length, dedent)
+import Std:String (length, dedent)
 
 
 -- Plain multi-line string (first newline after """ is stripped)

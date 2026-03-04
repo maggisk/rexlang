@@ -1,6 +1,6 @@
 -- Parallel map: apply a function to list elements concurrently.
 
-import std:Parallel (pmap, pmapN, numCPU)
+import Std:Parallel (pmap, pmapN, numCPU)
 
 let square x = x * x
 

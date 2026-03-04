@@ -1,6 +1,6 @@
 -- Float arithmetic
 
-import std:Math (sqrt, toFloat)
+import Std:Math (sqrt, toFloat)
 
 
 let pi = 3.14159

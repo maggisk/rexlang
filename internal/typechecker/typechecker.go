@@ -3,6 +3,8 @@ package typechecker
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -11,6 +13,13 @@ import (
 	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/types"
 )
+
+// resolveUserModulePath converts a dotted module name to a file path under srcRoot.
+// "Utils" → srcRoot/Utils.rex, "Lib.Helpers" → srcRoot/Lib/Helpers.rex
+func resolveUserModulePath(root, moduleName string) string {
+	path := strings.ReplaceAll(moduleName, ".", string(filepath.Separator))
+	return filepath.Join(root, path+".rex")
+}
 
 // ---------------------------------------------------------------------------
 // TypeEnv — maps names to Scheme or metadata objects
@@ -1626,7 +1635,60 @@ type ModuleResult struct {
 var (
 	moduleCache   = map[string]*ModuleResult{}
 	moduleCacheMu sync.Mutex
+
+	srcRoot   string // absolute path to src/ directory (empty if not set)
+	srcRootMu sync.Mutex
+
+	importStack   []string // for circular import detection
+	importStackMu sync.Mutex
 )
+
+// SetSrcRoot sets the src/ directory root for user module resolution.
+func SetSrcRoot(path string) {
+	srcRootMu.Lock()
+	srcRoot = path
+	srcRootMu.Unlock()
+}
+
+func getSrcRoot() string {
+	srcRootMu.Lock()
+	defer srcRootMu.Unlock()
+	return srcRoot
+}
+
+func pushImportStack(name string) {
+	importStackMu.Lock()
+	importStack = append(importStack, name)
+	importStackMu.Unlock()
+}
+
+func popImportStack() {
+	importStackMu.Lock()
+	importStack = importStack[:len(importStack)-1]
+	importStackMu.Unlock()
+}
+
+func isInImportStack(name string) bool {
+	importStackMu.Lock()
+	defer importStackMu.Unlock()
+	for _, s := range importStack {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
+func formatImportCycle(name string) string {
+	importStackMu.Lock()
+	defer importStackMu.Unlock()
+	var parts []string
+	for _, s := range importStack {
+		parts = append(parts, s)
+	}
+	parts = append(parts, name)
+	return strings.Join(parts, " -> ")
+}
 
 // PreregisterTypes pre-registers all TypeDecl names so mutually recursive types can resolve each other.
 func PreregisterTypes(exprs []ast.Expr, typeDefs map[string]types.Type) map[string]types.Type {
@@ -1649,7 +1711,7 @@ func PreregisterTypes(exprs []ast.Expr, typeDefs map[string]types.Type) map[stri
 	return result
 }
 
-// CheckModule type-checks a stdlib module and caches the result.
+// CheckModule type-checks a module (stdlib or user) and caches the result.
 func CheckModule(moduleName string) (*ModuleResult, error) {
 	moduleCacheMu.Lock()
 	if r, ok := moduleCache[moduleName]; ok {
@@ -1658,16 +1720,41 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 	}
 	moduleCacheMu.Unlock()
 
-	var name string
-	if len(moduleName) > 4 && moduleName[:4] == "std:" {
-		name = moduleName[4:]
-	} else {
-		return nil, &types.TypeError{Msg: fmt.Sprintf("bare module name '%s': use 'std:%s' for stdlib", moduleName, moduleName)}
+	// Circular import detection
+	if isInImportStack(moduleName) {
+		return nil, &types.TypeError{Msg: fmt.Sprintf("circular import: %s", formatImportCycle(moduleName))}
 	}
+	pushImportStack(moduleName)
+	defer popImportStack()
 
-	src, err := stdlib.Source(name)
-	if err != nil {
-		return nil, &types.TypeError{Msg: "unknown module: " + moduleName}
+	var src string
+	var extraEnv TypeEnv
+
+	if strings.Contains(moduleName, ":") {
+		// Namespaced module (Std:List, etc.)
+		parts := strings.SplitN(moduleName, ":", 2)
+		namespace, name := parts[0], parts[1]
+		if namespace != "Std" {
+			return nil, &types.TypeError{Msg: fmt.Sprintf("unknown namespace '%s' in '%s'", namespace, moduleName)}
+		}
+		var err error
+		src, err = stdlib.Source(name)
+		if err != nil {
+			return nil, &types.TypeError{Msg: "unknown module: " + moduleName}
+		}
+		extraEnv = typeEnvForModule(name)
+	} else {
+		// User module — resolve from src/
+		root := getSrcRoot()
+		if root == "" {
+			return nil, &types.TypeError{Msg: fmt.Sprintf("user module import '%s' requires a src/ directory", moduleName)}
+		}
+		modPath := resolveUserModulePath(root, moduleName)
+		data, err := os.ReadFile(modPath)
+		if err != nil {
+			return nil, &types.TypeError{Msg: fmt.Sprintf("module not found: %s (looked for %s)", moduleName, modPath)}
+		}
+		src = string(data)
 	}
 
 	exprs, err := parser.Parse(src)
@@ -1679,10 +1766,11 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	extraEnv := typeEnvForModule(name)
 	env := prelude.Env.clone()
-	for k, v := range extraEnv {
-		env[k] = v
+	if extraEnv != nil {
+		for k, v := range extraEnv {
+			env[k] = v
+		}
 	}
 	typeDefs := PreregisterTypes(exprs, copyTypeDefs(prelude.TypeDefs))
 	exports := map[string]bool{}

@@ -1,4 +1,4 @@
-import std:IO (print)
+import Std:IO (print)
 
 -- I/O builtins: print and readLine
 

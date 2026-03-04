@@ -1,6 +1,6 @@
 export length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, charAt, substring, indexOf, replace, take, drop, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, reverse, toList, fromList, trimLeft, trimRight
 
-import std:List (map, filter, foldl)
+import Std:List (map, filter, foldl)
 
 
 -- # Query

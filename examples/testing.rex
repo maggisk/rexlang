@@ -18,7 +18,7 @@ test "addition" =
     assert (add 0 0 == 0)
 
 test "list operations" =
-    import std:List (length, map, foldl)
+    import Std:List (length, map, foldl)
     let xs = [1, 2, 3]
     assert (length xs == 3)
     assert (xs |> map double |> length == 3)

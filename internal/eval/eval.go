@@ -3,6 +3,7 @@ package eval
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -778,7 +779,65 @@ type moduleResult struct {
 var (
 	evalModuleCache   = map[string]*moduleResult{}
 	evalModuleCacheMu sync.Mutex
+
+	evalSrcRoot   string
+	evalSrcRootMu sync.Mutex
+
+	evalImportStack   []string
+	evalImportStackMu sync.Mutex
 )
+
+// SetSrcRoot sets the src/ directory root for user module resolution.
+func SetSrcRoot(path string) {
+	evalSrcRootMu.Lock()
+	evalSrcRoot = path
+	evalSrcRootMu.Unlock()
+}
+
+func getEvalSrcRoot() string {
+	evalSrcRootMu.Lock()
+	defer evalSrcRootMu.Unlock()
+	return evalSrcRoot
+}
+
+func evalPushImport(name string) {
+	evalImportStackMu.Lock()
+	evalImportStack = append(evalImportStack, name)
+	evalImportStackMu.Unlock()
+}
+
+func evalPopImport() {
+	evalImportStackMu.Lock()
+	evalImportStack = evalImportStack[:len(evalImportStack)-1]
+	evalImportStackMu.Unlock()
+}
+
+func evalIsInImportStack(name string) bool {
+	evalImportStackMu.Lock()
+	defer evalImportStackMu.Unlock()
+	for _, s := range evalImportStack {
+		if s == name {
+			return true
+		}
+	}
+	return false
+}
+
+func evalFormatImportCycle(name string) string {
+	evalImportStackMu.Lock()
+	defer evalImportStackMu.Unlock()
+	var parts []string
+	for _, s := range evalImportStack {
+		parts = append(parts, s)
+	}
+	parts = append(parts, name)
+	return strings.Join(parts, " -> ")
+}
+
+func resolveUserModulePath(root, moduleName string) string {
+	path := strings.ReplaceAll(moduleName, ".", string(filepath.Separator))
+	return filepath.Join(root, path+".rex")
+}
 
 func loadModule(moduleName string, programArgs []string) (*moduleResult, error) {
 	evalModuleCacheMu.Lock()
@@ -788,17 +847,43 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 	}
 	evalModuleCacheMu.Unlock()
 
-	var name string
-	if len(moduleName) > 4 && moduleName[:4] == "std:" {
-		name = moduleName[4:]
+	// Circular import detection
+	if evalIsInImportStack(moduleName) {
+		return nil, runtimeErr("circular import: %s", evalFormatImportCycle(moduleName))
+	}
+	evalPushImport(moduleName)
+	defer evalPopImport()
+
+	var src string
+	var moduleBuiltins map[string]Value
+
+	if strings.Contains(moduleName, ":") {
+		// Namespaced module (Std:List, etc.)
+		parts := strings.SplitN(moduleName, ":", 2)
+		namespace, name := parts[0], parts[1]
+		if namespace != "Std" {
+			return nil, runtimeErr("unknown namespace '%s' in '%s'", namespace, moduleName)
+		}
+		var err error
+		src, err = stdlib.Source(name)
+		if err != nil {
+			return nil, runtimeErr("unknown module: %s", moduleName)
+		}
+		moduleBuiltins = BuiltinsForModule(name, programArgs)
 	} else {
-		return nil, runtimeErr("bare module name '%s': use 'std:%s' for stdlib", moduleName, moduleName)
+		// User module — resolve from src/
+		root := getEvalSrcRoot()
+		if root == "" {
+			return nil, runtimeErr("user module import '%s' requires a src/ directory", moduleName)
+		}
+		modPath := resolveUserModulePath(root, moduleName)
+		data, err := os.ReadFile(modPath)
+		if err != nil {
+			return nil, runtimeErr("module not found: %s (looked for %s)", moduleName, modPath)
+		}
+		src = string(data)
 	}
 
-	src, err := stdlib.Source(name)
-	if err != nil {
-		return nil, runtimeErr("unknown module: %s", moduleName)
-	}
 	exprs, parseErr := parser.Parse(src)
 	if parseErr != nil {
 		return nil, parseErr
@@ -808,8 +893,8 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 		return nil, err
 	}
 	env := prelude.Clone()
-	// Inject module-specific builtins
-	for k, v := range BuiltinsForModule(name, programArgs) {
+	// Inject module-specific builtins (only for stdlib modules)
+	for k, v := range moduleBuiltins {
 		env[k] = v
 	}
 	exports := map[string]bool{}
@@ -1245,7 +1330,7 @@ func LoadPreludeForREPL(programArgs []string) (Env, error) {
 	return loadPreludeEval(programArgs)
 }
 
-// ResetCaches clears all module caches.
+// ResetCaches clears all module caches and resets srcRoot.
 func ResetCaches() {
 	evalModuleCacheMu.Lock()
 	evalModuleCache = map[string]*moduleResult{}
@@ -1253,4 +1338,7 @@ func ResetCaches() {
 	preludeEvalMu.Lock()
 	preludeEvalCache = nil
 	preludeEvalMu.Unlock()
+	evalSrcRootMu.Lock()
+	evalSrcRoot = ""
+	evalSrcRootMu.Unlock()
 }

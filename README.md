@@ -171,10 +171,10 @@ Welcome to RexLang.
 
 Triple-quoted strings (`"""..."""`) can span multiple lines. The first newline after the opening `"""` is stripped (so content starts on the next line). Escape sequences and `${expr}` interpolation work the same as regular strings. A lone `"` or `""` inside the string is fine — only `"""` closes it.
 
-Use `dedent` from `std:String` to strip common leading whitespace:
+Use `dedent` from `Std:String` to strip common leading whitespace:
 
 ```
-import std:String (dedent)
+import Std:String (dedent)
 
 let html = dedent """
     <div>
@@ -220,19 +220,28 @@ The prelude provides `Eq`, `Ord`, `Show`, and `Ordering` with instances for `Int
 ### Imports and modules
 
 ```
-import std:List (map, filter, foldl)
-import std:Map as M
+-- Standard library (Std: namespace)
+import Std:List (map, filter, foldl)
+import Std:Map as M
 
 let m = M.fromList [("a", 1), ("b", 2)]
 M.lookup "a" m    -- Just 1
+
+-- User modules (resolved from src/ directory)
+import Utils (double, greet)
+import Lib.Helpers as H
+
+H.sumDoubles [1, 2, 3]    -- 12
 ```
+
+User modules use absolute paths from a `src/` directory in the project root. Dots map to directories: `import Lib.Helpers` resolves to `src/Lib/Helpers.rex`. The entry file must be inside `src/` for user module imports to work. Circular imports produce a clear error.
 
 ### Entry point
 
 Programs run with `./rex file.rex` need an `export let main` that takes command-line args and returns an exit code:
 
 ```
-import std:IO (println)
+import Std:IO (println)
 
 export let main args =
     let _ = println "Hello, world!"
@@ -266,7 +275,7 @@ Tests are parsed and type-checked in normal mode but only executed with `--test`
 IO functions return `Result` instead of raising; `getEnv` returns `Maybe`:
 
 ```
-import std:Result (withDefault)
+import Std:Result (withDefault)
 
 let contents = withDefault "" (readFile "data.txt")
 ```
@@ -302,10 +311,10 @@ What the type system catches today:
 
 What can still fail at runtime:
 
-- **Division by zero** — `x / 0` (value-dependent, inherently runtime). Use `try` from `std:Result` to recover:
+- **Division by zero** — `x / 0` (value-dependent, inherently runtime). Use `try` from `Std:Result` to recover:
 
 ```
-import std:Result (try, Ok, Err, DivisionByZero, ModuloByZero)
+import Std:Result (try, Ok, Err, DivisionByZero, ModuloByZero)
 
 case try (\_ -> 10 / 0) of
     Ok n ->
@@ -324,16 +333,16 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 
 | Module | Contents |
 | --- | --- |
-| `std:List` | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
-| `std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
-| `std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`, `toMaybe`, `fromMaybe`, `try` (catch div/mod by zero), `RuntimeError` ADT |
-| `std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT |
-| `std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `take`, `drop`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`, `dedent` |
-| `std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
-| `std:IO` | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`) |
-| `std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
-| `std:Process` | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages |
-| `std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
+| `Std:List` | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
+| `Std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
+| `Std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`, `toMaybe`, `fromMaybe`, `try` (catch div/mod by zero), `RuntimeError` ADT |
+| `Std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT |
+| `Std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `take`, `drop`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`, `dedent` |
+| `Std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
+| `Std:IO` | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`) |
+| `Std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
+| `Std:Process` | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages |
+| `Std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
 
 ## Examples
 
@@ -349,7 +358,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `examples/tuple.rex` | Tuples and destructuring |
 | `examples/mutual_recursion.rex` | Mutual recursion with `let rec … and` |
 | `examples/traits.rex` | Trait declarations and implementations |
-| `examples/map.rex` | `std:Map` sorted map |
+| `examples/map.rex` | `Std:Map` sorted map |
 | `examples/interpolation.rex` | String interpolation with `${expr}` |
 | `examples/import.rex` | Module imports (selective and qualified) |
 | `examples/maybe.rex` | `Maybe` type from Prelude |
@@ -361,13 +370,14 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `examples/annotations.rex` | Optional type annotations |
 | `examples/type_alias.rex` | Type aliases: simple, parametric, function types |
 | `examples/records.rex` | Records: creation, access, update, nested dot-paths |
-| `examples/actors.rex` | Actor-model concurrency with `std:Process` |
-| `examples/parallel.rex` | Parallel map with `std:Parallel` |
+| `examples/actors.rex` | Actor-model concurrency with `Std:Process` |
+| `examples/parallel.rex` | Parallel map with `Std:Parallel` |
 | `examples/multiline.rex` | Multi-line strings with `"""` |
 | `examples/number_literals.rex` | Hex, octal, binary literals and underscore separators |
 | `examples/let_block.rex` | Multi-binding let blocks with `and` |
 | `examples/forward_ref.rex` | Forward references between top-level bindings |
 | `examples/testing.rex` | Built-in test framework |
+| `examples/user_modules/` | User module imports with `src/` directory |
 
 ## Running tests
 
@@ -389,12 +399,12 @@ go test ./...
 - [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - [x] Multi-binding let — `let a = 1 and b = 2 in expr`
-- [ ] User modules — import your own `.rex` files
+- [x] User modules — import your own `.rex` files from `src/` directory
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
 
 ### Stdlib
 
-- [x] JSON — `std:Json` with ADT, `parse`/`stringify`, encode/decode helpers
+- [x] JSON — `Std:Json` with ADT, `parse`/`stringify`, encode/decode helpers
 - [ ] JSON decoder combinators — Elm-style `field`, `map2`, `oneOf` for type-safe extraction
 - [ ] Date/Time
 - [ ] Random numbers
@@ -420,4 +430,4 @@ Ideas worth keeping in mind but not yet committed to. May never happen.
 - **Extensible records (row polymorphism)** — functions over "any record with field `x`". Elm has a restricted form (read-only narrowing, no field addition/deletion); PureScript has full row polymorphism. Elm's restricted version would compile to WasmGC via monomorphization (concrete record type known at each call site), so the compilation target isn't a blocker. The real cost is type system complexity — error messages get harder and the inference machinery grows. Traits already cover many of the same use cases. Worth revisiting only if plain records prove genuinely limiting in practice.
 - **Hot module reloading** — WasmGC separates code from the GC-managed heap, which makes this more tractable than classic linear-memory Wasm. Live GC references are typed and runtime-managed, so a host could in theory transfer them from an old module instance to a new one. The open questions are type layout compatibility across versions and the lack of standardized dynamic linking in the Wasm spec today. Needs more research before committing.
 - **Implicit mutual recursion** — currently, mutually recursive functions require explicit `let rec … and …`. Elm and Haskell treat all top-level bindings as mutually recursive by default. We could auto-detect cycles in the dependency graph and wrap them in implicit `LetRec` groups instead of erroring. Trade-off: simpler for users, but makes accidental cycles (typos, shadowing bugs) harder to catch.
-- **Concurrency / actors** — already implemented via `std:Process` with Go goroutines. May swap internals for real WASI threads when the spec matures.
+- **Concurrency / actors** — already implemented via `Std:Process` with Go goroutines. May swap internals for real WASI threads when the spec matures.

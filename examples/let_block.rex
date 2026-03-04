@@ -1,6 +1,6 @@
 -- Multi-binding let blocks using `and`
 
-import std:List (map, foldl)
+import Std:List (map, foldl)
 
 -- Multiple simple bindings
 let result =

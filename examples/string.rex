@@ -1,6 +1,6 @@
 -- String module examples
 
-import std:String (toUpper, split, join)
+import Std:String (toUpper, split, join)
 
 test "split and join" =
     assert ("hello world rex" |> split " " |> join "-" == "hello-world-rex")

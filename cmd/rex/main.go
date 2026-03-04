@@ -66,7 +66,36 @@ func main() {
 	runFile(args[0], args[1:])
 }
 
+// setupSrcRoot detects a src/ directory in cwd, validates the entry file if needed,
+// and sets the srcRoot for both typechecker and eval.
+func setupSrcRoot(entryFile string) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	srcDir := filepath.Join(cwd, "src")
+	info, err := os.Stat(srcDir)
+	if err != nil || !info.IsDir() {
+		// No src/ directory — user module imports will error at load time
+		return
+	}
+	absEntry, err := filepath.Abs(entryFile)
+	if err != nil {
+		return
+	}
+	absSrc, _ := filepath.Abs(srcDir)
+	if !strings.HasPrefix(absEntry, absSrc+string(filepath.Separator)) {
+		// Entry file is NOT under src/ — don't set srcRoot.
+		// User module imports will error at load time.
+		return
+	}
+	typechecker.SetSrcRoot(absSrc)
+	eval.SetSrcRoot(absSrc)
+}
+
 func runFile(path string, programArgs []string) {
+	setupSrcRoot(path)
+
 	source, err := os.ReadFile(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
@@ -131,6 +160,8 @@ func runFile(path string, programArgs []string) {
 }
 
 func runTests(path string, only string) (int, []eval.FailedTest) {
+	setupSrcRoot(path)
+
 	source, err := os.ReadFile(path)
 	if err != nil {
 		printTestErr(path, "error", err)

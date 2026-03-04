@@ -5,8 +5,8 @@
 --   Get (Pid Int) — request-reply, sends current count to the caller
 --   Stop         — graceful shutdown
 
-import std:IO (println)
-import std:String (toString)
+import Std:IO (println)
+import Std:String (toString)
 
 type Msg = Inc | Get (Pid Int) | Stop
 

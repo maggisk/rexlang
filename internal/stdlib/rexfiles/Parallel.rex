@@ -1,6 +1,6 @@
 export numCPU
 
-import std:List (map, length, take, drop, concat)
+import Std:List (map, length, take, drop, concat)
 
 
 -- | Apply a function to each element in parallel (one process per element).
