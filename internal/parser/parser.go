@@ -21,9 +21,10 @@ func (e *ParseError) Error() string {
 }
 
 type parser struct {
-	tokens     []lexer.Token
-	pos        int
-	caseArmCol int // offside rule column; -1 = unrestricted
+	tokens         []lexer.Token
+	pos            int
+	caseArmCol     int  // offside rule column; -1 = unrestricted
+	trailingLambda bool // when true, parseFun bounds body by indentation
 }
 
 func isUppercase(s string) bool {
@@ -295,6 +296,19 @@ func (p *parser) parseApp() (ast.Expr, error) {
 			return nil, err
 		}
 		f = ast.App{Func: f, Arg: arg}
+	}
+	// Trailing lambda: unparenthesized \ as last argument
+	if p.peek().Kind == lexer.TokBackslash {
+		if p.caseArmCol >= 0 && p.peek().Col <= p.caseArmCol {
+			return f, nil
+		}
+		p.trailingLambda = true
+		lambda, err := p.parseFun()
+		p.trailingLambda = false
+		if err != nil {
+			return nil, err
+		}
+		f = ast.App{Func: f, Arg: lambda}
 	}
 	return f, nil
 }
@@ -704,7 +718,17 @@ func (p *parser) parseFun() (ast.Expr, error) {
 			Col:  arrow.Col,
 		}
 	}
+	// Trailing lambda: bound body by indentation so it terminates
+	// when the next token drops to/below the body's start column.
+	var saved int
+	if p.trailingLambda {
+		saved = p.caseArmCol
+		p.caseArmCol = p.peek().Col - 1
+	}
 	body, err := p.parseExpr()
+	if p.trailingLambda {
+		p.caseArmCol = saved
+	}
 	if err != nil {
 		return nil, err
 	}

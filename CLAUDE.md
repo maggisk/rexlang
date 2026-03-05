@@ -78,6 +78,7 @@ gofmt -w .
 - **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }` or positional: `Person "Alice" 30`. The type name is a positional constructor function (`VRecordCtorFn`) that supports currying and can be passed as a higher-order function (e.g., `map2 Person ...`). Field access: `p.name` (chained: `p.addr.city`; lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Update: `{ alice | name = "Bob" }` — creates a new record with changed fields. Nested dot-path updates: `{ model | user.name = "Alice" }` — recursively clones and updates nested records. Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`). Module imports propagate `__record_fields__` and `TypeDefs` via `ModuleResult`, so record types defined in imported modules can be constructed, accessed, and updated by the importer.
 - **Multi-binding let**: `let a = 1 and b = 2 in a + b` — the `and` keyword chains multiple bindings in a single `let` block. Parser-only — desugars to nested `Let` AST nodes. Works for both `let` and `let rec` (which already used `and` for mutual recursion). Old chained `let...in...let...in` syntax also works.
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
+- **Trailing lambda**: when `\` appears after a function application (not inside `isAtomStart`), `parseApp()` treats it as the last argument. Sets `caseArmCol` to the function head's column so the lambda body terminates when indentation drops. Enables `Decoder \json -> ...` and `spawn \_ -> ...` without wrapping parens. One-line lambdas still use parens.
 - **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded with `Eq`, `Ord`, `Show`. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
 - **String interpolation**: `"hello ${expr}"` — lexer emits `TokInterp` with `[]InterpPart`; parser produces `ast.StringInterp{Parts}`; eval dispatches `Show` trait for conversion. `\$` escapes literal `$`. Nested interpolation (`"${f "inner ${x}"}"`) supported via mutual recursion in lexer (`skipInterp`/`skipString`).
 - **Multi-line strings**: `"""..."""` triple-quoted strings. Lexer-only feature — produces same `TokString`/`TokInterp` tokens. First newline after opening `"""` stripped. Lone `"` or `""` inside allowed; only `"""` closes.
@@ -113,6 +114,24 @@ if n == 0 then
 else
     case lst of
         ...
+```
+
+Trailing lambda: when a multi-line lambda is the last (or sole) argument to a function, write it without parens — the parser bounds the body by indentation (same `caseArmCol` mechanism as `case`/`test`). One-line lambdas keep parens.
+
+```rex
+-- good: trailing lambda (multi-line, last argument)
+Decoder \json ->
+    case json of
+        JStr s ->
+            Ok s
+        _ ->
+            Err (DecodeError { path = [], message = "expected a String", value = json })
+
+-- good: one-line lambda keeps parens
+map (\x -> x + 1) list
+
+-- good: non-last argument keeps parens
+map (\x -> f x) list
 ```
 
 One blank line between top-level definitions; two blank lines between sections. Stdlib modules use `-- # Section` headers and `-- | doc` comments above each function. Every stdlib function should have its tests immediately after its definition — not grouped at the bottom of the file.

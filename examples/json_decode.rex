@@ -90,11 +90,11 @@ test "andThen for tagged types" =
     import Std:Json.Decode (andThen, fail)
     let json = """{"type": "point", "x": 10, "y": 20}"""
     let decoder =
-        field "type" string |> andThen (\t ->
+        field "type" string |> andThen \t ->
             if t == "point" then
                 map2 Point (field "x" int) (field "y" int)
             else
-                fail "unknown type")
+                fail "unknown type"
     assert (decodeString decoder json == Ok (Point { x = 10, y = 20 }))
 
 

@@ -8,12 +8,11 @@ import Std:List (map, length, take, drop, concat)
 pmap : (a -> b) -> [a] -> [b]
 export let pmap f lst =
     let pids = map (\x ->
-        spawn (\_ ->
+        spawn \_ ->
             let result = f x
             and caller = receive ()
             in
             send caller result
-        )
     ) lst
     in
     pids |> map (\pid -> call pid (\me -> me))
@@ -37,12 +36,11 @@ export let pmapN n f lst =
                 take size l :: chunks (drop size l)
     in
     let pids = map (\chunk ->
-        spawn (\_ ->
+        spawn \_ ->
             let result = map f chunk
             and caller = receive ()
             in
             send caller result
-        )
     ) (chunks lst)
     in
     pids |> map (\pid -> call pid (\me -> me)) |> concat

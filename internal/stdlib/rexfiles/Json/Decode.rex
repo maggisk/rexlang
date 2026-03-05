@@ -56,12 +56,12 @@ test "decodeString with invalid JSON" =
 -- | Decode a JSON string.
 string : Decoder String
 export let string =
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JStr s ->
                 Ok s
             _ ->
-                Err (DecodeError { path = [], message = "expected a String", value = json }))
+                Err (DecodeError { path = [], message = "expected a String", value = json })
 
 test "string decoder" =
     assert (decodeString string "\"hello\"" == Ok "hello")
@@ -71,7 +71,7 @@ test "string decoder" =
 -- | Decode a JSON integer.
 int : Decoder Int
 export let int =
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JNum n ->
                 if toFloat (round n) == n then
@@ -79,7 +79,7 @@ export let int =
                 else
                     Err (DecodeError { path = [], message = "expected an Int but got a Float", value = json })
             _ ->
-                Err (DecodeError { path = [], message = "expected an Int", value = json }))
+                Err (DecodeError { path = [], message = "expected an Int", value = json })
 
 test "int decoder" =
     assert (decodeString int "42" == Ok 42)
@@ -90,12 +90,12 @@ test "int decoder" =
 -- | Decode a JSON float.
 float : Decoder Float
 export let float =
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JNum n ->
                 Ok n
             _ ->
-                Err (DecodeError { path = [], message = "expected a Float", value = json }))
+                Err (DecodeError { path = [], message = "expected a Float", value = json })
 
 test "float decoder" =
     assert (decodeString float "3.14" == Ok 3.14)
@@ -106,12 +106,12 @@ test "float decoder" =
 -- | Decode a JSON boolean.
 bool : Decoder Bool
 export let bool =
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JBool b ->
                 Ok b
             _ ->
-                Err (DecodeError { path = [], message = "expected a Bool", value = json }))
+                Err (DecodeError { path = [], message = "expected a Bool", value = json })
 
 test "bool decoder" =
     assert (decodeString bool "true" == Ok true)
@@ -122,12 +122,12 @@ test "bool decoder" =
 -- | Decode a JSON null, succeeding with the given default value.
 null : a -> Decoder a
 export let null default =
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JNull ->
                 Ok default
             _ ->
-                Err (DecodeError { path = [], message = "expected null", value = json }))
+                Err (DecodeError { path = [], message = "expected null", value = json })
 
 test "null decoder" =
     assert (decodeString (null 0) "null" == Ok 0)
@@ -141,7 +141,7 @@ test "null decoder" =
 -- | Decode a field from a JSON object.
 field : String -> Decoder a -> Decoder a
 export let field key decoder =
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JObj obj ->
                 case getField key obj of
@@ -154,7 +154,7 @@ export let field key decoder =
                     Nothing ->
                         Err (DecodeError { path = [key], message = "field '${key}' not found", value = json })
             _ ->
-                Err (DecodeError { path = [], message = "expected an Object", value = json }))
+                Err (DecodeError { path = [], message = "expected an Object", value = json })
 
 test "field decoder" =
     let json = """{"name": "Alice", "age": 30}"""
@@ -232,12 +232,12 @@ export let index i decoder =
                 else
                     nth (n - 1) t
     in
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JArr arr ->
                 nth i (arrayToList arr)
             _ ->
-                Err (DecodeError { path = [], message = "expected an Array", value = json }))
+                Err (DecodeError { path = [], message = "expected an Array", value = json })
 
 test "index decoder" =
     let json = "[10, 20, 30]"
@@ -281,12 +281,12 @@ export let list decoder =
                             Ok rest ->
                                 Ok (val :: rest)
     in
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JArr arr ->
                 decodeAll 0 (arrayToList arr)
             _ ->
-                Err (DecodeError { path = [], message = "expected an Array", value = json }))
+                Err (DecodeError { path = [], message = "expected an Array", value = json })
 
 test "list decoder" =
     assert (decodeString (list int) "[1, 2, 3]" == Ok [1, 2, 3])
@@ -341,12 +341,12 @@ export let dict decoder =
                             Ok m ->
                                 Ok (Map.insert k val m)
     in
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JObj obj ->
                 decodeEntries obj
             _ ->
-                Err (DecodeError { path = [], message = "expected an Object", value = json }))
+                Err (DecodeError { path = [], message = "expected an Object", value = json })
 
 test "dict decoder" =
     import Std:Result (withDefault)
@@ -372,12 +372,12 @@ test "dict path tracking" =
 -- | Transform the result of a decoder.
 map : (a -> b) -> Decoder a -> Decoder b
 export let map f decoder =
-    Decoder (\json ->
+    Decoder \json ->
         case run decoder json of
             Ok val ->
                 Ok (f val)
             Err e ->
-                Err e)
+                Err e
 
 test "map decoder" =
     let decoder = map (\s -> s ++ "!") string
@@ -387,7 +387,7 @@ test "map decoder" =
 -- | Combine two decoders.
 map2 : (a -> b -> c) -> Decoder a -> Decoder b -> Decoder c
 export let map2 f da db =
-    Decoder (\json ->
+    Decoder \json ->
         case run da json of
             Err e ->
                 Err e
@@ -396,7 +396,7 @@ export let map2 f da db =
                     Err e ->
                         Err e
                     Ok b ->
-                        Ok (f a b))
+                        Ok (f a b)
 
 test "map2 decoder" =
     let json = """{"x": 1, "y": 2}"""
@@ -429,21 +429,21 @@ test "with decoder" =
 -- | Chain decoders — use the result of one decoder to pick the next.
 andThen : (a -> Decoder b) -> Decoder a -> Decoder b
 export let andThen f decoder =
-    Decoder (\json ->
+    Decoder \json ->
         case run decoder json of
             Err e ->
                 Err e
             Ok val ->
-                run (f val) json)
+                run (f val) json
 
 test "andThen decoder" =
     let json = """{"type": "greeting", "message": "hello"}"""
     let decoder =
-        field "type" string |> andThen (\t ->
+        field "type" string |> andThen \t ->
             if t == "greeting" then
                 field "message" string
             else
-                fail "unknown type")
+                fail "unknown type"
     assert (decodeString decoder json == Ok "hello")
 
 
@@ -474,12 +474,12 @@ test "oneOf decoder" =
 -- more precise semantics.
 maybe : Decoder a -> Decoder (Maybe a)
 export let maybe decoder =
-    Decoder (\json ->
+    Decoder \json ->
         case run decoder json of
             Ok val ->
                 Ok (Just val)
             Err _ ->
-                Ok Nothing)
+                Ok Nothing
 
 test "maybe decoder" =
     assert (decodeString (maybe int) "42" == Ok (Just 42))
@@ -491,7 +491,7 @@ test "maybe decoder" =
 -- type mismatches (unlike `maybe` which swallows all errors).
 nullable : Decoder a -> Decoder (Maybe a)
 export let nullable decoder =
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JNull ->
                 Ok Nothing
@@ -500,7 +500,7 @@ export let nullable decoder =
                     Ok val ->
                         Ok (Just val)
                     Err e ->
-                        Err e)
+                        Err e
 
 test "nullable decoder" =
     assert (decodeString (nullable int) "42" == Ok (Just 42))
@@ -519,7 +519,7 @@ test "nullable decoder" =
 -- and fails if the key exists but the decoder fails (type mismatch, etc.).
 optionalField : String -> Decoder a -> Decoder (Maybe a)
 export let optionalField key decoder =
-    Decoder (\json ->
+    Decoder \json ->
         case json of
             JObj obj ->
                 case getField key obj of
@@ -532,7 +532,7 @@ export let optionalField key decoder =
                             Err e ->
                                 Err ({ e | path = key :: e.path })
             _ ->
-                Err (DecodeError { path = [], message = "expected an Object", value = json }))
+                Err (DecodeError { path = [], message = "expected an Object", value = json })
 
 test "optionalField decoder" =
     let json1 = """{"name": "Alice", "age": 30}"""

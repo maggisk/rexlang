@@ -11,7 +11,7 @@ import Std:String (toString)
 type Msg = Inc | Get (Pid Int) | Stop
 
 let counter =
-    spawn (\_ ->
+    spawn \_ ->
         let rec loop n =
             case receive () of
                 Inc ->
@@ -22,7 +22,7 @@ let counter =
                 Stop ->
                     ()
         in
-        loop 0)
+        loop 0
 
 let _ = send counter Inc
 let _ = send counter Inc
