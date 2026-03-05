@@ -11,6 +11,7 @@ go build -o rex ./cmd/rex/
 
 ./rex examples/io.rex             # run a program (requires main)
 ./rex --test examples/factorial.rex  # run tests
+./rex --safe examples/io.rex      # --safe: reject any `todo` usage
 ./rex                             # start the REPL
 ```
 
@@ -281,6 +282,21 @@ import Std:Result (withDefault)
 let contents = withDefault "" (readFile "data.txt")
 ```
 
+### `todo` — development placeholders
+
+Use `todo` as a placeholder for unfinished code. It type-checks as any type but throws at runtime:
+
+```
+let handle x = todo "implement error handling"
+```
+
+The compiler warns whenever `todo` appears. Use `--safe` to promote warnings to errors — ideal for CI:
+
+```bash
+./rex --safe myprogram.rex          # errors on any todo
+./rex --safe --test myfile.rex      # same for tests
+```
+
 ### Comments
 
 ```
@@ -312,6 +328,7 @@ What the type system catches today:
 
 What can still fail at runtime:
 
+- **`todo`** — development placeholder; throws at runtime but the compiler warns, and `--safe` rejects it entirely
 - **Division by zero** — `x / 0` (value-dependent, inherently runtime). Use `try` from `Std:Result` to recover:
 
 ```
@@ -336,7 +353,9 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | --- | --- |
 | `Std:List` | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
 | `Std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
-| `Std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`, `toMaybe`, `fromMaybe`, `try` (catch div/mod by zero), `RuntimeError` ADT |
+| `Std:Maybe` | `Maybe`, `Just`, `Nothing`, `isNothing`, `isSome`, `fromMaybe`, `map`, `andThen`, `withDefault`, `filter`, `orElse` |
+| `Std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`, `try` (catch div/mod by zero), `RuntimeError` ADT |
+| `Std:Convert` | `toResult` (Maybe→Result), `toMaybe` (Result→Maybe), `fromMaybe` (Maybe→Result) |
 | `Std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeArr`, `encodeObj`, `getField`, `arrayToList`, `listToArray`, `JNull`/`JBool`/`JNum`/`JStr`/`JArr`/`JObj` ADT |
 | `Std:Json.Decode` | Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`, `map2`, `decode`, `with`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail`; structured `DecodeError` record with path tracking; `errorToString` |
 | `Std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `take`, `drop`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`, `dedent` |
@@ -363,7 +382,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `examples/map.rex` | `Std:Map` sorted map |
 | `examples/interpolation.rex` | String interpolation with `${expr}` |
 | `examples/import.rex` | Module imports (selective and qualified) |
-| `examples/maybe.rex` | `Maybe` type from Prelude |
+| `examples/maybe.rex` | `Maybe` type from `Std:Maybe` |
 | `examples/io.rex` | File I/O with `Result` |
 | `examples/string.rex` | String stdlib |
 | `examples/math.rex` | Math stdlib |
@@ -402,6 +421,7 @@ go test ./...
 - [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - [x] Multi-binding let — `let a = 1 and b = 2 in expr`
+- [x] `todo` builtin — development placeholder; `--safe` flag rejects it for CI/deploy
 - [x] User modules — import your own `.rex` files from `src/` directory
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
 

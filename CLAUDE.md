@@ -52,6 +52,10 @@ go build -o rex ./cmd/rex/
 ./rex --test examples/testing.rex
 ./rex --test internal/stdlib/rexfiles/List.rex
 
+# --safe flag: promote warnings (todo usage)to errors
+./rex --safe examples/io.rex
+./rex --safe --test examples/testing.rex
+
 # REPL (blank line to eval, Ctrl-D to exit)
 ./rex
 
@@ -223,4 +227,5 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **`main` entry point**: `export let main args = ...` with type `List String -> Int`. `RunProgram` evaluates all top-level declarations, then looks up `main` and calls it with program args as `List String`. The return `Int` is used as the process exit code. `--test` mode and REPL do not require `main`. `ValidateToplevel()` in `eval.go` rejects bare expressions; called early in both `runFile` and `runTests` in `cmd/rex/main.go`. Type validation uses `Instantiate` + `Unify` so `let main _ = 0` (type `a -> Int`) unifies with `List String -> Int`.
 - **Std:Process**: Five builtins (`spawn`, `send`, `receive`, `self`, `call`) implemented entirely in Go (`ProcessBuiltins(selfPid VPid)`). Require `import Std:Process` — not injected globally. `call` is Go-only because it needs to close over the caller's `selfPid` — a Rex implementation would capture the module-load-time mailbox instead. `spawn` injects per-goroutine `self` and `receive` into the spawned closure's env. `call` is `Pid b -> (Pid a -> b) -> a` — the message construction function receives the caller's pid. **Important**: recursive loops inside `spawn` must use `in` syntax (`let rec loop n = ... in loop 0`) so the loop body doesn't greedily consume the initial call. Capture `self` before `spawn` if the goroutine needs to reply to the spawning process.
 - **Maybe in Std:Maybe**: `type Maybe a = Nothing | Just a` moved from Prelude to `Std:Maybe` module. Require `import Std:Maybe (Just, Nothing)` — type name `Maybe` is available in annotations via `TypeDefs` propagation. Prelude retains only `Ordering`, `Eq`, `Ord`, `Show`.
-- **Explicit imports**: Runtime env only contains `CoreBuiltins` (`not`, `error`, `showInt`, `showFloat`). All other builtins (IO, Math, String, Env, Process) require module imports. `BuiltinsForModule()` gives each stdlib module only CoreBuiltins + its own specific builtins. `Std:Convert` provides cross-conversion between Maybe and Result (`toResult`, `toMaybe`, `fromMaybe`).
+- **Explicit imports**: Runtime env only contains `CoreBuiltins` (`not`, `error`, `todo`, `showInt`, `showFloat`). All other builtins (IO, Math, String, Env, Process) require module imports. `BuiltinsForModule()` gives each stdlib module only CoreBuiltins + its own specific builtins. `Std:Convert` provides cross-conversion between Maybe and Result (`toResult`, `toMaybe`, `fromMaybe`).
+- **`todo` builtin**: `todo : String -> a` — development placeholder that throws "TODO: message" at runtime. Typechecker emits a warning on every `todo` usage. `--safe` flag promotes warnings to errors (intended for CI/deploy). Warnings print in yellow, errors in red (TTY-aware). `Var` AST node has `Line int` for warning source locations.

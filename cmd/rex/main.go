@@ -17,8 +17,27 @@ import (
 	"github.com/maggisk/rexlang/internal/types"
 )
 
+// safeMode is set by the --safe flag; it promotes warnings (todo usage) to errors.
+var safeMode bool
+
 func main() {
 	args := os.Args[1:]
+	if len(args) == 0 {
+		repl()
+		return
+	}
+
+	// Strip global flags before dispatching.
+	var filtered []string
+	for _, a := range args {
+		if a == "--safe" {
+			safeMode = true
+		} else {
+			filtered = append(filtered, a)
+		}
+	}
+	args = filtered
+
 	if len(args) == 0 {
 		repl()
 		return
@@ -34,7 +53,7 @@ func main() {
 			}
 		}
 		if len(files) == 0 {
-			fmt.Fprintln(os.Stderr, "Usage: rex --test [--only=<pattern>] <file.rex> [file.rex ...]")
+			fmt.Fprintln(os.Stderr, "Usage: rex --test [--safe] [--only=<pattern>] <file.rex> [file.rex ...]")
 			os.Exit(1)
 		}
 		totalFailed := 0
@@ -66,6 +85,72 @@ func main() {
 	runFile(args[0], args[1:])
 }
 
+// ---------------------------------------------------------------------------
+// Color helpers (TTY-aware)
+// ---------------------------------------------------------------------------
+
+func stderrIsTTY() bool {
+	fi, err := os.Stderr.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+var (
+	colorRed    string
+	colorYellow string
+	colorReset  string
+)
+
+func initColors() {
+	if stderrIsTTY() {
+		colorRed = "\033[31m"
+		colorYellow = "\033[33m"
+		colorReset = "\033[0m"
+	}
+}
+
+func init() {
+	initColors()
+}
+
+// ---------------------------------------------------------------------------
+// Warning / error printing
+// ---------------------------------------------------------------------------
+
+func printErr(kind string, err error) {
+	fmt.Fprintf(os.Stderr, "%s%s%s: %v\n", colorRed, kind, colorReset, err)
+}
+
+func printTestErr(path, kind string, err error) {
+	fmt.Println() // blank line to separate from any preceding test output
+	fmt.Fprintf(os.Stderr, "%s%s: %s%s: %v\n", colorRed, path, kind, colorReset, err)
+}
+
+func printWarnings(path string, warnings []typechecker.Warning) {
+	for _, w := range warnings {
+		if w.Line > 0 {
+			fmt.Fprintf(os.Stderr, "%sWarning%s: %s:%d: %s\n", colorYellow, colorReset, path, w.Line, w.Msg)
+		} else {
+			fmt.Fprintf(os.Stderr, "%sWarning%s: %s: %s\n", colorYellow, colorReset, path, w.Msg)
+		}
+	}
+}
+
+// handleWarnings prints warnings and, if --safe is active, exits with an error.
+func handleWarnings(path string, warnings []typechecker.Warning) {
+	if len(warnings) == 0 {
+		return
+	}
+	printWarnings(path, warnings)
+	if safeMode {
+		fmt.Fprintf(os.Stderr, "%s--safe: warnings are errors%s\n", colorRed, colorReset)
+		os.Exit(1)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// setupSrcRoot
+// ---------------------------------------------------------------------------
+
 // setupSrcRoot detects a src/ directory in cwd, validates the entry file if needed,
 // and sets the srcRoot for both typechecker and eval.
 func setupSrcRoot(entryFile string) {
@@ -92,6 +177,10 @@ func setupSrcRoot(entryFile string) {
 	typechecker.SetSrcRoot(absSrc)
 	eval.SetSrcRoot(absSrc)
 }
+
+// ---------------------------------------------------------------------------
+// runFile
+// ---------------------------------------------------------------------------
 
 func runFile(path string, programArgs []string) {
 	setupSrcRoot(path)
@@ -123,11 +212,12 @@ func runFile(path string, programArgs []string) {
 	}
 
 	// Type check
-	typeEnv, err := typechecker.CheckProgram(exprs)
+	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
 	if err != nil {
 		printErr("Type error", err)
 		os.Exit(1)
 	}
+	handleWarnings(path, warnings)
 
 	// Validate main exists and unifies with List String -> Int
 	mainScheme, ok := typeEnv["main"]
@@ -158,6 +248,10 @@ func runFile(path string, programArgs []string) {
 		os.Exit(exitCode)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// runTests
+// ---------------------------------------------------------------------------
 
 func runTests(path string, only string) (int, []eval.FailedTest) {
 	setupSrcRoot(path)
@@ -201,17 +295,19 @@ func runTests(path string, only string) (int, []eval.FailedTest) {
 	}
 
 	// Type check with optional extra env
+	var warnings []typechecker.Warning
 	if extraTypeEnv != nil {
-		if _, err := typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv); err != nil {
+		if _, warnings, err = typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv); err != nil {
 			printTestErr(path, "Type error", err)
 			return 1, nil
 		}
 	} else {
-		if _, err := typechecker.CheckProgram(exprs); err != nil {
+		if _, warnings, err = typechecker.CheckProgram(exprs); err != nil {
 			printTestErr(path, "Type error", err)
 			return 1, nil
 		}
 	}
+	handleWarnings(path, warnings)
 
 	_, failed, failedNames, err := eval.RunTests(exprs, nil, extraBuiltins, path, only)
 	if err != nil {
@@ -302,6 +398,14 @@ func repl() {
 			typeEnv = res.Env
 			typeDefs = res.TypeDefs
 
+			// Print any warnings from the typechecker
+			if len(tc.Warnings) > 0 {
+				for _, w := range tc.Warnings {
+					fmt.Fprintf(os.Stderr, "%sWarning%s: %s\n", colorYellow, colorReset, w.Msg)
+				}
+				tc.Warnings = tc.Warnings[:0]
+			}
+
 			val, newEnv, err := eval.EvalToplevel(evalEnv, expr, nil)
 			if err != nil {
 				fmt.Printf("Runtime error: %v\n", err)
@@ -331,15 +435,6 @@ func repl() {
 			fmt.Printf("=> %s\n", eval.ValueToString(val))
 		}
 	}
-}
-
-func printErr(kind string, err error) {
-	fmt.Fprintf(os.Stderr, "%s: %v\n", kind, err)
-}
-
-func printTestErr(path, kind string, err error) {
-	fmt.Println() // blank line to separate from any preceding test output
-	fmt.Fprintf(os.Stderr, "%s: %s: %v\n", path, kind, err)
 }
 
 // Stubs to detect lexer error vs others

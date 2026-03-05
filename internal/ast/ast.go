@@ -85,7 +85,10 @@ type FloatLit struct{ Value float64 }
 type StringLit struct{ Value string }
 type BoolLit struct{ Value bool }
 type UnitLit struct{}
-type Var struct{ Name string }
+type Var struct {
+	Name string
+	Line int
+}
 
 type UnaryMinus struct{ Expr Expr }
 

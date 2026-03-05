@@ -64,10 +64,17 @@ func scheme(v interface{}) (types.Scheme, bool) {
 // TypeChecker
 // ---------------------------------------------------------------------------
 
+// Warning represents a non-fatal diagnostic collected during type-checking.
+type Warning struct {
+	Line int
+	Msg  string
+}
+
 // TypeChecker holds mutable state for HM inference.
 type TypeChecker struct {
 	counter     int
 	typeAliases map[string]types.TypeAliasInfo
+	Warnings    []Warning
 }
 
 // NewTypeChecker creates a new TypeChecker.
@@ -303,6 +310,9 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		sc, ok := v.(types.Scheme)
 		if !ok {
 			return nil, nil, &types.TypeError{Msg: "not a value: " + e.Name}
+		}
+		if e.Name == "todo" {
+			tc.Warnings = append(tc.Warnings, Warning{Line: e.Line, Msg: "todo remains in code"})
 		}
 		return subst, tc.instantiate(sc), nil
 
@@ -2029,6 +2039,7 @@ func InitialTypeEnv() TypeEnv {
 	return TypeEnv{
 		"not":       types.Scheme{Ty: types.TFun(types.TBool, types.TBool)},
 		"error":     types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TString, types.TVar{Name: "a"})},
+		"todo":      types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TString, types.TVar{Name: "a"})},
 		"showInt":   types.Scheme{Ty: types.TFun(types.TInt, types.TString)},
 		"showFloat": types.Scheme{Ty: types.TFun(types.TFloat, types.TString)},
 	}
@@ -2156,27 +2167,27 @@ func CopyTypeDefs(td map[string]types.Type) map[string]types.Type {
 }
 
 // CheckProgram type-checks a list of top-level expressions.
-func CheckProgram(exprs []ast.Expr) (TypeEnv, error) {
+func CheckProgram(exprs []ast.Expr) (TypeEnv, []Warning, error) {
 	tc := NewTypeChecker()
 	prelude, err := loadPreludeTC()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	env := prelude.Env.clone()
 	typeDefs := PreregisterTypes(exprs, copyTypeDefs(prelude.TypeDefs))
 	ordered, err := ReorderToplevel(exprs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, expr := range ordered {
 		res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 		if err != nil {
-			return nil, err
+			return nil, tc.Warnings, err
 		}
 		env = res.Env
 		typeDefs = res.TypeDefs
 	}
-	return env, nil
+	return env, tc.Warnings, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -2664,11 +2675,11 @@ func mergeInstances(env TypeEnv, extra map[string]map[string]bool) map[string]ma
 }
 
 // CheckProgramWithExtraEnv is like CheckProgram but with additional type env injected.
-func CheckProgramWithExtraEnv(exprs []ast.Expr, extraEnv TypeEnv) (TypeEnv, error) {
+func CheckProgramWithExtraEnv(exprs []ast.Expr, extraEnv TypeEnv) (TypeEnv, []Warning, error) {
 	tc := NewTypeChecker()
 	prelude, err := loadPreludeTC()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	env := prelude.Env.clone()
 	for k, v := range extraEnv {
@@ -2677,15 +2688,15 @@ func CheckProgramWithExtraEnv(exprs []ast.Expr, extraEnv TypeEnv) (TypeEnv, erro
 	typeDefs := PreregisterTypes(exprs, copyTypeDefs(prelude.TypeDefs))
 	ordered, err := ReorderToplevel(exprs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for _, expr := range ordered {
 		res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 		if err != nil {
-			return nil, err
+			return nil, tc.Warnings, err
 		}
 		env = res.Env
 		typeDefs = res.TypeDefs
 	}
-	return env, nil
+	return env, tc.Warnings, nil
 }

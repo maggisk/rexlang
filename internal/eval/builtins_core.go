@@ -55,6 +55,13 @@ func CoreBuiltins() map[string]Value {
 			}
 			return nil, &RuntimeError{Msg: s}
 		}),
+		"todo": makeBuiltin("todo", func(v Value) (Value, error) {
+			s, err := CheckStr("todo", v)
+			if err != nil {
+				return nil, err
+			}
+			return nil, &RuntimeError{Msg: "TODO: " + s}
+		}),
 		"showInt": makeBuiltin("showInt", func(v Value) (Value, error) {
 			i, err := AsInt(v)
 			if err != nil {

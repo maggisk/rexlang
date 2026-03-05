@@ -147,7 +147,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 				return ast.DotAccess{ModuleName: name, FieldName: field}, nil
 			}
 			// Record field access: expr.field (with chaining: expr.field.field2)
-			var result ast.Expr = ast.Var{Name: name}
+			var result ast.Expr = ast.Var{Name: name, Line: tok.Line}
 			for p.peek().Kind == lexer.TokDot {
 				p.advance()
 				field, err := p.expectIdent()
@@ -158,7 +158,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 			}
 			return result, nil
 		}
-		return ast.Var{Name: name}, nil
+		return ast.Var{Name: name, Line: tok.Line}, nil
 	case lexer.TokLBrace:
 		// Record update: { expr | field = val, ... }
 		p.advance() // consume '{'
