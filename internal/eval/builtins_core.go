@@ -915,38 +915,34 @@ func ProcessBuiltins(selfPid VPid) map[string]Value {
 	}
 }
 
-// WithProcessBuiltins creates a fresh main-process mailbox and injects process
-// builtins into env, returning the extended env.
-func WithProcessBuiltins(env Env) Env {
-	mb := newMailbox()
-	pid := VPid{Mailbox: mb, ID: mb.id}
-	return env.ExtendMany(ProcessBuiltins(pid))
-}
-
-// BuiltinsForModule returns all builtins for a stdlib module.
+// BuiltinsForModule returns builtins for a stdlib module: CoreBuiltins + module-specific ones.
 func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 	result := make(map[string]Value)
 	for k, v := range CoreBuiltins() {
 		result[k] = v
 	}
-	for k, v := range IOBuiltins() {
-		result[k] = v
-	}
-	for k, v := range MathBuiltins() {
-		result[k] = v
-	}
-	for k, v := range StringBuiltins() {
-		result[k] = v
-	}
-	for k, v := range EnvBuiltins(programArgs) {
-		result[k] = v
-	}
-	if name == "List" {
+	switch name {
+	case "IO":
+		for k, v := range IOBuiltins() {
+			result[k] = v
+		}
+	case "Math":
+		for k, v := range MathBuiltins() {
+			result[k] = v
+		}
+	case "String":
+		for k, v := range StringBuiltins() {
+			result[k] = v
+		}
+	case "Env":
+		for k, v := range EnvBuiltins(programArgs) {
+			result[k] = v
+		}
+	case "List":
 		for k, v := range ListBuiltins() {
 			result[k] = v
 		}
-	}
-	if name == "Result" {
+	case "Result":
 		result["try"] = makeBuiltin("try", func(fnV Value) (Value, error) {
 			val, err := ApplyValue(fnV, VUnit{})
 			if err != nil {
@@ -962,26 +958,18 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 			}
 			return VCtor{Name: "Ok", Args: []Value{val}}, nil
 		})
-	}
-	if name == "Json" {
+	case "Json":
 		for k, v := range JsonBuiltins() {
 			result[k] = v
 		}
-	}
-	if name == "Process" {
+	case "Process":
 		mb := newMailbox()
 		pid := VPid{Mailbox: mb, ID: mb.id}
 		for k, v := range ProcessBuiltins(pid) {
 			result[k] = v
 		}
-	}
-	if name == "Parallel" {
+	case "Parallel":
 		for k, v := range ParallelBuiltins() {
-			result[k] = v
-		}
-		mb := newMailbox()
-		pid := VPid{Mailbox: mb, ID: mb.id}
-		for k, v := range ProcessBuiltins(pid) {
 			result[k] = v
 		}
 	}

@@ -1180,25 +1180,13 @@ func initialEnvForPrelude() Env {
 	return env
 }
 
-// InitialEnv returns the full env with all builtins (including a fresh main-process mailbox).
+// InitialEnv returns the env with only core builtins (not, error, showInt, showFloat).
 func InitialEnv(programArgs []string) Env {
 	env := Env{}
 	for k, v := range CoreBuiltins() {
 		env[k] = v
 	}
-	for k, v := range IOBuiltins() {
-		env[k] = v
-	}
-	for k, v := range MathBuiltins() {
-		env[k] = v
-	}
-	for k, v := range StringBuiltins() {
-		env[k] = v
-	}
-	for k, v := range EnvBuiltins(programArgs) {
-		env[k] = v
-	}
-	return WithProcessBuiltins(env)
+	return env
 }
 
 // ---------------------------------------------------------------------------
@@ -1237,7 +1225,6 @@ func RunProgram(exprs []ast.Expr, programArgs []string) (Value, error) {
 	if err != nil {
 		return nil, err
 	}
-	env = WithProcessBuiltins(env)
 	for _, expr := range exprs {
 		_, newEnv, err := EvalToplevel(env, expr, programArgs)
 		if err != nil {
@@ -1292,7 +1279,6 @@ func RunTests(exprs []ast.Expr, programArgs []string, extraBuiltins map[string]V
 	if err != nil {
 		return 0, 0, nil, err
 	}
-	env = WithProcessBuiltins(env)
 	for k, v := range extraBuiltins {
 		env[k] = v
 	}

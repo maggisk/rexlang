@@ -1,6 +1,7 @@
 export numCPU
 
 import Std:List (map, length, take, drop, concat)
+import Std:Process (spawn, send, receive, call)
 
 
 -- | Apply a function to each element in parallel (one process per element).

@@ -1,3 +1,5 @@
+import Std:Maybe (Just, Nothing)
+
 type Map k v = Empty | Node int Map k v Map
 
 

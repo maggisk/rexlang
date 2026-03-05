@@ -1,5 +1,6 @@
 import Std:Json (JNull, JBool, JStr, JNum, JArr, JObj, ObjNil, ObjCons, parse, getField, arrayToList)
 import Std:Result (Ok, Err)
+import Std:Maybe (Just, Nothing)
 import Std:Math (round, toFloat)
 import Std:Map as Map
 import Std:String (join)

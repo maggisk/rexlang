@@ -1,9 +1,8 @@
-export Nothing, Just, isNothing, isSome, fromMaybe, map, andThen, withDefault, filter, orElse, toResult
-
-
-type Maybe a = Nothing | Just a
-
 import Std:Result (Ok, Err)
+
+export type Maybe a = Nothing | Just a
+
+export isNothing, isSome, fromMaybe, map, andThen, withDefault, filter, orElse
 
 
 -- # Query
@@ -164,22 +163,3 @@ test "orElse" =
     assert (orElse Nothing Nothing == Nothing)
 
 
--- # Convert
-
-
--- | Convert Maybe to Result with an error for Nothing.
---
---     toResult "missing" (Just 5) == Ok 5
---     toResult "missing" Nothing == Err "missing"
---
-toResult : e -> Maybe a -> Result a e
-let toResult err x =
-    case x of
-        Just v ->
-            Ok v
-        Nothing ->
-            Err err
-
-test "toResult" =
-    assert (Just 5 |> toResult "missing" == Ok 5)
-    assert (toResult "missing" Nothing == Err "missing")

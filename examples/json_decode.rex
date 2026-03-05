@@ -1,5 +1,6 @@
 import Std:Json.Decode (decodeString, field, string, int, float, bool, list, map2, decode, with, oneOf, maybe, nullable, optionalField, at, succeed, errorToString)
 import Std:Result (Ok, Err)
+import Std:Maybe (Just, Nothing)
 
 
 -- Decode a simple object into a record

@@ -1,6 +1,7 @@
 -- Map module examples
 
 import Std:Map as M
+import Std:Maybe (Just, Nothing)
 
 let m = M.empty |> M.insert 1 10 |> M.insert 2 20 |> M.insert 3 30
 

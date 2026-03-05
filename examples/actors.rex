@@ -7,6 +7,7 @@
 
 import Std:IO (println)
 import Std:String (toString)
+import Std:Process (spawn, send, receive, self, call)
 
 type Msg = Inc | Get (Pid Int) | Stop
 

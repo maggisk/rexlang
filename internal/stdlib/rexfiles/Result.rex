@@ -128,45 +128,6 @@ test "andThen" =
     assert (Ok 5 |> andThen (\_ -> Err "nope") |> isErr)
 
 
--- # Convert
-
-
--- | Convert Result to Maybe, discarding the error.
---
---     toMaybe (Ok 42) == Just 42
---     toMaybe (Err "oops") == Nothing
---
-toMaybe : Result a e -> Maybe a
-export let toMaybe r =
-    case r of
-        Ok x ->
-            Just x
-        Err _ ->
-            Nothing
-
-test "toMaybe" =
-    assert (Ok 42 |> toMaybe == Just 42)
-    assert (Err "oops" |> toMaybe == Nothing)
-
-
--- | Convert Maybe to Result with a default error.
---
---     fromMaybe "missing" (Just 42) == Ok 42
---     fromMaybe "missing" Nothing == Err "missing"
---
-fromMaybe : e -> Maybe a -> Result a e
-export let fromMaybe err m =
-    case m of
-        Just x ->
-            Ok x
-        Nothing ->
-            Err err
-
-test "fromMaybe" =
-    assert (fromMaybe "missing" (Just 42) == Ok 42)
-    assert (fromMaybe "missing" Nothing == Err "missing")
-
-
 test "try catches division by zero" =
     assert (try (\_ -> 10 / 0) == Err DivisionByZero)
 

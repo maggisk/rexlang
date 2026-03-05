@@ -1793,6 +1793,15 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 		}
 	}
 	typeDefs := PreregisterTypes(exprs, copyTypeDefs(prelude.TypeDefs))
+	// Merge module-specific type definitions (e.g., Pid for Process)
+	if strings.Contains(moduleName, ":") {
+		parts := strings.SplitN(moduleName, ":", 2)
+		if extra := typeDefsForModule(parts[1]); extra != nil {
+			for k, v := range extra {
+				typeDefs[k] = v
+			}
+		}
+	}
 	exports := map[string]bool{}
 
 	for _, expr := range exprs {
@@ -2017,16 +2026,12 @@ func processTypeEnv() TypeEnv {
 }
 
 func InitialTypeEnv() TypeEnv {
-	env := TypeEnv{
+	return TypeEnv{
 		"not":       types.Scheme{Ty: types.TFun(types.TBool, types.TBool)},
 		"error":     types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TString, types.TVar{Name: "a"})},
 		"showInt":   types.Scheme{Ty: types.TFun(types.TInt, types.TString)},
 		"showFloat": types.Scheme{Ty: types.TFun(types.TFloat, types.TString)},
 	}
-	for k, v := range processTypeEnv() {
-		env[k] = v
-	}
-	return env
 }
 
 func typeEnvForModule(name string) TypeEnv {
@@ -2068,11 +2073,19 @@ func typeEnvForModule(name string) TypeEnv {
 		for k, v := range parallelTypeEnv() {
 			result[k] = v
 		}
-		for k, v := range processTypeEnv() {
-			result[k] = v
-		}
 	}
 	return result
+}
+
+// typeDefsForModule returns extra type definitions needed by specific modules.
+func typeDefsForModule(name string) map[string]types.Type {
+	switch name {
+	case "Process", "Parallel":
+		return map[string]types.Type{
+			"Pid": types.TCon{Name: "Pid", Args: []types.Type{types.TVar{Name: "a"}}},
+		}
+	}
+	return nil
 }
 
 func parallelTypeEnv() TypeEnv {
@@ -2128,8 +2141,6 @@ func loadPreludeTC() (*preludeTC, error) {
 		env = res.Env
 		typeDefs = res.TypeDefs
 	}
-	// Register Pid as a builtin parameterized type so type annotations can reference it.
-	typeDefs["Pid"] = types.TCon{Name: "Pid", Args: []types.Type{types.TVar{Name: "a"}}}
 	preludeTCCache = &preludeTC{Env: env, TypeDefs: typeDefs}
 	return preludeTCCache, nil
 }

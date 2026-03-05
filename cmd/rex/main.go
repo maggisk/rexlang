@@ -256,8 +256,6 @@ func repl() {
 		fmt.Fprintf(os.Stderr, "Failed to load prelude: %v\n", err)
 		os.Exit(1)
 	}
-	evalEnv = eval.WithProcessBuiltins(evalEnv)
-
 	typeEnv := preludeTC.Env.Clone()
 	typeDefs := typechecker.CopyTypeDefs(preludeTC.TypeDefs)
 	tc := typechecker.NewTypeChecker()
