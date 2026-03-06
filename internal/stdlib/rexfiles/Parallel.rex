@@ -10,9 +10,8 @@ pmap : (a -> b) -> [a] -> [b]
 export let pmap f lst =
     let pids = map (\x ->
         spawn \_ ->
-            let result = f x
-            and caller = receive ()
-            in
+            let result = f x in
+            let caller = receive () in
             send caller result
     ) lst
     in
@@ -23,8 +22,9 @@ export let pmap f lst =
 -- The list is split into n chunks; each chunk is processed by one worker.
 pmapN : Int -> (a -> b) -> [a] -> [b]
 export let pmapN n f lst =
-    let total = length lst
-    and size = if total == 0 then
+    let
+        total = length lst
+        size = if total == 0 then
                     1
                 else
                     (total + n - 1) / n
@@ -38,9 +38,8 @@ export let pmapN n f lst =
     in
     let pids = map (\chunk ->
         spawn \_ ->
-            let result = map f chunk
-            and caller = receive ()
-            in
+            let result = map f chunk in
+            let caller = receive () in
             send caller result
     ) (chunks lst)
     in

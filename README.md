@@ -46,19 +46,19 @@ let rec fact n =
     else
         n * fact (n - 1)
 
--- Multi-binding let blocks
-let a = 3
-and b = 4
-and square x = x * x
-in
-square a + square b
+-- Let-block: multiple bindings with a single `in`
+let
+    a = 3
+    b = 4
+    square x = x * x
+in square a + square b
 
 -- Mutual recursion: functions defined together with `and`
 let rec ping n = if n == 0 then "done" else pong (n - 1)
 and pong n = ping n
 ```
 
-Definition order doesn't matter — top-level bindings are automatically sorted by dependency. Mutually recursive functions must be defined together with `let rec … and …`. The `and` keyword works the same way for non-recursive multi-binding (`let … and … in`).
+Definition order doesn't matter — top-level bindings are automatically sorted by dependency. Mutually recursive functions must be defined together with `let rec … and …`. For multiple non-recursive bindings, use a let-block — `let` on its own line followed by indented bindings, terminated by `in`.
 
 ```
 let result = double 5             -- forward reference: double is defined below
@@ -395,7 +395,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `examples/parallel.rex` | Parallel map with `Std:Parallel` |
 | `examples/multiline.rex` | Multi-line strings with `"""` |
 | `examples/number_literals.rex` | Hex, octal, binary literals and underscore separators |
-| `examples/let_block.rex` | Multi-binding let blocks with `and` |
+| `examples/let_block.rex` | Let-blocks with multiple bindings |
 | `examples/forward_ref.rex` | Forward references between top-level bindings |
 | `examples/testing.rex` | Built-in test framework |
 | `examples/json_decode.rex` | JSON decoder combinators with `Std:Json.Decode` |
@@ -420,7 +420,7 @@ go test ./...
 - [x] Exhaustiveness checking — reject non-exhaustive `case` at compile time; refutable `let` patterns rejected
 - [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
-- [x] Multi-binding let — `let a = 1 and b = 2 in expr`
+- [x] Let-blocks — `let` with indented bindings terminated by `in`
 - [x] `todo` builtin — development placeholder; `--safe` flag rejects it for CI/deploy
 - [x] User modules — import your own `.rex` files from `src/` directory
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.

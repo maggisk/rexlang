@@ -503,7 +503,20 @@ func (p *parser) parsePipe() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseLet() (ast.Expr, error) {
+	letTok := p.peek()
 	p.advance() // consume 'let'
+
+	// Let-block: let followed by indented bindings on the next line(s), then 'in'.
+	//   let
+	//       a = 1
+	//       b = a + 2
+	//   in a + b
+	// Detected when the next token is on a different line and indented past 'let'.
+	if p.peek().Line > letTok.Line && p.peek().Col > letTok.Col &&
+		p.peek().Kind == lexer.TokIdent && !isUppercase(p.peek().Value.(string)) {
+		return p.parseLetBlock()
+	}
+
 	if p.peek().Kind == lexer.TokLParen {
 		pat, err := p.parseAtomPattern()
 		if err != nil {
@@ -556,54 +569,9 @@ func (p *parser) parseLet() (ast.Expr, error) {
 		body = ast.Fun{Param: params[i], Body: body}
 	}
 
-	// Multiple bindings: let [rec] f ... = ... and g ... = ...
-	if p.peek().Kind == lexer.TokAnd {
-		if recursive {
-			// Mutual recursion: let rec f = ... and g = ...
-			bindings := []ast.LetRecBinding{{Name: name, Body: body}}
-			for p.peek().Kind == lexer.TokAnd {
-				p.advance()
-				name2, err := p.expectIdent()
-				if err != nil {
-					return nil, err
-				}
-				var params2 []string
-				for p.peek().Kind == lexer.TokIdent {
-					param, err := p.expectIdent()
-					if err != nil {
-						return nil, err
-					}
-					params2 = append(params2, param)
-				}
-				if err := p.expect(lexer.TokEq); err != nil {
-					return nil, err
-				}
-				body2, err := p.parseExpr()
-				if err != nil {
-					return nil, err
-				}
-				for i := len(params2) - 1; i >= 0; i-- {
-					body2 = ast.Fun{Param: params2[i], Body: body2}
-				}
-				bindings = append(bindings, ast.LetRecBinding{Name: name2, Body: body2})
-			}
-			var inExpr ast.Expr
-			if p.peek().Kind == lexer.TokIn {
-				p.advance()
-				inExpr, err = p.parseExpr()
-				if err != nil {
-					return nil, err
-				}
-			}
-			return ast.LetRec{Bindings: bindings, InExpr: inExpr}, nil
-		}
-
-		// Multi-binding let: let a = 1 and b = 2 in ...
-		type letBinding struct {
-			name string
-			body ast.Expr
-		}
-		bindings := []letBinding{{name, body}}
+	// Mutual recursion: let rec f = ... and g = ...
+	if recursive && p.peek().Kind == lexer.TokAnd {
+		bindings := []ast.LetRecBinding{{Name: name, Body: body}}
 		for p.peek().Kind == lexer.TokAnd {
 			p.advance()
 			name2, err := p.expectIdent()
@@ -628,9 +596,8 @@ func (p *parser) parseLet() (ast.Expr, error) {
 			for i := len(params2) - 1; i >= 0; i-- {
 				body2 = ast.Fun{Param: params2[i], Body: body2}
 			}
-			bindings = append(bindings, letBinding{name2, body2})
+			bindings = append(bindings, ast.LetRecBinding{Name: name2, Body: body2})
 		}
-
 		var inExpr ast.Expr
 		if p.peek().Kind == lexer.TokIn {
 			p.advance()
@@ -639,12 +606,7 @@ func (p *parser) parseLet() (ast.Expr, error) {
 				return nil, err
 			}
 		}
-		// Desugar multi-binding: [a=1, b=2, c=3] + inExpr → Let{a,1, Let{b,2, Let{c,3, inExpr}}}
-		result := ast.Let{Name: bindings[len(bindings)-1].name, Body: bindings[len(bindings)-1].body, InExpr: inExpr}
-		for i := len(bindings) - 2; i >= 0; i-- {
-			result = ast.Let{Name: bindings[i].name, Body: bindings[i].body, InExpr: result}
-		}
-		return result, nil
+		return ast.LetRec{Bindings: bindings, InExpr: inExpr}, nil
 	}
 
 	var inExpr ast.Expr
@@ -657,6 +619,76 @@ func (p *parser) parseLet() (ast.Expr, error) {
 	}
 
 	return ast.Let{Name: name, Body: body, InExpr: inExpr, Recursive: recursive}, nil
+}
+
+// ---------------------------------------------------------------------------
+// Let-block: let\n    a = 1\n    b = 2\nin expr
+// ---------------------------------------------------------------------------
+
+func (p *parser) parseLetBlock() (ast.Expr, error) {
+	type letBinding struct {
+		name string
+		body ast.Expr
+	}
+	bindingCol := p.peek().Col
+	var bindings []letBinding
+
+	// Use caseArmCol to bound each binding body so it doesn't consume the next binding.
+	savedCAC := p.caseArmCol
+	p.caseArmCol = bindingCol
+	for p.peek().Kind == lexer.TokIdent && !isUppercase(p.peek().Value.(string)) && p.peek().Col == bindingCol {
+		name, err := p.expectIdent()
+		if err != nil {
+			p.caseArmCol = savedCAC
+			return nil, err
+		}
+		var params []string
+		for p.peek().Kind == lexer.TokIdent {
+			param, err := p.expectIdent()
+			if err != nil {
+				p.caseArmCol = savedCAC
+				return nil, err
+			}
+			params = append(params, param)
+		}
+		if err := p.expect(lexer.TokEq); err != nil {
+			p.caseArmCol = savedCAC
+			return nil, err
+		}
+		body, err := p.parseExpr()
+		if err != nil {
+			p.caseArmCol = savedCAC
+			return nil, err
+		}
+		for i := len(params) - 1; i >= 0; i-- {
+			body = ast.Fun{Param: params[i], Body: body}
+		}
+		bindings = append(bindings, letBinding{name, body})
+	}
+	p.caseArmCol = savedCAC
+
+	if len(bindings) == 0 {
+		return nil, &ParseError{
+			Msg:  "expected bindings in let block",
+			Line: p.peek().Line,
+			Col:  p.peek().Col,
+		}
+	}
+
+	if err := p.expect(lexer.TokIn); err != nil {
+		return nil, err
+	}
+	inExpr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+
+	// Desugar: [a=1, b=2, c=3] + inExpr → Let{a,1, Let{b,2, Let{c,3, inExpr}}}
+	result := ast.Let{Name: bindings[len(bindings)-1].name, Body: bindings[len(bindings)-1].body, InExpr: inExpr}
+	for i := len(bindings) - 2; i >= 0; i-- {
+		result = ast.Let{Name: bindings[i].name, Body: bindings[i].body, InExpr: result}
+	}
+	return result, nil
 }
 
 // ---------------------------------------------------------------------------
