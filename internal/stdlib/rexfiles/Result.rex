@@ -17,8 +17,9 @@ export try
 --     isOk (Ok 42) == true
 --     isOk (Err "oops") == false
 --
+export
 isOk : Result a e -> Bool
-export let isOk r =
+isOk r =
     case r of
         Ok _ ->
             true
@@ -35,8 +36,9 @@ test "isOk" =
 --     isErr (Err "oops") == true
 --     isErr (Ok 42) == false
 --
+export
 isErr : Result a e -> Bool
-export let isErr r =
+isErr r =
     case r of
         Ok _ ->
             false
@@ -56,8 +58,9 @@ test "isErr" =
 --     withDefault 0 (Ok 42) == 42
 --     withDefault 0 (Err "oops") == 0
 --
+export
 withDefault : a -> Result a e -> a
-export let withDefault default r =
+withDefault default r =
     case r of
         Ok x ->
             x
@@ -77,8 +80,9 @@ test "withDefault" =
 --     map (\x -> x * 2) (Ok 5) == Ok 10
 --     map (\x -> x * 2) (Err "oops") == Err "oops"
 --
+export
 map : (a -> b) -> Result a e -> Result b e
-export let map f r =
+map f r =
     case r of
         Ok x ->
             Ok (f x)
@@ -95,8 +99,9 @@ test "map" =
 --     mapErr (\e -> "error: " ++ e) (Err "oops") == Err "error: oops"
 --     mapErr (\e -> "error: " ++ e) (Ok 5) == Ok 5
 --
+export
 mapErr : (e -> f) -> Result a e -> Result a f
-export let mapErr f r =
+mapErr f r =
     case r of
         Ok x ->
             Ok x
@@ -114,8 +119,9 @@ test "mapErr" =
 --     andThen (\x -> Ok (x * 2)) (Err "oops") == Err "oops"
 --     andThen (\x -> Err "nope") (Ok 5) == Err "nope"
 --
+export
 andThen : (a -> Result b e) -> Result a e -> Result b e
-export let andThen f r =
+andThen f r =
     case r of
         Ok x ->
             f x

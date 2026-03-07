@@ -35,17 +35,27 @@ true        -- Bool
 3.141_592   -- underscores in floats too
 ```
 
-### Let bindings and functions
+### Bindings and functions
 
 ```
-let x = 42
-let add x y = x + y              -- curried automatically
-let rec fact n =
+x = 42
+add x y = x + y                  -- curried automatically
+fact n =
     if n == 0 then
         1
     else
-        n * fact (n - 1)
+        n * fact (n - 1)          -- self-recursion works automatically
 
+-- Mutual recursion — just define them as separate bindings
+isEven n = if n == 0 then true else isOdd (n - 1)
+isOdd n = if n == 0 then false else isEven (n - 1)
+```
+
+No `let` needed at the top level — just `name params = body`. Self-recursion and mutual recursion are handled automatically. Definition order doesn't matter — top-level bindings are sorted by dependency, and cycles are grouped into mutual recursion.
+
+Inside expressions, use `let`/`let rec` with `in`:
+
+```
 -- Let-block: multiple bindings with a single `in`
 let
     a = 3
@@ -53,16 +63,8 @@ let
     square x = x * x
 in square a + square b
 
--- Mutual recursion: functions defined together with `and`
-let rec ping n = if n == 0 then "done" else pong (n - 1)
-and pong n = ping n
-```
-
-Definition order doesn't matter — top-level bindings are automatically sorted by dependency. Mutually recursive functions must be defined together with `let rec … and …`. For multiple non-recursive bindings, use a let-block — `let` on its own line followed by indented bindings, terminated by `in`.
-
-```
-let result = double 5             -- forward reference: double is defined below
-let double x = x * 2
+-- let rec for local recursion
+let rec loop n = if n == 0 then 0 else loop (n - 1) in loop 10
 ```
 
 ### Pattern matching
@@ -87,17 +89,17 @@ type Tree a = Leaf | Node (Tree a) a (Tree a)
 ```
 type Person = { name : String, age : Int }
 
-let alice = Person { name = "Alice", age = 30 }
-let bob = Person "Bob" 25       -- positional constructor
+alice = Person { name = "Alice", age = 30 }
+bob = Person "Bob" 25           -- positional constructor
 alice.name    -- "Alice"
 
 -- update (creates a new record)
-let bob = { alice | name = "Bob", age = 25 }
+bob2 = { alice | name = "Bob", age = 25 }
 
 -- nested update via dot-path
 type Address = { city : String, zip : String }
 type PersonFull = { name : String, addr : Address }
-let p2 = { person | addr.city = "LA" }
+p2 = { person | addr.city = "LA" }
 
 -- pattern matching
 case alice of
@@ -106,7 +108,7 @@ case alice of
 
 -- parametric records
 type Pair a b = { fst : a, snd : b }
-let p = Pair { fst = 1, snd = "hello" }
+p = Pair { fst = 1, snd = "hello" }
 p.fst    -- 1
 ```
 
@@ -126,8 +128,8 @@ Type aliases are transparent — `Name` and `String` are fully interchangeable. 
 ### Lists and tuples
 
 ```
-let xs = [1, 2, 3]
-let pair = (42, "hello")
+xs = [1, 2, 3]
+pair = (42, "hello")
 
 case xs of
     [] ->
@@ -148,8 +150,8 @@ case xs of
 ### String interpolation
 
 ```
-let name = "Rex"
-let version = 1
+name = "Rex"
+version = 1
 "Hello, ${name}! Version ${version}"    -- "Hello, Rex! Version 1"
 "Escaped: \${not interpolated}"         -- "Escaped: ${not interpolated}"
 "Expr: ${1 + 2 + 3}"                   -- "Expr: 6"
@@ -160,12 +162,12 @@ Expressions inside `${...}` are converted to strings via the `Show` trait. Strin
 ### Multi-line strings
 
 ```
-let poem = """
+poem = """
 Roses are red
 Violets are blue
 """
 
-let greeting = """
+greeting = """
 Hello, ${name}!
 Welcome to RexLang.
 """
@@ -178,7 +180,7 @@ Use `dedent` from `Std:String` to strip common leading whitespace:
 ```
 import Std:String (dedent)
 
-let html = dedent """
+html = dedent """
     <div>
         <p>hello</p>
     </div>
@@ -192,20 +194,20 @@ Type annotations are optional — RexLang has full type inference. But they serv
 
 ```
 double : Int -> Int
-let double x = x * 2
+double x = x * 2
 
 identity : a -> a
-let identity x = x
+identity x = x
 
 fact : Int -> Int
-let rec fact n =
+fact n =
     if n == 0 then
         1
     else
         n * fact (n - 1)
 ```
 
-Annotations go on a separate line before the `let` binding. If the annotation doesn't match the inferred type, you get a clear error. Annotations can also constrain polymorphic types — `identity : Int -> Int` narrows `a -> a` to `Int -> Int`.
+Annotations go on a separate line before the binding. If the annotation doesn't match the inferred type, you get a clear error. Annotations can also constrain polymorphic types — `identity : Int -> Int` narrows `a -> a` to `Int -> Int`.
 
 ### Traits (typeclasses)
 
@@ -226,7 +228,7 @@ The prelude provides `Eq`, `Ord`, `Show`, and `Ordering` with instances for `Int
 import Std:List (map, filter, foldl)
 import Std:Map as M
 
-let m = M.fromList [("a", 1), ("b", 2)]
+m = M.fromList [("a", 1), ("b", 2)]
 M.lookup "a" m    -- Just 1
 
 -- User modules (resolved from src/ directory)
@@ -238,26 +240,43 @@ H.sumDoubles [1, 2, 3]    -- 12
 
 User modules use absolute paths from a `src/` directory in the project root. Dots map to directories: `import Lib.Helpers` resolves to `src/Lib/Helpers.rex`. The entry file must be inside `src/` for user module imports to work. Circular imports produce a clear error.
 
+### Exports
+
+Use `export` to make bindings visible to importers. Place it on its own line before the definition:
+
+```
+export add
+add x y = x + y
+
+helper x = x * 2       -- not exported (module-internal)
+```
+
+For types and traits, use `export type` / `export trait` inline:
+
+```
+export type Shape = Circle Float | Rect Float Float
+```
+
 ### Entry point
 
-Programs run with `./rex file.rex` need an `export let main` that takes command-line args and returns an exit code:
+Programs run with `./rex file.rex` need a `main` function that takes command-line args and returns an exit code:
 
 ```
 import Std:IO (println)
 
-export let main args =
+main args =
     let _ = println "Hello, world!"
     in 0
 ```
 
-`main` must have type `List String -> Int`. Use `_` to ignore args: `export let main _ = 0`.
+`main` must have type `List String -> Int`. Use `_` to ignore args: `main _ = 0`.
 
 Only declarations are allowed at the top level — bare expressions like `1 + 2` are rejected. The REPL is exempt from both rules.
 
 ### Built-in test framework
 
 ```
-let double x = x * 2
+double x = x * 2
 
 test "double works" =
     assert (double 5 == 10)
@@ -279,7 +298,7 @@ IO functions return `Result` instead of raising; `getEnv` returns `Maybe`:
 ```
 import Std:Result (withDefault)
 
-let contents = withDefault "" (readFile "data.txt")
+contents = withDefault "" (readFile "data.txt")
 ```
 
 ### `todo` — development placeholders
@@ -287,7 +306,7 @@ let contents = withDefault "" (readFile "data.txt")
 Use `todo` as a placeholder for unfinished code. It type-checks as any type but throws at runtime:
 
 ```
-let handle x = todo "implement error handling"
+handle x = todo "implement error handling"
 ```
 
 The compiler warns whenever `todo` appears. Use `--safe` to promote warnings to errors — ideal for CI:
@@ -377,7 +396,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `examples/pipe.rex` | Pipe operator `\|>` |
 | `examples/list.rex` | List stdlib |
 | `examples/tuple.rex` | Tuples and destructuring |
-| `examples/mutual_recursion.rex` | Mutual recursion with `let rec … and` |
+| `examples/mutual_recursion.rex` | Mutual recursion (auto-detected) |
 | `examples/traits.rex` | Trait declarations and implementations |
 | `examples/map.rex` | `Std:Map` sorted map |
 | `examples/interpolation.rex` | String interpolation with `${expr}` |
@@ -419,8 +438,9 @@ go test ./...
 - [ ] Traits v2 — parameterized instances, constraint propagation
 - [x] Exhaustiveness checking — reject non-exhaustive `case` at compile time; refutable `let` patterns rejected
 - [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development
-- [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
+- [x] Type annotations — optional `add : Int -> Int -> Int` before binding
 - [x] Let-blocks — `let` with indented bindings terminated by `in`
+- [x] Bare top-level bindings — `name params = body` (no `let` needed); implicit self and mutual recursion
 - [x] `todo` builtin — development placeholder; `--safe` flag rejects it for CI/deploy
 - [x] User modules — import your own `.rex` files from `src/` directory
 - [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
@@ -452,5 +472,4 @@ Ideas worth keeping in mind but not yet committed to. May never happen.
 
 - **Extensible records (row polymorphism)** — functions over "any record with field `x`". Elm has a restricted form (read-only narrowing, no field addition/deletion); PureScript has full row polymorphism. Elm's restricted version would compile to WasmGC via monomorphization (concrete record type known at each call site), so the compilation target isn't a blocker. The real cost is type system complexity — error messages get harder and the inference machinery grows. Traits already cover many of the same use cases. Worth revisiting only if plain records prove genuinely limiting in practice.
 - **Hot module reloading** — WasmGC separates code from the GC-managed heap, which makes this more tractable than classic linear-memory Wasm. Live GC references are typed and runtime-managed, so a host could in theory transfer them from an old module instance to a new one. The open questions are type layout compatibility across versions and the lack of standardized dynamic linking in the Wasm spec today. Needs more research before committing.
-- **Implicit mutual recursion** — currently, mutually recursive functions require explicit `let rec … and …`. Elm and Haskell treat all top-level bindings as mutually recursive by default. We could auto-detect cycles in the dependency graph and wrap them in implicit `LetRec` groups instead of erroring. Trade-off: simpler for users, but makes accidental cycles (typos, shadowing bugs) harder to catch.
 - **Concurrency / actors** — already implemented via `Std:Process` with Go goroutines. May swap internals for real WASI threads when the spec matures.

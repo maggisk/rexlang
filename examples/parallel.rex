@@ -2,7 +2,7 @@
 
 import Std:Parallel (pmap, pmapN, numCPU)
 
-let square x = x * x
+square x = x * x
 
 test "pmap" =
     assert (pmap square [1, 2, 3, 4, 5] == [1, 4, 9, 16, 25])

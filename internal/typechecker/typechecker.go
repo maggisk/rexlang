@@ -2391,16 +2391,58 @@ func ReorderToplevel(exprs []ast.Expr) ([]ast.Expr, error) {
 	}
 
 	if len(sorted) != len(bindings) {
-		var cycleNames []string
+		// Collect cycle members into a single LetRec node
+		cycleSet := map[int]bool{}
+		var cycleBindings []ast.LetRecBinding
+		exported := false
 		for i, d := range inDegree {
 			if d > 0 {
-				cycleNames = append(cycleNames, strings.Join(bindings[i].names, ", "))
+				cycleSet[i] = true
+				b := bindings[i]
+				switch e := b.expr.(type) {
+				case ast.Let:
+					cycleBindings = append(cycleBindings, ast.LetRecBinding{Name: e.Name, Body: e.Body})
+					if e.Exported {
+						exported = true
+					}
+				case ast.LetRec:
+					for _, lb := range e.Bindings {
+						cycleBindings = append(cycleBindings, lb)
+					}
+					if e.Exported {
+						exported = true
+					}
+				}
 			}
 		}
-		return nil, &types.TypeError{Msg: fmt.Sprintf(
-			"mutually recursive bindings: %s — use let rec ... and ...",
-			strings.Join(cycleNames, ", "),
-		)}
+		letRec := ast.LetRec{Bindings: cycleBindings, InExpr: nil, Exported: exported}
+		// Append the LetRec to sorted so it comes after all non-cycle bindings
+		sorted = append(sorted, -1) // sentinel for the cycle group
+		// Replace bindings array entry: -1 maps to the letRec
+		_ = letRec // used below in reassembly
+		// Rebuild: sorted entries map to bindings; -1 maps to the cycle group
+		result := make([]ast.Expr, 0, len(exprs))
+		sortedPos := 0
+		for _, s := range slots {
+			if s.kind == slotFixed {
+				result = append(result, s.expr)
+			} else {
+				if cycleSet[s.bidx] {
+					// Skip individual cycle bindings; we'll emit the LetRec once
+					continue
+				}
+				idx := sorted[sortedPos]
+				sortedPos++
+				b := bindings[idx]
+				if b.annotation != nil {
+					result = append(result, *b.annotation)
+				}
+				result = append(result, b.expr)
+			}
+		}
+		result = append(result, letRec)
+		result = append(result, tests...)
+		return result, nil
 	}
 
 	// Reassemble: walk slots, filling binding slots with sorted bindings in order

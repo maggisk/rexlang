@@ -3,7 +3,7 @@
 -- The right-hand side is only evaluated when the result is not
 -- already determined by the left-hand side.
 
-let rec loop = (\_ -> loop ())
+loop = (\_ -> loop ())
 
 
 test "false && <crash> does not evaluate right side" =

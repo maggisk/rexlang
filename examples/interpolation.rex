@@ -1,8 +1,8 @@
 -- String interpolation
 
-let name = "Rex"
-let version = 1
-let pi = 3.14
+name = "Rex"
+version = 1
+pi = 3.14
 
 test "basic interpolation" =
     assert ("Hello, ${name}!" == "Hello, Rex!")

@@ -1,14 +1,14 @@
 -- Tuple type and let destructuring
 
-let swap pair =
+swap pair =
     let (a, b) = pair in
     (b, a)
 
-let fst pair =
+fst pair =
     let (a, _) = pair in
     a
 
-let snd pair =
+snd pair =
     let (_, b) = pair in
     b
 

@@ -11,7 +11,7 @@ import Std:Process (spawn, send, receive, self, call)
 
 type Msg = Inc | Get (Pid Int) | Stop
 
-let counter =
+counter =
     spawn \_ ->
         let rec loop n =
             case receive () of
@@ -25,12 +25,12 @@ let counter =
         in
         loop 0
 
-let _ = send counter Inc
-let _ = send counter Inc
-let _ = send counter Inc
-let n = call counter Get
-let _ = send counter Stop
+_ = send counter Inc
+_ = send counter Inc
+_ = send counter Inc
+n = call counter Get
+_ = send counter Stop
 
-export let main _ =
+main _ =
     let _ = n |> toString |> println in
     0

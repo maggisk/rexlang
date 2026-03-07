@@ -3,9 +3,9 @@
 import Std:Math (sqrt, toFloat)
 
 
-let pi = 3.14159
-let circleArea r = pi * r * r
-let hypotenuse a b = (toFloat a * toFloat a + toFloat b * toFloat b) |> sqrt
+pi = 3.14159
+circleArea r = pi * r * r
+hypotenuse a b = (toFloat a * toFloat a + toFloat b * toFloat b) |> sqrt
 
 test "circle area" =
     assert (circleArea 1.0 == 3.14159)

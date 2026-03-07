@@ -14,8 +14,9 @@ export type DecodeError = { path : [String], message : String, value : Json }
 
 
 -- | Convert a DecodeError to a human-readable string.
+export
 errorToString : DecodeError -> String
-export let errorToString err =
+errorToString err =
     let pathStr = if err.path == [] then
             ""
         else
@@ -31,16 +32,18 @@ export type Decoder a = Decoder (Json -> Result a DecodeError)
 
 
 -- | Run a decoder on a Json value.
+export
 run : Decoder a -> Json -> Result a DecodeError
-export let run decoder json =
+run decoder json =
     case decoder of
         Decoder f ->
             f json
 
 
 -- | Parse a JSON string and run a decoder on the result.
+export
 decodeString : Decoder a -> String -> Result a DecodeError
-export let decodeString decoder str =
+decodeString decoder str =
     case parse str of
         Err e ->
             Err (DecodeError { path = [], message = e, value = JNull })
@@ -55,8 +58,9 @@ test "decodeString with invalid JSON" =
 
 
 -- | Decode a JSON string.
+export
 string : Decoder String
-export let string =
+string =
     Decoder \json ->
         case json of
             JStr s ->
@@ -70,8 +74,9 @@ test "string decoder" =
 
 
 -- | Decode a JSON integer.
+export
 int : Decoder Int
-export let int =
+int =
     Decoder \json ->
         case json of
             JNum n ->
@@ -89,8 +94,9 @@ test "int decoder" =
 
 
 -- | Decode a JSON float.
+export
 float : Decoder Float
-export let float =
+float =
     Decoder \json ->
         case json of
             JNum n ->
@@ -105,8 +111,9 @@ test "float decoder" =
 
 
 -- | Decode a JSON boolean.
+export
 bool : Decoder Bool
-export let bool =
+bool =
     Decoder \json ->
         case json of
             JBool b ->
@@ -121,8 +128,9 @@ test "bool decoder" =
 
 
 -- | Decode a JSON null, succeeding with the given default value.
+export
 null : a -> Decoder a
-export let null default =
+null default =
     Decoder \json ->
         case json of
             JNull ->
@@ -140,8 +148,9 @@ test "null decoder" =
 
 
 -- | Decode a field from a JSON object.
+export
 field : String -> Decoder a -> Decoder a
-export let field key decoder =
+field key decoder =
     Decoder \json ->
         case json of
             JObj obj ->
@@ -189,8 +198,9 @@ test "field path tracking" =
 
 
 -- | Decode a value at a nested path in a JSON object.
+export
 at : [String] -> Decoder a -> Decoder a
-export let rec at keys decoder =
+at keys decoder =
     case keys of
         [] ->
             decoder
@@ -217,8 +227,9 @@ test "at path tracking" =
 
 
 -- | Decode an element at a given index in a JSON array.
+export
 index : Int -> Decoder a -> Decoder a
-export let index i decoder =
+index i decoder =
     let rec nth n lst =
         case lst of
             [] ->
@@ -265,8 +276,9 @@ test "index path tracking" =
 
 
 -- | Decode a JSON array, applying the given decoder to each element.
+export
 list : Decoder a -> Decoder [a]
-export let list decoder =
+list decoder =
     let rec decodeAll idx items =
         case items of
             [] ->
@@ -325,8 +337,9 @@ test "list path tracking" =
 
 
 -- | Decode a JSON object into a Map String a.
+export
 dict : Decoder a -> Decoder (Map String a)
-export let dict decoder =
+dict decoder =
     let rec decodeEntries obj =
         case obj of
             ObjNil ->
@@ -371,8 +384,9 @@ test "dict path tracking" =
 
 
 -- | Transform the result of a decoder.
+export
 map : (a -> b) -> Decoder a -> Decoder b
-export let map f decoder =
+map f decoder =
     Decoder \json ->
         case run decoder json of
             Ok val ->
@@ -386,8 +400,9 @@ test "map decoder" =
 
 
 -- | Combine two decoders.
+export
 map2 : (a -> b -> c) -> Decoder a -> Decoder b -> Decoder c
-export let map2 f da db =
+map2 f da db =
     Decoder \json ->
         case run da json of
             Err e ->
@@ -411,8 +426,9 @@ test "map2 decoder" =
 --     decode Player
 --         |> with (field "name" string)
 --         |> with (field "score" int)
+export
 with : Decoder a -> Decoder (a -> b) -> Decoder b
-export let with da df =
+with da df =
     map2 (\f a -> f a) df da
 
 test "with decoder" =
@@ -427,9 +443,10 @@ test "with decoder" =
     assert (decodeString decoder json == Ok 15)
 
 
--- | Chain decoders — use the result of one decoder to pick the next.
+-- | Chain decoders -- use the result of one decoder to pick the next.
+export
 andThen : (a -> Decoder b) -> Decoder a -> Decoder b
-export let andThen f decoder =
+andThen f decoder =
     Decoder \json ->
         case run decoder json of
             Err e ->
@@ -449,8 +466,9 @@ test "andThen decoder" =
 
 
 -- | Try a list of decoders, succeeding with the first one that works.
+export
 oneOf : [Decoder a] -> Decoder a
-export let oneOf decoders =
+oneOf decoders =
     let rec tryAll ds json =
         case ds of
             [] ->
@@ -473,8 +491,9 @@ test "oneOf decoder" =
 -- | Try a decoder, wrapping the result in Maybe.
 -- Note: swallows all errors. Prefer `nullable` or `optionalField` for
 -- more precise semantics.
+export
 maybe : Decoder a -> Decoder (Maybe a)
-export let maybe decoder =
+maybe decoder =
     Decoder \json ->
         case run decoder json of
             Ok val ->
@@ -490,8 +509,9 @@ test "maybe decoder" =
 -- | Decode a value that may be null. Succeeds with `Just val` if the
 -- decoder succeeds, `Nothing` if the value is null, and fails on
 -- type mismatches (unlike `maybe` which swallows all errors).
+export
 nullable : Decoder a -> Decoder (Maybe a)
-export let nullable decoder =
+nullable decoder =
     Decoder \json ->
         case json of
             JNull ->
@@ -518,8 +538,9 @@ test "nullable decoder" =
 -- | Decode a field that may be absent from the object. Returns `Nothing`
 -- if the key is missing, `Just val` if present and decoded successfully,
 -- and fails if the key exists but the decoder fails (type mismatch, etc.).
+export
 optionalField : String -> Decoder a -> Decoder (Maybe a)
-export let optionalField key decoder =
+optionalField key decoder =
     Decoder \json ->
         case json of
             JObj obj ->
@@ -552,8 +573,9 @@ test "optionalField decoder" =
 
 
 -- | A decoder that always succeeds with the given value.
+export
 succeed : a -> Decoder a
-export let succeed val =
+succeed val =
     Decoder (\_ -> Ok val)
 
 
@@ -563,13 +585,15 @@ export let succeed val =
 --     decode Player
 --         |> with (field "name" string)
 --         |> with (field "score" int)
+export
 decode : a -> Decoder a
-export let decode = succeed
+decode = succeed
 
 
 -- | A decoder that always fails with the given message.
+export
 fail : String -> Decoder a
-export let fail msg =
+fail msg =
     Decoder (\json -> Err (DecodeError { path = [], message = msg, value = json }))
 
 test "succeed and fail" =

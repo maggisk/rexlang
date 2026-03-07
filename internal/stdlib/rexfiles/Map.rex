@@ -1,13 +1,13 @@
 import Std:Maybe (Just, Nothing)
 
-type Map k v = Empty | Node int Map k v Map
+export type Map k v = Empty | Node int Map k v Map
 
 
 -- # Internal AVL helpers
 
 
 -- | Get the height of a map node (Empty = 0).
-let height m =
+height m =
     case m of
         Empty ->
             0
@@ -15,8 +15,8 @@ let height m =
             h
 
 
--- | Smart constructor — computes height from children.
-let node l k v r =
+-- | Smart constructor -- computes height from children.
+node l k v r =
     let
         lh = height l
         rh = height r
@@ -28,7 +28,7 @@ let node l k v r =
 
 
 -- | Balance factor (left height minus right height).
-let balanceFactor m =
+balanceFactor m =
     case m of
         Empty ->
             0
@@ -37,7 +37,7 @@ let balanceFactor m =
 
 
 -- | Rotate right around the root.
-let rotateRight m =
+rotateRight m =
     case m of
         Node _ (Node _ a xk xv b) yk yv c ->
             node a xk xv (node b yk yv c)
@@ -46,7 +46,7 @@ let rotateRight m =
 
 
 -- | Rotate left around the root.
-let rotateLeft m =
+rotateLeft m =
     case m of
         Node _ a xk xv (Node _ b yk yv c) ->
             node (node a xk xv b) yk yv c
@@ -55,7 +55,7 @@ let rotateLeft m =
 
 
 -- | Rebalance a node after insertion or removal.
-let rebalance m =
+rebalance m =
     case m of
         Empty ->
             Empty
@@ -79,8 +79,9 @@ let rebalance m =
 
 
 -- | Count the number of entries in the map.
+export
 size : Map k v -> Int
-export let rec size m =
+size m =
     case m of
         Empty ->
             0
@@ -89,14 +90,16 @@ export let rec size m =
 
 
 -- | Check if the map is empty.
+export
 isEmpty : Map k v -> Bool
-export let isEmpty m =
+isEmpty m =
     m == Empty
 
 
 -- | Look up a key, returning Just value or Nothing.
+export
 lookup : k -> Map k v -> Maybe v
-export let rec lookup key m =
+lookup key m =
     case m of
         Empty ->
             Nothing
@@ -111,8 +114,9 @@ export let rec lookup key m =
 
 
 -- | Check if a key is present in the map.
+export
 member : k -> Map k v -> Bool
-export let rec member key m =
+member key m =
     case m of
         Empty ->
             false
@@ -130,12 +134,14 @@ export let rec member key m =
 
 
 -- | An empty map.
-export let empty = Empty
+export
+empty = Empty
 
 
 -- | Create a map with a single key-value pair.
+export
 singleton : k -> v -> Map k v
-export let singleton k v = Node 1 Empty k v Empty
+singleton k v = Node 1 Empty k v Empty
 
 test "empty and singleton" =
     assert (isEmpty empty)
@@ -147,8 +153,9 @@ test "empty and singleton" =
 
 
 -- | Insert a key-value pair, replacing any existing value for the key.
+export
 insert : k -> v -> Map k v -> Map k v
-export let rec insert key val m =
+insert key val m =
     case m of
         Empty ->
             Node 1 Empty key val Empty
@@ -176,7 +183,7 @@ test "insert replaces existing key" =
 
 
 -- | Remove the minimum element, returning (minKey, minValue, remaining).
-let rec removeMin m =
+removeMin m =
     case m of
         Node _ (Empty) k v r ->
             (k, v, r)
@@ -188,8 +195,9 @@ let rec removeMin m =
 
 
 -- | Remove a key from the map.
+export
 remove : k -> Map k v -> Map k v
-export let rec remove key m =
+remove key m =
     case m of
         Empty ->
             Empty
@@ -217,8 +225,9 @@ test "remove" =
 
 
 -- | Update the value at a key by applying a function. No-op if key absent.
+export
 update : k -> (v -> v) -> Map k v -> Map k v
-export let rec update key f m =
+update key f m =
     case m of
         Empty ->
             Empty
@@ -238,8 +247,9 @@ test "update" =
 
 
 -- | Build a map from a list of (key, value) pairs.
+export
 fromList : [(k, v)] -> Map k v
-export let fromList lst =
+fromList lst =
     let rec go acc pairs =
         case pairs of
             [] ->
@@ -260,8 +270,9 @@ test "fromList" =
 
 
 -- | Fold over key-value pairs from smallest to largest key.
+export
 foldl : (k -> v -> a -> a) -> a -> Map k v -> a
-export let rec foldl f acc m =
+foldl f acc m =
     case m of
         Empty ->
             acc
@@ -276,8 +287,9 @@ test "foldl" =
 
 
 -- | Fold over key-value pairs from largest to smallest key.
+export
 foldr : (k -> v -> a -> a) -> a -> Map k v -> a
-export let rec foldr f acc m =
+foldr f acc m =
     case m of
         Empty ->
             acc
@@ -291,20 +303,23 @@ export let rec foldr f acc m =
 
 
 -- | Convert to a sorted list of (key, value) pairs.
+export
 toList : Map k v -> [(k, v)]
-export let toList m =
+toList m =
     foldr (\k v acc -> (k, v) :: acc) [] m
 
 
 -- | Get all keys in sorted order.
+export
 keys : Map k v -> [k]
-export let keys m =
+keys m =
     foldr (\k v acc -> k :: acc) [] m
 
 
 -- | Get all values in key order.
+export
 values : Map k v -> [v]
-export let values m =
+values m =
     foldr (\k v acc -> v :: acc) [] m
 
 test "keys and values" =
@@ -318,8 +333,9 @@ test "keys and values" =
 
 
 -- | Apply a function to every value in the map.
+export
 map : (v -> w) -> Map k v -> Map k w
-export let rec map f m =
+map f m =
     case m of
         Empty ->
             Empty
@@ -337,8 +353,9 @@ test "map" =
 --
 --     mapWithKey (\k v -> k + v) (fromList [(1, 10), (2, 20)]) == fromList [(1, 11), (2, 22)]
 --
+export
 mapWithKey : (k -> v -> w) -> Map k v -> Map k w
-export let rec mapWithKey f m =
+mapWithKey f m =
     case m of
         Empty ->
             Empty
@@ -353,8 +370,9 @@ test "mapWithKey" =
 
 
 -- | Keep only entries where the predicate returns true.
+export
 filter : (k -> v -> Bool) -> Map k v -> Map k v
-export let filter pred m =
+filter pred m =
     foldl (\k v acc ->
         if pred k v then
             insert k v acc
@@ -376,8 +394,9 @@ test "filter" =
 --
 --     union (fromList [(1, 10)]) (fromList [(1, 99), (2, 20)]) == fromList [(1, 10), (2, 20)]
 --
+export
 union : Map k v -> Map k v -> Map k v
-export let union m1 m2 =
+union m1 m2 =
     foldl (\k v acc -> insert k v acc) m2 m1
 
 test "union" =
@@ -394,8 +413,9 @@ test "union" =
 --
 --     unionWith (\a b -> a + b) (fromList [(1, 10)]) (fromList [(1, 20), (2, 30)])
 --
+export
 unionWith : (v -> v -> v) -> Map k v -> Map k v -> Map k v
-export let unionWith f m1 m2 =
+unionWith f m1 m2 =
     foldl (\k v acc ->
         case lookup k acc of
             Just existing ->
@@ -415,8 +435,9 @@ test "unionWith" =
 --
 --     intersect (fromList [(1, 10), (2, 20)]) (fromList [(2, 99), (3, 30)]) == fromList [(2, 20)]
 --
+export
 intersect : Map k v -> Map k v -> Map k v
-export let intersect m1 m2 =
+intersect m1 m2 =
     filter (\k v -> member k m2) m1
 
 test "intersect" =
@@ -432,8 +453,9 @@ test "intersect" =
 --
 --     intersectWith (\a b -> a + b) (fromList [(1, 10), (2, 20)]) (fromList [(2, 30), (3, 40)])
 --
+export
 intersectWith : (v -> v -> v) -> Map k v -> Map k v -> Map k v
-export let intersectWith f m1 m2 =
+intersectWith f m1 m2 =
     foldl (\k v acc ->
         case lookup k m2 of
             Just v2 ->
@@ -453,8 +475,9 @@ test "intersectWith" =
 --
 --     difference (fromList [(1, 10), (2, 20), (3, 30)]) (fromList [(2, 99)]) == fromList [(1, 10), (3, 30)]
 --
+export
 difference : Map k v -> Map k v -> Map k v
-export let difference m1 m2 =
+difference m1 m2 =
     filter (\k v -> not (member k m2)) m1
 
 test "difference" =
@@ -474,8 +497,9 @@ test "difference" =
 --
 --     findMin (fromList [(3, 30), (1, 10), (2, 20)]) == Just (1, 10)
 --
+export
 findMin : Map k v -> Maybe (k, v)
-export let rec findMin m =
+findMin m =
     case m of
         Empty ->
             Nothing
@@ -489,8 +513,9 @@ export let rec findMin m =
 --
 --     findMax (fromList [(3, 30), (1, 10), (2, 20)]) == Just (3, 30)
 --
+export
 findMax : Map k v -> Maybe (k, v)
-export let rec findMax m =
+findMax m =
     case m of
         Empty ->
             Nothing
@@ -514,8 +539,9 @@ test "findMin and findMax" =
 --
 --     any (\k v -> v > 20) (fromList [(1, 10), (2, 30)]) == true
 --
+export
 any : (k -> v -> Bool) -> Map k v -> Bool
-export let any pred m =
+any pred m =
     foldl (\k v acc -> acc || pred k v) false m
 
 
@@ -523,8 +549,9 @@ export let any pred m =
 --
 --     all (\k v -> v > 0) (fromList [(1, 10), (2, 20)]) == true
 --
+export
 all : (k -> v -> Bool) -> Map k v -> Bool
-export let all pred m =
+all pred m =
     foldl (\k v acc -> acc && pred k v) true m
 
 test "any and all" =

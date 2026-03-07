@@ -1,10 +1,10 @@
 -- Pipe operator |>
 
-let double n = n * 2
+double n = n * 2
 
-let inc n = n + 1
+inc n = n + 1
 
-let square n = n * n
+square n = n * n
 
 
 test "pipe operator" =

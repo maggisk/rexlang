@@ -4,7 +4,7 @@ type Option = None | Some int
 type List = Nil | Cons int List
 
 
-let rec length xs =
+length xs =
     case xs of
         Nil ->
             0

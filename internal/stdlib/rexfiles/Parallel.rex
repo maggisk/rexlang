@@ -6,8 +6,9 @@ import Std:Process (spawn, send, receive, call)
 
 -- | Apply a function to each element in parallel (one process per element).
 -- Results are returned in the same order as the input list.
+export
 pmap : (a -> b) -> [a] -> [b]
-export let pmap f lst =
+pmap f lst =
     let pids = map (\x ->
         spawn \_ ->
             let result = f x in
@@ -20,8 +21,9 @@ export let pmap f lst =
 
 -- | Apply a function to each element in parallel, using at most n workers.
 -- The list is split into n chunks; each chunk is processed by one worker.
+export
 pmapN : Int -> (a -> b) -> [a] -> [b]
-export let pmapN n f lst =
+pmapN n f lst =
     let
         total = length lst
         size = if total == 0 then

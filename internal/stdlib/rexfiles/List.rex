@@ -1,5 +1,3 @@
-export sortWith
-
 import Std:Maybe (Just, Nothing)
 
 
@@ -10,8 +8,9 @@ import Std:Maybe (Just, Nothing)
 --
 --     length [1, 2, 3] == 3
 --
+export
 length : [a] -> Int
-export let rec length lst =
+length lst =
     case lst of
         [] ->
             0
@@ -27,8 +26,9 @@ test "length" =
 --
 --     isEmpty [] == true
 --
+export
 isEmpty : [a] -> Bool
-export let isEmpty lst =
+isEmpty lst =
     case lst of
         [] ->
             true
@@ -48,8 +48,9 @@ test "isEmpty" =
 --     head [1, 2, 3] == Just 1
 --     head [] == Nothing
 --
+export
 head : [a] -> Maybe a
-export let head lst =
+head lst =
     case lst of
         [h|_] ->
             Just h
@@ -66,8 +67,9 @@ test "head" =
 --     tail [1, 2, 3] == Just [2, 3]
 --     tail [] == Nothing
 --
+export
 tail : [a] -> Maybe [a]
-export let tail lst =
+tail lst =
     case lst of
         [_|t] ->
             Just t
@@ -85,8 +87,9 @@ test "tail" =
 --     last [1, 2, 3] == Just 3
 --     last [] == Nothing
 --
+export
 last : [a] -> Maybe a
-export let rec last lst =
+last lst =
     case lst of
         [x] ->
             Just x
@@ -106,8 +109,9 @@ test "last" =
 --     init [1, 2, 3] == Just [1, 2]
 --     init [] == Nothing
 --
+export
 init : [a] -> Maybe [a]
-export let rec init lst =
+init lst =
     case lst of
         [_] ->
             Just []
@@ -130,8 +134,9 @@ test "init" =
 --
 --     nth 1 [10, 20, 30] == Just 20
 --
+export
 nth : Int -> [a] -> Maybe a
-export let rec nth n lst =
+nth n lst =
     case lst of
         [] ->
             Nothing
@@ -154,8 +159,9 @@ test "nth" =
 --
 --     foldl (\acc x -> acc + x) 0 [1, 2, 3] == 6
 --
+export
 foldl : (b -> a -> b) -> b -> [a] -> b
-export let rec foldl f acc lst =
+foldl f acc lst =
     case lst of
         [] ->
             acc
@@ -170,8 +176,9 @@ test "foldl" =
 --
 --     foldr (\x acc -> x :: acc) [] [1, 2, 3] == [1, 2, 3]
 --
+export
 foldr : (a -> b -> b) -> b -> [a] -> b
-export let rec foldr f acc lst =
+foldr f acc lst =
     case lst of
         [] ->
             acc
@@ -187,8 +194,9 @@ test "foldr" =
 --
 --     foldl1 (\a b -> a + b) [1, 2, 3] == 6
 --
+export
 foldl1 : (a -> a -> a) -> [a] -> a
-export let foldl1 f lst =
+foldl1 f lst =
     case lst of
         [] ->
             error "foldl1: empty list"
@@ -207,8 +215,9 @@ test "foldl1" =
 --
 --     sum [1, 2, 3, 4, 5] == 15
 --
+export
 sum : [Int] -> Int
-export let sum lst =
+sum lst =
     foldl (\acc x -> acc + x) 0 lst
 
 test "sum" =
@@ -219,8 +228,9 @@ test "sum" =
 --
 --     product [1, 2, 3, 4] == 24
 --
+export
 product : [Int] -> Int
-export let product lst =
+product lst =
     foldl (\acc x -> acc * x) 1 lst
 
 test "product" =
@@ -231,8 +241,9 @@ test "product" =
 --
 --     any (\x -> x > 3) [1, 2, 3, 4] == true
 --
+export
 any : (a -> Bool) -> [a] -> Bool
-export let any pred lst =
+any pred lst =
     foldl (\acc x -> acc || pred x) false lst
 
 test "any" =
@@ -244,8 +255,9 @@ test "any" =
 --
 --     all (\x -> x > 0) [1, 2, 3] == true
 --
+export
 all : (a -> Bool) -> [a] -> Bool
-export let all pred lst =
+all pred lst =
     foldl (\acc x -> acc && pred x) true lst
 
 test "all" =
@@ -257,8 +269,9 @@ test "all" =
 --
 --     maximum [3, 1, 4, 1, 5] == Just 5
 --
+export
 maximum : [a] -> Maybe a
-export let maximum lst =
+maximum lst =
     case lst of
         [] ->
             Nothing
@@ -279,8 +292,9 @@ test "maximum" =
 --
 --     minimum [3, 1, 4, 1, 5] == Just 1
 --
+export
 minimum : [a] -> Maybe a
-export let minimum lst =
+minimum lst =
     case lst of
         [] ->
             Nothing
@@ -304,8 +318,9 @@ test "minimum" =
 --
 --     repeat 3 0 == [0, 0, 0]
 --
+export
 repeat : Int -> a -> [a]
-export let rec repeat n x =
+repeat n x =
     if n <= 0 then
         []
     else
@@ -320,8 +335,9 @@ test "repeat" =
 --
 --     range 1 5 == [1, 2, 3, 4]
 --
+export
 range : Int -> Int -> [Int]
-export let rec range start stop =
+range start stop =
     if start >= stop then
         []
     else
@@ -339,8 +355,9 @@ test "range" =
 --
 --     map (\x -> x * 2) [1, 2, 3] == [2, 4, 6]
 --
+export
 map : (a -> b) -> [a] -> [b]
-export let rec map f lst =
+map f lst =
     case lst of
         [] ->
             []
@@ -355,8 +372,9 @@ test "map" =
 --
 --     indexedMap (\i x -> i) ["a", "b", "c"] == [0, 1, 2]
 --
+export
 indexedMap : (Int -> a -> b) -> [a] -> [b]
-export let indexedMap f lst =
+indexedMap f lst =
     let rec go i xs =
         case xs of
             [] ->
@@ -374,8 +392,9 @@ test "indexedMap" =
 --
 --     filter (\x -> x > 2) [1, 2, 3, 4] == [3, 4]
 --
+export
 filter : (a -> Bool) -> [a] -> [a]
-export let rec filter pred lst =
+filter pred lst =
     case lst of
         [] ->
             []
@@ -393,8 +412,9 @@ test "filter" =
 --
 --     filterMap (\x -> if x > 2 then Just (x * 10) else Nothing) [1, 2, 3, 4] == [30, 40]
 --
+export
 filterMap : (a -> Maybe b) -> [a] -> [b]
-export let rec filterMap f lst =
+filterMap f lst =
     case lst of
         [] ->
             []
@@ -414,8 +434,9 @@ test "filterMap" =
 --
 --     reverse [1, 2, 3] == [3, 2, 1]
 --
+export
 reverse : [a] -> [a]
-export let rec reverse lst =
+reverse lst =
     let rec go acc xs =
         case xs of
             [] ->
@@ -436,8 +457,9 @@ test "reverse" =
 --
 --     append [1, 2] [3, 4] == [1, 2, 3, 4]
 --
+export
 append : [a] -> [a] -> [a]
-export let rec append lst1 lst2 =
+append lst1 lst2 =
     case lst1 of
         [] ->
             lst2
@@ -453,8 +475,9 @@ test "append" =
 --
 --     concat [[1, 2], [3], [4, 5]] == [1, 2, 3, 4, 5]
 --
+export
 concat : [[a]] -> [a]
-export let concat lsts =
+concat lsts =
     foldr append [] lsts
 
 test "concat" =
@@ -465,8 +488,9 @@ test "concat" =
 --
 --     flatMap (\x -> [x, x]) [1, 2, 3] == [1, 1, 2, 2, 3, 3]
 --
+export
 flatMap : (a -> [b]) -> [a] -> [b]
-export let flatMap f lst =
+flatMap f lst =
     map f lst |> concat
 
 test "flatMap" =
@@ -478,8 +502,9 @@ test "flatMap" =
 --
 --     zip [1, 2, 3] ["a", "b"] == [(1, "a"), (2, "b")]
 --
+export
 zip : [a] -> [b] -> [(a, b)]
-export let rec zip xs ys =
+zip xs ys =
     case xs of
         [] ->
             []
@@ -500,8 +525,9 @@ test "zip" =
 --
 --     zipWith (\a b -> a + b) [1, 2, 3] [10, 20, 30] == [11, 22, 33]
 --
+export
 zipWith : (a -> b -> c) -> [a] -> [b] -> [c]
-export let rec zipWith f xs ys =
+zipWith f xs ys =
     case xs of
         [] ->
             []
@@ -522,8 +548,9 @@ test "zipWith" =
 --
 --     unzip [(1, "a"), (2, "b")] == ([1, 2], ["a", "b"])
 --
+export
 unzip : [(a, b)] -> ([a], [b])
-export let unzip pairs =
+unzip pairs =
     let rec go xs ys zs =
         case zs of
             [] ->
@@ -544,8 +571,9 @@ test "unzip" =
 --
 --     intersperse 0 [1, 2, 3] == [1, 0, 2, 0, 3]
 --
+export
 intersperse : a -> [a] -> [a]
-export let rec intersperse sep lst =
+intersperse sep lst =
     case lst of
         [] ->
             []
@@ -566,8 +594,9 @@ test "intersperse" =
 --
 --     take 2 [1, 2, 3, 4] == [1, 2]
 --
+export
 take : Int -> [a] -> [a]
-export let rec take n lst =
+take n lst =
     if n == 0 then
         []
     else
@@ -585,8 +614,9 @@ test "take" =
 --
 --     drop 2 [1, 2, 3, 4] == [3, 4]
 --
+export
 drop : Int -> [a] -> [a]
-export let rec drop n lst =
+drop n lst =
     if n == 0 then
         lst
     else
@@ -604,8 +634,9 @@ test "drop" =
 --
 --     takeWhile (\x -> x < 3) [1, 2, 3, 4] == [1, 2]
 --
+export
 takeWhile : (a -> Bool) -> [a] -> [a]
-export let rec takeWhile pred lst =
+takeWhile pred lst =
     case lst of
         [] ->
             []
@@ -624,8 +655,9 @@ test "takeWhile" =
 --
 --     dropWhile (\x -> x < 3) [1, 2, 3, 4] == [3, 4]
 --
+export
 dropWhile : (a -> Bool) -> [a] -> [a]
-export let rec dropWhile pred lst =
+dropWhile pred lst =
     case lst of
         [] ->
             []
@@ -644,8 +676,9 @@ test "dropWhile" =
 --
 --     span (\x -> x < 3) [1, 2, 3, 4] == ([1, 2], [3, 4])
 --
+export
 span : (a -> Bool) -> [a] -> ([a], [a])
-export let span pred lst =
+span pred lst =
     let rec go acc xs =
         case xs of
             [] ->
@@ -671,8 +704,9 @@ test "span" =
 --
 --     find (\x -> x > 2) [1, 2, 3, 4] == Just 3
 --
+export
 find : (a -> Bool) -> [a] -> Maybe a
-export let rec find pred lst =
+find pred lst =
     case lst of
         [] ->
             Nothing
@@ -691,8 +725,9 @@ test "find" =
 --
 --     partition (\x -> x > 2) [1, 2, 3, 4] == ([3, 4], [1, 2])
 --
+export
 partition : (a -> Bool) -> [a] -> ([a], [a])
-export let partition pred lst =
+partition pred lst =
     let rec go yes no xs =
         case xs of
             [] ->
@@ -714,12 +749,13 @@ test "partition" =
 -- # Deduplicate
 
 
--- | Remove duplicate elements (O(n²), uses ==).
+-- | Remove duplicate elements (O(n^2), uses ==).
 --
 --     unique [1, 2, 1, 3, 2] == [1, 2, 3]
 --
+export
 unique : [a] -> [a]
-export let unique lst =
+unique lst =
     let rec go acc xs =
         case xs of
             [] ->
@@ -738,13 +774,14 @@ test "unique" =
     assert ([1, 1, 1] |> unique == [1])
 
 
--- | Remove duplicates by a key function (O(n²), uses == on keys).
+-- | Remove duplicates by a key function (O(n^2), uses == on keys).
 -- Keeps the first element for each distinct key.
 --
 --     uniqueBy (\x -> x % 3) [1, 2, 3, 4, 5] == [1, 2, 3]
 --
+export
 uniqueBy : (a -> b) -> [a] -> [a]
-export let uniqueBy f lst =
+uniqueBy f lst =
     let rec go seen acc xs =
         case xs of
             [] ->
@@ -778,8 +815,9 @@ test "sortWith" =
 --
 --     sort [3, 1, 2] == [1, 2, 3]
 --
+export
 sort : [a] -> [a]
-export let sort lst =
+sort lst =
     sortWith (\a b -> compare a b) lst
 
 test "sort" =
@@ -791,8 +829,9 @@ test "sort" =
 --
 --     sortBy (\x -> 0 - x) [3, 1, 2] == [3, 2, 1]
 --
+export
 sortBy : (a -> b) -> [a] -> [a]
-export let sortBy f lst =
+sortBy f lst =
     sortWith (\a b -> compare (f a) (f b)) lst
 
 test "sortBy" =

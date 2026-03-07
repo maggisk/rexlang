@@ -7,8 +7,9 @@ import Std:Result (Ok, Err)
 --     toResult "missing" (Just 5) == Ok 5
 --     toResult "missing" Nothing == Err "missing"
 --
+export
 toResult : e -> Maybe a -> Result a e
-export let toResult err x =
+toResult err x =
     case x of
         Just v ->
             Ok v
@@ -25,8 +26,9 @@ test "toResult" =
 --     toMaybe (Ok 42) == Just 42
 --     toMaybe (Err "oops") == Nothing
 --
+export
 toMaybe : Result a e -> Maybe a
-export let toMaybe r =
+toMaybe r =
     case r of
         Ok x ->
             Just x
@@ -43,8 +45,9 @@ test "toMaybe" =
 --     fromMaybe "missing" (Just 42) == Ok 42
 --     fromMaybe "missing" Nothing == Err "missing"
 --
+export
 fromMaybe : e -> Maybe a -> Result a e
-export let fromMaybe err m =
+fromMaybe err m =
     case m of
         Just x ->
             Ok x

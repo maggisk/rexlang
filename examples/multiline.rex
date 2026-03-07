@@ -2,22 +2,22 @@ import Std:String (length, dedent)
 
 
 -- Plain multi-line string (first newline after """ is stripped)
-let poem = """
+poem = """
 Roses are red
 Violets are blue
 """
 
 
 -- Interpolation works inside multi-line strings
-let name = "World"
-let greeting = """
+name = "World"
+greeting = """
 Hello, ${name}!
 Welcome to RexLang.
 """
 
 
 -- Escapes work as normal
-let escaped = """
+escaped = """
 Tab:\there
 Backslash: \\
 Dollar: \$
@@ -25,11 +25,11 @@ Dollar: \$
 
 
 -- Content on same line as opening """ (no newline to strip)
-let inline = """same line"""
+inline = """same line"""
 
 
 -- Lone " and "" inside triple-quoted strings are fine
-let quotes = """
+quotes = """
 She said "hello" and "goodbye".
 Even "" is ok.
 """

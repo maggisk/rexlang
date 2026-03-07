@@ -4,19 +4,19 @@
 type alias Name = String
 
 greet : Name -> String
-let greet name = "Hello, " ++ name
+greet name = "Hello, " ++ name
 
 -- Function type alias
 type alias Predicate a = a -> Bool
 
 isPositive : Predicate Int
-let isPositive n = n > 0
+isPositive n = n > 0
 
 -- Parametric alias
 type alias Pair a b = (a, b)
 
 swap : Pair a b -> Pair b a
-let swap p =
+swap p =
     case p of
         (a, b) ->
             (b, a)
@@ -25,7 +25,7 @@ let swap p =
 type alias IntList = [Int]
 
 sum : IntList -> Int
-let rec sum lst =
+sum lst =
     case lst of
         [] ->
             0

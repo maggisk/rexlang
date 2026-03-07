@@ -2,7 +2,7 @@
 
 import Std:Math (clamp, pi, degrees)
 
-let area r = pi * r * r
+area r = pi * r * r
 
 test "clamp" =
     assert (clamp 0 10 15 == 10)

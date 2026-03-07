@@ -1182,9 +1182,10 @@ func (p *parser) parseImport() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseExport() (ast.Expr, error) {
+	exportTok := p.peek()
 	p.advance() // consume 'export'
-	switch p.peek().Kind {
-	case lexer.TokLet:
+	switch {
+	case p.peek().Kind == lexer.TokLet:
 		expr, err := p.parseLet()
 		if err != nil {
 			return nil, err
@@ -1202,7 +1203,17 @@ func (p *parser) parseExport() (ast.Expr, error) {
 		default:
 			return expr, nil
 		}
-	case lexer.TokType:
+	case p.isToplevelBinding():
+		expr, err := p.parseToplevelBinding()
+		if err != nil {
+			return nil, err
+		}
+		if e, ok := expr.(ast.Let); ok {
+			e.Exported = true
+			return e, nil
+		}
+		return expr, nil
+	case p.peek().Kind == lexer.TokType:
 		expr, err := p.parseTypeDecl()
 		if err != nil {
 			return nil, err
@@ -1212,7 +1223,7 @@ func (p *parser) parseExport() (ast.Expr, error) {
 			return td, nil
 		}
 		return expr, nil
-	case lexer.TokTrait:
+	case p.peek().Kind == lexer.TokTrait:
 		expr, err := p.parseTraitDecl()
 		if err != nil {
 			return nil, err
@@ -1223,7 +1234,11 @@ func (p *parser) parseExport() (ast.Expr, error) {
 		}
 		return expr, nil
 	default:
-		// Standalone export: comma-separated ident list
+		// Bare 'export' on its own line: marks the next declaration as exported
+		if p.peek().Line > exportTok.Line {
+			return ast.Export{Names: nil}, nil
+		}
+		// Standalone export: comma-separated ident list (for re-exporting builtins)
 		name, err := p.expectIdent()
 		if err != nil {
 			return nil, err
@@ -1575,10 +1590,55 @@ func (p *parser) parseTypeAnnotation() (ast.Expr, error) {
 	return ast.TypeAnnotation{Name: name, Type: ty}, nil
 }
 
+// isToplevelBinding checks if the current position looks like a bare top-level
+// binding: lowercase ident followed by zero or more lowercase idents, then '=',
+// all on the same line.
+func (p *parser) isToplevelBinding() bool {
+	if p.peek().Kind != lexer.TokIdent || isUppercase(p.peek().Value.(string)) {
+		return false
+	}
+	line := p.peek().Line
+	i := p.pos + 1
+	for i < len(p.tokens) && p.tokens[i].Kind == lexer.TokIdent &&
+		!isUppercase(p.tokens[i].Value.(string)) && p.tokens[i].Line == line {
+		i++
+	}
+	return i < len(p.tokens) && p.tokens[i].Kind == lexer.TokEq && p.tokens[i].Line == line
+}
+
+// parseToplevelBinding parses "name params = body" at the top level.
+// Returns ast.Let with Recursive: true and InExpr: nil.
+func (p *parser) parseToplevelBinding() (ast.Expr, error) {
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	var params []string
+	for p.peek().Kind == lexer.TokIdent && !isUppercase(p.peek().Value.(string)) {
+		param, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, param)
+	}
+	if err := p.expect(lexer.TokEq); err != nil {
+		return nil, err
+	}
+	body, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	for i := len(params) - 1; i >= 0; i-- {
+		body = ast.Fun{Param: params[i], Body: body}
+	}
+	return ast.Let{Name: name, Body: body, InExpr: nil, Recursive: true}, nil
+}
+
 // ParseTokens parses a token list into a list of top-level expressions.
 func ParseTokens(tokens []lexer.Token) ([]ast.Expr, error) {
 	p := &parser{tokens: tokens, pos: 0, caseArmCol: -1}
 	var exprs []ast.Expr
+	pendingExport := false
 	for {
 		if p.peek().Kind == lexer.TokEOF {
 			break
@@ -1594,9 +1654,52 @@ func ParseTokens(tokens []lexer.Token) ([]ast.Expr, error) {
 			exprs = append(exprs, ann)
 			continue
 		}
+		// Check for bare top-level binding: name [params] =
+		if p.isToplevelBinding() {
+			e, err := p.parseToplevelBinding()
+			if err != nil {
+				return nil, err
+			}
+			if pendingExport {
+				if l, ok := e.(ast.Let); ok {
+					l.Exported = true
+					e = l
+				}
+				pendingExport = false
+			}
+			exprs = append(exprs, e)
+			continue
+		}
 		e, err := p.parseExpr()
 		if err != nil {
 			return nil, err
+		}
+		// Auto-set Recursive for top-level let (no in-expr) so self-recursion works
+		if l, ok := e.(ast.Let); ok && l.InExpr == nil && !l.Recursive {
+			l.Recursive = true
+			e = l
+		}
+		// Handle bare 'export' (no names) — mark the next binding as exported
+		if ex, ok := e.(ast.Export); ok && ex.Names == nil {
+			pendingExport = true
+			continue
+		}
+		if pendingExport {
+			switch et := e.(type) {
+			case ast.Let:
+				et.Exported = true
+				e = et
+			case ast.LetRec:
+				et.Exported = true
+				e = et
+			case ast.TypeDecl:
+				et.Exported = true
+				e = et
+			case ast.TraitDecl:
+				et.Exported = true
+				e = et
+			}
+			pendingExport = false
 		}
 		exprs = append(exprs, e)
 	}

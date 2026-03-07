@@ -1,6 +1,6 @@
 -- Modulo operator examples
 
-let isEven = \n -> n % 2 == 0
+isEven = \n -> n % 2 == 0
 
 test "modulo" =
     assert (10 % 3 == 1)

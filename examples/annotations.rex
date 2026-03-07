@@ -1,13 +1,13 @@
 -- Type annotations
 
 double : Int -> Int
-let double x = x * 2
+double x = x * 2
 
 identity : a -> a
-let identity x = x
+identity x = x
 
 greet : String -> String
-let greet name = "Hello, ${name}!"
+greet name = "Hello, ${name}!"
 
 test "annotated functions" =
     assert (double 21 == 42)

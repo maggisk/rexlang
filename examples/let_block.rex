@@ -3,7 +3,7 @@
 import Std:List (map, foldl)
 
 -- Multiple simple bindings
-let result =
+result =
     let
         width = 10
         height = 20
@@ -11,7 +11,7 @@ let result =
     in area
 
 -- With function bindings
-let hypotenuse =
+hypotenuse =
     let
         square x = x * x
         a = 3
@@ -19,7 +19,7 @@ let hypotenuse =
     in square a + square b
 
 -- Nested let-blocks
-let nested =
+nested =
     let
         x = 1
         y = 2
@@ -30,14 +30,14 @@ let nested =
     in b
 
 -- Bindings can reference earlier ones
-let chained =
+chained =
     let
         a = 10
         b = a + 10
     in a + b
 
 -- Using pipe to chain list operations
-let total =
+total =
     [1, 2, 3, 4, 5]
         |> map (\x -> x * 2)
         |> foldl (\acc x -> acc + x) 0

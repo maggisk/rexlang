@@ -3,7 +3,7 @@
 import Std:Maybe (Nothing, Just, isNothing, fromMaybe, map)
 
 
-let double x = x * 2
+double x = x * 2
 
 test "fromMaybe" =
     assert (Just 7 |> fromMaybe 0 == 7)

@@ -1204,7 +1204,7 @@ func ValidateToplevel(exprs []ast.Expr) error {
 			ast.TestDecl, ast.TypeAnnotation:
 			// OK
 		default:
-			return fmt.Errorf("bare expression at top level — only declarations (let, type, trait, impl, import, export, test) are allowed")
+			return fmt.Errorf("bare expression at top level — only declarations (name = ..., type, trait, impl, import, export, test) are allowed")
 		}
 	}
 	return nil
@@ -1236,7 +1236,7 @@ func RunProgram(exprs []ast.Expr, programArgs []string) (Value, error) {
 	// Look up and call main with program args
 	mainVal, ok := env["main"]
 	if !ok {
-		return nil, fmt.Errorf("no main function — add 'export let main args = ...'")
+		return nil, fmt.Errorf("no main function — add 'export main args = ...'")
 	}
 	mainFn, ok := mainVal.(VClosure)
 	if !ok {

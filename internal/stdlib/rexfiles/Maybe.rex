@@ -2,8 +2,6 @@ import Std:Result (Ok, Err)
 
 export type Maybe a = Nothing | Just a
 
-export isNothing, isSome, fromMaybe, map, andThen, withDefault, filter, orElse
-
 
 -- # Query
 
@@ -13,8 +11,9 @@ export isNothing, isSome, fromMaybe, map, andThen, withDefault, filter, orElse
 --     isNothing Nothing == true
 --     isNothing (Just 5) == false
 --
+export
 isNothing : Maybe a -> Bool
-let isNothing x =
+isNothing x =
     case x of
         Nothing ->
             true
@@ -31,8 +30,9 @@ test "isNothing" =
 --     isSome (Just 5) == true
 --     isSome Nothing == false
 --
+export
 isSome : Maybe a -> Bool
-let isSome x =
+isSome x =
     case x of
         Nothing ->
             false
@@ -52,8 +52,9 @@ test "isSome" =
 --     fromMaybe 0 (Just 7) == 7
 --     fromMaybe 0 Nothing == 0
 --
+export
 fromMaybe : a -> Maybe a -> a
-let fromMaybe default x =
+fromMaybe default x =
     case x of
         Nothing ->
             default
@@ -70,8 +71,9 @@ test "fromMaybe" =
 --     withDefault 0 (Just 7) == 7
 --     withDefault 0 Nothing == 0
 --
+export
 withDefault : a -> Maybe a -> a
-let withDefault = fromMaybe
+withDefault = fromMaybe
 
 test "withDefault" =
     assert (Just 7 |> withDefault 0 == 7)
@@ -86,8 +88,9 @@ test "withDefault" =
 --     map (\x -> x * 2) (Just 5) == Just 10
 --     map (\x -> x * 2) Nothing == Nothing
 --
+export
 map : (a -> b) -> Maybe a -> Maybe b
-let map f x =
+map f x =
     case x of
         Nothing ->
             Nothing
@@ -106,8 +109,9 @@ test "map" =
 --     andThen (\x -> Nothing) (Just 5) == Nothing
 --     andThen (\x -> Just (x * 2)) Nothing == Nothing
 --
+export
 andThen : (a -> Maybe b) -> Maybe a -> Maybe b
-let andThen f x =
+andThen f x =
     case x of
         Nothing ->
             Nothing
@@ -126,8 +130,9 @@ test "andThen" =
 --     filter (\x -> x > 3) (Just 1) == Nothing
 --     filter (\x -> x > 3) Nothing == Nothing
 --
+export
 filter : (a -> Bool) -> Maybe a -> Maybe a
-let filter pred x =
+filter pred x =
     case x of
         Nothing ->
             Nothing
@@ -149,8 +154,9 @@ test "filter" =
 --     orElse Nothing (Just 2) == Just 2
 --     orElse Nothing Nothing == Nothing
 --
+export
 orElse : Maybe a -> Maybe a -> Maybe a
-let orElse a b =
+orElse a b =
     case a of
         Just _ ->
             a
@@ -161,5 +167,3 @@ test "orElse" =
     assert (orElse (Just 1) (Just 2) == Just 1)
     assert (orElse Nothing (Just 2) == Just 2)
     assert (orElse Nothing Nothing == Nothing)
-
-

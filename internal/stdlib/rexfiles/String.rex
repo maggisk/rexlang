@@ -12,8 +12,9 @@ import Std:Maybe (Just, Nothing)
 --     isEmpty "" == true
 --     isEmpty "hi" == false
 --
+export
 isEmpty : String -> Bool
-export let isEmpty s =
+isEmpty s =
     s == ""
 
 test "isEmpty" =
@@ -244,8 +245,9 @@ test "parseFloat" =
 --     dedent "  hello\n  world\n" == "hello\nworld\n"
 --     dedent "  hi\n    there\n" == "hi\n  there\n"
 --
+export
 dedent : String -> String
-export let dedent s =
+dedent s =
     let
         countSpaces line =
             let rec go i =

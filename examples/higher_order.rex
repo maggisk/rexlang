@@ -1,10 +1,10 @@
 -- Higher-order functions
 
-let apply f x = f x
-let compose f g x = f (g x)
+apply f x = f x
+compose f g x = f (g x)
 
-let double n = n * 2
-let inc n = n + 1
+double n = n * 2
+inc n = n + 1
 
 test "apply" =
     assert (apply double 5 == 10)

@@ -9,8 +9,9 @@ export abs, min, max, sin, cos, tan, asin, acos, atan, atan2, log, exp, pow, sqr
 --     clamp 0 10 15 == 10
 --     clamp 0 10 -3 == 0
 --
+export
 clamp : a -> a -> a -> a
-export let clamp lo hi x =
+clamp lo hi x =
     max lo (min hi x)
 
 
@@ -18,8 +19,9 @@ export let clamp lo hi x =
 --
 --     degrees pi == 180.0
 --
+export
 degrees : Float -> Float
-export let degrees r =
+degrees r =
     r * (180.0 / pi)
 
 
@@ -27,8 +29,9 @@ export let degrees r =
 --
 --     radians 180.0 == 3.141592653589793
 --
+export
 radians : Float -> Float
-export let radians d =
+radians d =
     d * (pi / 180.0)
 
 
@@ -36,6 +39,7 @@ export let radians d =
 --
 --     logBase 10.0 100.0 == 2.0
 --
+export
 logBase : Float -> Float -> Float
-export let logBase base x =
+logBase base x =
     log x / log base

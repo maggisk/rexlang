@@ -2,9 +2,9 @@
 
 type Person = { name : String, age : Int }
 
-let alice = Person { name = "Alice", age = 30 }
+alice = Person { name = "Alice", age = 30 }
 
-let getName p = p.name
+getName p = p.name
 
 test "record creation and access" =
     assert (alice.name == "Alice")
@@ -32,7 +32,7 @@ test "partial pattern matching" =
 -- Parametric records
 type Pair a b = { fst : a, snd : b }
 
-let p = Pair { fst = 1, snd = "hello" }
+p = Pair { fst = 1, snd = "hello" }
 
 test "parametric records" =
     assert (p.fst == 1)

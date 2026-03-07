@@ -2,8 +2,11 @@
 
 import Std:List (map, foldl)
 
-export let sumDoubles lst =
+export
+sumDoubles lst =
     foldl (\acc x -> acc + x * 2) 0 lst
 
-export let squares lst =
+export
+squares : [a] -> [a]
+squares lst =
     map (\x -> x * x) lst

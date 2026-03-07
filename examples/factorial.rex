@@ -1,6 +1,6 @@
 -- Factorial
 
-let rec fact n =
+fact n =
     case n of
         0 ->
             1

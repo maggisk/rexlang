@@ -1,6 +1,6 @@
 -- Fibonacci
 
-let rec fib n =
+fib n =
     case n of
         0 ->
             0

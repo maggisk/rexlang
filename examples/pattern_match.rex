@@ -2,7 +2,7 @@
 
 
 -- Fibonacci using case
-let rec fib n =
+fib n =
     case n of
         0 ->
             0
@@ -16,7 +16,7 @@ test "fibonacci via pattern match" =
 
 
 -- Describe a number as a string
-let describe x =
+describe x =
     case x of
         0 ->
             "zero"
@@ -32,7 +32,7 @@ test "describe" =
 
 
 -- Boolean negation via pattern matching
-let myNot b =
+myNot b =
     case b of
         true ->
             false

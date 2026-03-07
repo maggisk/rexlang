@@ -20,8 +20,9 @@ export type JsonObj = ObjNil | ObjCons string Json JsonObj
 --     parse "null" == Ok JNull
 --     parse "{\"x\": 1}" == Ok (JObj (ObjCons "x" (JNum 1.0) ObjNil))
 --
+export
 parse : String -> Result Json String
-export let parse s =
+parse s =
     jsonParse s
 
 test "parse valid JSON" =
@@ -50,8 +51,9 @@ test "parse invalid JSON" =
 --     stringify (JBool true) == "true"
 --     stringify (JStr "hi") == "\"hi\""
 --
+export
 stringify : Json -> String
-export let rec stringify j =
+stringify j =
     let escapeStr s =
         s
             |> replace "\\" "\\\\"
@@ -123,23 +125,28 @@ test "escape in strings" =
 
 
 -- | Create a JSON null.
-export let encodeNull = JNull
+export
+encodeNull = JNull
 
 -- | Create a JSON boolean.
+export
 encodeBool : Bool -> Json
-export let encodeBool b = JBool b
+encodeBool b = JBool b
 
 -- | Create a JSON number from a float.
+export
 encodeNum : Float -> Json
-export let encodeNum n = JNum n
+encodeNum n = JNum n
 
 -- | Create a JSON string.
+export
 encodeStr : String -> Json
-export let encodeStr s = JStr s
+encodeStr s = JStr s
 
 -- | Create a JSON array from a Rex list of Json values.
+export
 encodeArr : [Json] -> Json
-export let encodeArr lst =
+encodeArr lst =
     let rec fromList xs =
         case xs of
             [] ->
@@ -150,8 +157,9 @@ export let encodeArr lst =
     JArr (fromList lst)
 
 -- | Create a JSON object from a Rex list of (String, Json) pairs.
+export
 encodeObj : [(String, Json)] -> Json
-export let encodeObj pairs =
+encodeObj pairs =
     let rec fromList xs =
         case xs of
             [] ->
@@ -171,8 +179,9 @@ test "encodeArr and encodeObj" =
 
 
 -- | Look up a field in a JSON object, returning Nothing if absent.
+export
 getField : String -> JsonObj -> Maybe Json
-export let rec getField key obj =
+getField key obj =
     case obj of
         ObjNil ->
             Nothing
@@ -189,8 +198,9 @@ test "getField" =
 
 
 -- | Convert a JsonList to a Rex list.
+export
 arrayToList : JsonList -> [Json]
-export let rec arrayToList arr =
+arrayToList arr =
     case arr of
         ArrNil ->
             []
@@ -199,8 +209,9 @@ export let rec arrayToList arr =
 
 
 -- | Convert a Rex list to a JsonList.
+export
 listToArray : [Json] -> JsonList
-export let listToArray lst =
+listToArray lst =
     let rec fromList xs =
         case xs of
             [] -> ArrNil

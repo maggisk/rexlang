@@ -1,10 +1,13 @@
 -- Utils module: general-purpose helpers
 
-export let double x =
+export
+double x =
     x * 2
 
-export let square x =
+export
+square x =
     x * x
 
-export let greet name =
+export
+greet name =
     "Hello, ${name}!"

@@ -2,21 +2,21 @@
 -- reordered by dependency, so order in the source doesn't matter.
 
 -- Use a function defined below
-let result = 2 |> triple |> double
+result = 2 |> triple |> double
 
-let double x = x * 2
-let triple x = x * 3
+double x = x * 2
+triple x = x * 3
 
 -- Chain of value dependencies
-let c = b + a
-let b = a * 2
-let a = 5
+c = b + a
+b = a * 2
+a = 5
 
 -- Forward ref with type annotation
 greet : String -> String
-let greet name = salutation ++ name
+greet name = salutation ++ name
 
-let salutation = "Hello, "
+salutation = "Hello, "
 
 test "forward function references" =
     assert result == 12
