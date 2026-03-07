@@ -18,7 +18,7 @@ toResult err x =
 
 test "toResult" =
     assert (Just 5 |> toResult "missing" == Ok 5)
-    assert (toResult "missing" Nothing == Err "missing")
+    assert (Nothing |> toResult "missing" == Err "missing")
 
 
 -- | Convert Result to Maybe, discarding the error.

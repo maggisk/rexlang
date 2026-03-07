@@ -33,7 +33,7 @@ internal/
     builtins_core.go  All builtins: core, math, string, IO, env, JSON
   stdlib/
     embed.go       //go:embed all:rexfiles; Source(name) string (dots → subdirs)
-    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Json/Decode, Process, Parallel)
+    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Json/Decode, Process, Parallel, Stream, Convert)
 ```
 
 ## Development commands
@@ -174,6 +174,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Parallel — `pmap`, `pmapN`, `numCPU`; parallel map over lists using actors; bounded parallelism via chunking
 - [x] Json.Decode — Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`, `map2`, `decode`, `with`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail`; structured `DecodeError` record (`path`, `message`, `value`) with path tracking through `field`/`index`/`list`/`dict`/`optionalField`; `errorToString` for human-readable messages
 - [x] Convert — `toResult` (Maybe→Result), `toMaybe` (Result→Maybe), `fromMaybe` (Maybe→Result); cross-conversion between Maybe and Result
+- [x] Stream — lazy streams via thunks (`type Stream a = Empty | Cons a (() -> Stream a)`); pure Rex, no Go builtins; `fromList`, `repeat`, `iterate`, `from`, `range`, `map`, `filter`, `flatMap`, `take`, `drop`, `takeWhile`, `dropWhile`, `zip`, `zipWith`, `toList`, `foldl`, `head`, `isEmpty`, `indexedMap`; supports infinite sequences
 - Date/Time (even basic)
 - Random numbers
 

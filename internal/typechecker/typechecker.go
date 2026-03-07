@@ -1812,6 +1812,10 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 			}
 		}
 	}
+	exprs, err = ReorderToplevel(exprs)
+	if err != nil {
+		return nil, err
+	}
 	exports := map[string]bool{}
 
 	for _, expr := range exprs {

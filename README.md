@@ -383,6 +383,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `Std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
 | `Std:Process` | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages |
 | `Std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
+| `Std:Stream` | Lazy streams: `fromList`, `repeat`, `iterate`, `from`, `range`, `map`, `filter`, `flatMap`, `take`, `drop`, `takeWhile`, `dropWhile`, `zip`, `zipWith`, `toList`, `foldl`, `head`, `isEmpty`, `indexedMap` — supports infinite sequences |
 
 ## Examples
 
@@ -412,6 +413,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `examples/records.rex` | Records: creation, access, update, nested dot-paths |
 | `examples/actors.rex` | Actor-model concurrency with `Std:Process` |
 | `examples/parallel.rex` | Parallel map with `Std:Parallel` |
+| `examples/stream.rex` | Lazy streams with `Std:Stream` |
 | `examples/multiline.rex` | Multi-line strings with `"""` |
 | `examples/number_literals.rex` | Hex, octal, binary literals and underscore separators |
 | `examples/let_block.rex` | Let-blocks with multiple bindings |
@@ -473,3 +475,4 @@ Ideas worth keeping in mind but not yet committed to. May never happen.
 - **Extensible records (row polymorphism)** — functions over "any record with field `x`". Elm has a restricted form (read-only narrowing, no field addition/deletion); PureScript has full row polymorphism. Elm's restricted version would compile to WasmGC via monomorphization (concrete record type known at each call site), so the compilation target isn't a blocker. The real cost is type system complexity — error messages get harder and the inference machinery grows. Traits already cover many of the same use cases. Worth revisiting only if plain records prove genuinely limiting in practice.
 - **Hot module reloading** — WasmGC separates code from the GC-managed heap, which makes this more tractable than classic linear-memory Wasm. Live GC references are typed and runtime-managed, so a host could in theory transfer them from an old module instance to a new one. The open questions are type layout compatibility across versions and the lack of standardized dynamic linking in the Wasm spec today. Needs more research before committing.
 - **Concurrency / actors** — already implemented via `Std:Process` with Go goroutines. May swap internals for real WASI threads when the spec matures.
+- **List fusion** — the WasmGC compiler could detect `map |> filter |> take` chains and fuse them into a single pass, eliminating intermediate lists. Until then, an explicit `Std:Stream` module provides opt-in lazy evaluation. If fusion lands, `Stream` becomes unnecessary for finite pipelines (but remains useful for infinite sequences).

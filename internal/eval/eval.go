@@ -10,6 +10,7 @@ import (
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/parser"
 	"github.com/maggisk/rexlang/internal/stdlib"
+	"github.com/maggisk/rexlang/internal/typechecker"
 )
 
 // ---------------------------------------------------------------------------
@@ -915,6 +916,10 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 	}
 
 	exprs, parseErr := parser.Parse(src)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	exprs, parseErr = typechecker.ReorderToplevel(exprs)
 	if parseErr != nil {
 		return nil, parseErr
 	}
