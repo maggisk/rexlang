@@ -1,4 +1,4 @@
-import Std:Json (JNull, JBool, JStr, JNum, JArr, JObj, ObjNil, ObjCons, parse, getField, arrayToList)
+import Std:Json (JNull, JBool, JStr, JNum, JArr, JObj, parse, getField)
 import Std:Result (Ok, Err)
 import Std:Maybe (Just, Nothing)
 import Std:Math (round, toFloat)
@@ -153,8 +153,8 @@ field : String -> Decoder a -> Decoder a
 field key decoder =
     Decoder \json ->
         case json of
-            JObj obj ->
-                case getField key obj of
+            JObj pairs ->
+                case getField key pairs of
                     Just val ->
                         case run decoder val of
                             Ok v ->
@@ -247,7 +247,7 @@ index i decoder =
     Decoder \json ->
         case json of
             JArr arr ->
-                nth i (arrayToList arr)
+                nth i arr
             _ ->
                 Err (DecodeError { path = [], message = "expected an Array", value = json })
 
@@ -297,7 +297,7 @@ list decoder =
     Decoder \json ->
         case json of
             JArr arr ->
-                decodeAll 0 (arrayToList arr)
+                decodeAll 0 arr
             _ ->
                 Err (DecodeError { path = [], message = "expected an Array", value = json })
 
@@ -340,11 +340,11 @@ test "list path tracking" =
 export
 dict : Decoder a -> Decoder (Map String a)
 dict decoder =
-    let rec decodeEntries obj =
-        case obj of
-            ObjNil ->
+    let rec decodeEntries pairs =
+        case pairs of
+            [] ->
                 Ok Map.empty
-            ObjCons k v rest ->
+            [(k, v)|rest] ->
                 case run decoder v of
                     Err e ->
                         Err ({ e | path = k :: e.path })
@@ -357,8 +357,8 @@ dict decoder =
     in
     Decoder \json ->
         case json of
-            JObj obj ->
-                decodeEntries obj
+            JObj pairs ->
+                decodeEntries pairs
             _ ->
                 Err (DecodeError { path = [], message = "expected an Object", value = json })
 
@@ -543,8 +543,8 @@ optionalField : String -> Decoder a -> Decoder (Maybe a)
 optionalField key decoder =
     Decoder \json ->
         case json of
-            JObj obj ->
-                case getField key obj of
+            JObj pairs ->
+                case getField key pairs of
                     Nothing ->
                         Ok Nothing
                     Just val ->

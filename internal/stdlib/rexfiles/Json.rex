@@ -1,15 +1,12 @@
 import Std:String (replace, toString)
 import Std:Maybe (Just, Nothing)
+import Std:List (intersperse, map, foldl)
 
 
 -- # Types
 
 
-export type Json = JNull | JBool bool | JStr string | JNum float | JArr JsonList | JObj JsonObj
-
-export type JsonList = ArrNil | ArrCons Json JsonList
-
-export type JsonObj = ObjNil | ObjCons string Json JsonObj
+export type Json = JNull | JBool Bool | JStr String | JNum Float | JArr [Json] | JObj [(String, Json)]
 
 
 -- # Parse
@@ -18,7 +15,7 @@ export type JsonObj = ObjNil | ObjCons string Json JsonObj
 -- | Parse a JSON string. Returns Ok Json on success, Err String on failure.
 --
 --     parse "null" == Ok JNull
---     parse "{\"x\": 1}" == Ok (JObj (ObjCons "x" (JNum 1.0) ObjNil))
+--     parse "{\"x\": 1}" == Ok (JObj [("x", JNum 1.0)])
 --
 export
 parse : String -> Result Json String
@@ -62,23 +59,19 @@ stringify j =
             |> replace "\r" "\\r"
             |> replace "\t" "\\t"
     in
-    let rec strArr arr =
-        case arr of
-            ArrNil ->
-                ""
-            ArrCons x (ArrNil) ->
-                stringify x
-            ArrCons x rest ->
-                "${stringify x}, ${strArr rest}"
+    let rec strArr items =
+        items
+            |> map (\x -> stringify x)
+            |> intersperse ", "
+            |> foldl (\acc x -> acc ++ x) ""
     in
-    let rec strObj obj =
-        case obj of
-            ObjNil ->
-                ""
-            ObjCons k v (ObjNil) ->
-                "\"${escapeStr k}\": ${stringify v}"
-            ObjCons k v rest ->
-                "\"${escapeStr k}\": ${stringify v}, ${strObj rest}"
+    let rec strObj pairs =
+        pairs
+            |> map (\pair ->
+                let (k, v) = pair
+                in "\"${escapeStr k}\": ${stringify v}")
+            |> intersperse ", "
+            |> foldl (\acc x -> acc ++ x) ""
     in
     case j of
         JNull ->
@@ -108,13 +101,13 @@ test "stringify number" =
     assert (stringify (JNum 3.14) == "3.14")
 
 test "stringify array" =
-    assert (stringify (JArr ArrNil) == "[]")
-    assert (stringify (JArr (ArrCons JNull ArrNil)) == "[null]")
-    assert (stringify (JArr (ArrCons (JBool true) (ArrCons (JBool false) ArrNil))) == "[true, false]")
+    assert (stringify (JArr []) == "[]")
+    assert (stringify (JArr [JNull]) == "[null]")
+    assert (stringify (JArr [JBool true, JBool false]) == "[true, false]")
 
 test "stringify object" =
-    assert (stringify (JObj ObjNil) == "{}")
-    assert (stringify (JObj (ObjCons "x" (JNum 1.0) ObjNil)) == "{\"x\": 1.0}")
+    assert (stringify (JObj []) == "{}")
+    assert (stringify (JObj [("x", JNum 1.0)]) == "{\"x\": 1.0}")
 
 test "escape in strings" =
     assert (stringify (JStr "say \"hi\"") == "\"say \\\"hi\\\"\"")
@@ -146,29 +139,12 @@ encodeStr s = JStr s
 -- | Create a JSON array from a Rex list of Json values.
 export
 encodeArr : [Json] -> Json
-encodeArr lst =
-    let rec fromList xs =
-        case xs of
-            [] ->
-                ArrNil
-            [h|t] ->
-                ArrCons h (fromList t)
-    in
-    JArr (fromList lst)
+encodeArr lst = JArr lst
 
 -- | Create a JSON object from a Rex list of (String, Json) pairs.
 export
 encodeObj : [(String, Json)] -> Json
-encodeObj pairs =
-    let rec fromList xs =
-        case xs of
-            [] ->
-                ObjNil
-            [pair|t] ->
-                let (k, v) = pair in
-                ObjCons k v (fromList t)
-    in
-    JObj (fromList pairs)
+encodeObj pairs = JObj pairs
 
 test "encodeArr and encodeObj" =
     assert ([JNull, JBool true] |> encodeArr |> stringify == "[null, true]")
@@ -178,43 +154,20 @@ test "encodeArr and encodeObj" =
 -- # Decode helpers
 
 
--- | Look up a field in a JSON object, returning Nothing if absent.
+-- | Look up a field in a JSON object's key-value pairs, returning Nothing if absent.
 export
-getField : String -> JsonObj -> Maybe Json
-getField key obj =
-    case obj of
-        ObjNil ->
+getField : String -> [(String, Json)] -> Maybe Json
+getField key pairs =
+    case pairs of
+        [] ->
             Nothing
-        ObjCons k v rest ->
+        [(k, v)|rest] ->
             if k == key then
                 Just v
             else
                 getField key rest
 
 test "getField" =
-    let obj = ObjCons "x" (JNum 1.0) (ObjCons "y" (JStr "hi") ObjNil)
+    let obj = [("x", JNum 1.0), ("y", JStr "hi")]
     assert (getField "x" obj == Just (JNum 1.0))
     assert (getField "z" obj == Nothing)
-
-
--- | Convert a JsonList to a Rex list.
-export
-arrayToList : JsonList -> [Json]
-arrayToList arr =
-    case arr of
-        ArrNil ->
-            []
-        ArrCons x rest ->
-            x :: arrayToList rest
-
-
--- | Convert a Rex list to a JsonList.
-export
-listToArray : [Json] -> JsonList
-listToArray lst =
-    let rec fromList xs =
-        case xs of
-            [] -> ArrNil
-            [h|t] -> ArrCons h (fromList t)
-    in
-    fromList lst

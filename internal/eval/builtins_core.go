@@ -839,31 +839,30 @@ func jsonValToRex(v interface{}) (Value, error) {
 	case string:
 		return VCtor{Name: "JStr", Args: []Value{VString{V: val}}}, nil
 	case []interface{}:
-		arr := Value(VCtor{Name: "ArrNil", Args: nil})
-		for i := len(val) - 1; i >= 0; i-- {
-			item, err := jsonValToRex(val[i])
+		items := make([]Value, len(val))
+		for i, elem := range val {
+			item, err := jsonValToRex(elem)
 			if err != nil {
 				return nil, err
 			}
-			arr = VCtor{Name: "ArrCons", Args: []Value{item, arr}}
+			items[i] = item
 		}
-		return VCtor{Name: "JArr", Args: []Value{arr}}, nil
+		return VCtor{Name: "JArr", Args: []Value{VList{Items: items}}}, nil
 	case map[string]interface{}:
 		keys := make([]string, 0, len(val))
 		for k := range val {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		obj := Value(VCtor{Name: "ObjNil", Args: nil})
-		for i := len(keys) - 1; i >= 0; i-- {
-			k := keys[i]
+		pairs := make([]Value, len(keys))
+		for i, k := range keys {
 			item, err := jsonValToRex(val[k])
 			if err != nil {
 				return nil, err
 			}
-			obj = VCtor{Name: "ObjCons", Args: []Value{VString{V: k}, item, obj}}
+			pairs[i] = VTuple{Items: []Value{VString{V: k}, item}}
 		}
-		return VCtor{Name: "JObj", Args: []Value{obj}}, nil
+		return VCtor{Name: "JObj", Args: []Value{VList{Items: pairs}}}, nil
 	}
 	return nil, &RuntimeError{Msg: fmt.Sprintf("jsonParse: unexpected type %T", v)}
 }
