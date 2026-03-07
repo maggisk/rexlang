@@ -31,4 +31,4 @@ test "zip two infinite streams" =
     assert (pairs == [(0, "x"), (1, "x"), (2, "x")])
 
 test "sum first 100 naturals" =
-    assert (range 1 100 |> foldl (\acc x -> acc + x) 0 == 5050)
+    assert (range 1 101 |> foldl (\acc x -> acc + x) 0 == 5050)

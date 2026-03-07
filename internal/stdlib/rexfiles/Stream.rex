@@ -68,20 +68,20 @@ test "from" =
 
 -- | Create a stream of integers in a range (inclusive).
 --
---     range 1 5 |> toList == [1, 2, 3, 4, 5]
+--     range 1 5 |> toList == [1, 2, 3, 4]
 --
 export
 range : Int -> Int -> Stream Int
 range lo hi =
-    if lo > hi then
+    if lo >= hi then
         Empty
     else
         Cons lo (\_ -> range (lo + 1) hi)
 
 test "range" =
-    assert (range 1 5 |> toList == [1, 2, 3, 4, 5])
+    assert (range 1 5 |> toList == [1, 2, 3, 4])
     assert (range 5 3 |> toList == [])
-    assert (range 1 1 |> toList == [1])
+    assert (range 1 1 |> toList == [])
 
 
 -- # Transform
