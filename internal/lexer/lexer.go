@@ -20,7 +20,7 @@ func (e *LexError) Error() string {
 var keywords = map[string]bool{
 	"let": true, "rec": true, "and": true, "in": true,
 	"if": true, "then": true, "else": true,
-	"case": true, "type": true, "of": true, "import": true,
+	"match": true, "when": true, "type": true, "import": true,
 	"export": true, "as": true, "trait": true, "impl": true,
 	"where": true, "test": true, "assert": true, "alias": true,
 }

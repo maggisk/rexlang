@@ -12,31 +12,31 @@ import Std:Result (Ok, Err)
 
 -- Echo handler: reads from conn until EOF, echoes back each message
 handleClient conn =
-    case tcpRead conn of
-        Err _ ->
+    match tcpRead conn
+        when Err _ ->
             tcpClose conn
-        Ok msg ->
+        when Ok msg ->
             let _ = tcpWrite conn msg
             in handleClient conn
 
 
 -- Accept loop: accepts connections and spawns a handler for each
 acceptLoop ln =
-    case tcpAccept ln of
-        Err _ ->
+    match tcpAccept ln
+        when Err _ ->
             ()
-        Ok conn ->
+        when Ok conn ->
             let _ = spawn \_ ->
                     handleClient conn
             in acceptLoop ln
 
 
 export main _ =
-    case tcpListen 9000 of
-        Err e ->
+    match tcpListen 9000
+        when Err e ->
             let _ = println "Failed to listen: ${e}"
             in 1
-        Ok (ln, port) ->
+        when Ok (ln, port) ->
             let
                 _ = println "Listening on port ${toString port}"
                 _ = acceptLoop ln

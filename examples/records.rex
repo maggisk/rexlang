@@ -12,8 +12,8 @@ test "record creation and access" =
     assert (getName alice == "Alice")
 
 test "record pattern matching" =
-    let msg = case alice of
-        Person { name = n, age = a } ->
+    let msg = match alice
+        when Person { name = n, age = a } ->
             n ++ " is " ++ show a
     assert (msg == "Alice is 30")
 
@@ -24,8 +24,8 @@ test "record equality" =
     assert (alice != carol)
 
 test "partial pattern matching" =
-    let justName = case alice of
-        Person { name = n } ->
+    let justName = match alice
+        when Person { name = n } ->
             n
     assert (justName == "Alice")
 
@@ -39,8 +39,8 @@ test "parametric records" =
     assert (p.snd == "hello")
 
 test "parametric record pattern" =
-    let result = case p of
-        Pair { fst = x, snd = y } ->
+    let result = match p
+        when Pair { fst = x, snd = y } ->
             show x ++ " " ++ y
     assert (result == "1 hello")
 

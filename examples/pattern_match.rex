@@ -1,14 +1,14 @@
 -- Pattern matching examples
 
 
--- Fibonacci using case
+-- Fibonacci using match
 fib n =
-    case n of
-        0 ->
+    match n
+        when 0 ->
             0
-        1 ->
+        when 1 ->
             1
-        _ ->
+        when _ ->
             fib (n - 1) + fib (n - 2)
 
 test "fibonacci via pattern match" =
@@ -17,12 +17,12 @@ test "fibonacci via pattern match" =
 
 -- Describe a number as a string
 describe x =
-    case x of
-        0 ->
+    match x
+        when 0 ->
             "zero"
-        1 ->
+        when 1 ->
             "one"
-        _ ->
+        when _ ->
             "other"
 
 test "describe" =
@@ -33,10 +33,10 @@ test "describe" =
 
 -- Boolean negation via pattern matching
 myNot b =
-    case b of
-        true ->
+    match b
+        when true ->
             false
-        false ->
+        when false ->
             true
 
 test "boolean negation" =

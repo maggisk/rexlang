@@ -11,10 +11,10 @@ import Std:Maybe (Just, Nothing)
 export
 length : [a] -> Int
 length lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             0
-        [_|t] ->
+        when [_|t] ->
             1 + length t
 
 test "length" =
@@ -29,10 +29,10 @@ test "length" =
 export
 isEmpty : [a] -> Bool
 isEmpty lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             true
-        _ ->
+        when _ ->
             false
 
 test "isEmpty" =
@@ -51,10 +51,10 @@ test "isEmpty" =
 export
 head : [a] -> Maybe a
 head lst =
-    case lst of
-        [h|_] ->
+    match lst
+        when [h|_] ->
             Just h
-        [] ->
+        when [] ->
             Nothing
 
 test "head" =
@@ -70,10 +70,10 @@ test "head" =
 export
 tail : [a] -> Maybe [a]
 tail lst =
-    case lst of
-        [_|t] ->
+    match lst
+        when [_|t] ->
             Just t
-        [] ->
+        when [] ->
             Nothing
 
 test "tail" =
@@ -90,12 +90,12 @@ test "tail" =
 export
 last : [a] -> Maybe a
 last lst =
-    case lst of
-        [x] ->
+    match lst
+        when [x] ->
             Just x
-        [_|t] ->
+        when [_|t] ->
             last t
-        [] ->
+        when [] ->
             Nothing
 
 test "last" =
@@ -112,16 +112,16 @@ test "last" =
 export
 init : [a] -> Maybe [a]
 init lst =
-    case lst of
-        [_] ->
+    match lst
+        when [_] ->
             Just []
-        [h|t] ->
-            case init t of
-                Just rest ->
+        when [h|t] ->
+            match init t
+                when Just rest ->
                     Just (h :: rest)
-                Nothing ->
+                when Nothing ->
                     Nothing
-        [] ->
+        when [] ->
             Nothing
 
 test "init" =
@@ -137,10 +137,10 @@ test "init" =
 export
 nth : Int -> [a] -> Maybe a
 nth n lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             Nothing
-        [h|t] ->
+        when [h|t] ->
             if n == 0 then
                 Just h
             else
@@ -162,10 +162,10 @@ test "nth" =
 export
 foldl : (b -> a -> b) -> b -> [a] -> b
 foldl f acc lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             acc
-        [h|t] ->
+        when [h|t] ->
             foldl f (f acc h) t
 
 test "foldl" =
@@ -179,10 +179,10 @@ test "foldl" =
 export
 foldr : (a -> b -> b) -> b -> [a] -> b
 foldr f acc lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             acc
-        [h|t] ->
+        when [h|t] ->
             f h (foldr f acc t)
 
 test "foldr" =
@@ -197,10 +197,10 @@ test "foldr" =
 export
 foldl1 : (a -> a -> a) -> [a] -> a
 foldl1 f lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             error "foldl1: empty list"
-        [h|t] ->
+        when [h|t] ->
             foldl f h t
 
 test "foldl1" =
@@ -272,15 +272,15 @@ test "all" =
 export
 maximum : [a] -> Maybe a
 maximum lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             Nothing
-        [h|t] ->
+        when [h|t] ->
             Just (foldl (\a b ->
-                case compare a b of
-                    GT ->
+                match compare a b
+                    when GT ->
                         a
-                    _ ->
+                    when _ ->
                         b) h t)
 
 test "maximum" =
@@ -295,15 +295,15 @@ test "maximum" =
 export
 minimum : [a] -> Maybe a
 minimum lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             Nothing
-        [h|t] ->
+        when [h|t] ->
             Just (foldl (\a b ->
-                case compare a b of
-                    LT ->
+                match compare a b
+                    when LT ->
                         a
-                    _ ->
+                    when _ ->
                         b) h t)
 
 test "minimum" =
@@ -358,10 +358,10 @@ test "range" =
 export
 map : (a -> b) -> [a] -> [b]
 map f lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             []
-        [h|t] ->
+        when [h|t] ->
             f h :: map f t
 
 test "map" =
@@ -376,10 +376,10 @@ export
 indexedMap : (Int -> a -> b) -> [a] -> [b]
 indexedMap f lst =
     let rec go i xs =
-        case xs of
-            [] ->
+        match xs
+            when [] ->
                 []
-            [h|t] ->
+            when [h|t] ->
                 f i h :: go (i + 1) t
     in
     go 0 lst
@@ -395,10 +395,10 @@ test "indexedMap" =
 export
 filter : (a -> Bool) -> [a] -> [a]
 filter pred lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             []
-        [h|t] ->
+        when [h|t] ->
             if pred h then
                 h :: filter pred t
             else
@@ -415,14 +415,14 @@ test "filter" =
 export
 filterMap : (a -> Maybe b) -> [a] -> [b]
 filterMap f lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             []
-        [h|t] ->
-            case f h of
-                Just v ->
+        when [h|t] ->
+            match f h
+                when Just v ->
                     v :: filterMap f t
-                Nothing ->
+                when Nothing ->
                     filterMap f t
 
 test "filterMap" =
@@ -438,10 +438,10 @@ export
 reverse : [a] -> [a]
 reverse lst =
     let rec go acc xs =
-        case xs of
-            [] ->
+        match xs
+            when [] ->
                 acc
-            [h|t] ->
+            when [h|t] ->
                 go (h :: acc) t
     in
     go [] lst
@@ -460,10 +460,10 @@ test "reverse" =
 export
 append : [a] -> [a] -> [a]
 append lst1 lst2 =
-    case lst1 of
-        [] ->
+    match lst1
+        when [] ->
             lst2
-        [h|t] ->
+        when [h|t] ->
             h :: append t lst2
 
 test "append" =
@@ -505,14 +505,14 @@ test "flatMap" =
 export
 zip : [a] -> [b] -> [(a, b)]
 zip xs ys =
-    case xs of
-        [] ->
+    match xs
+        when [] ->
             []
-        [x|xrest] ->
-            case ys of
-                [] ->
+        when [x|xrest] ->
+            match ys
+                when [] ->
                     []
-                [y|yrest] ->
+                when [y|yrest] ->
                     (x, y) :: zip xrest yrest
 
 test "zip" =
@@ -528,14 +528,14 @@ test "zip" =
 export
 zipWith : (a -> b -> c) -> [a] -> [b] -> [c]
 zipWith f xs ys =
-    case xs of
-        [] ->
+    match xs
+        when [] ->
             []
-        [x|xrest] ->
-            case ys of
-                [] ->
+        when [x|xrest] ->
+            match ys
+                when [] ->
                     []
-                [y|yrest] ->
+                when [y|yrest] ->
                     f x y :: zipWith f xrest yrest
 
 test "zipWith" =
@@ -552,10 +552,10 @@ export
 unzip : [(a, b)] -> ([a], [b])
 unzip pairs =
     let rec go xs ys zs =
-        case zs of
-            [] ->
+        match zs
+            when [] ->
                 (reverse xs, reverse ys)
-            [h|t] ->
+            when [h|t] ->
                 let (a, b) = h
                 in go (a :: xs) (b :: ys) t
     in
@@ -574,12 +574,12 @@ test "unzip" =
 export
 intersperse : a -> [a] -> [a]
 intersperse sep lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             []
-        [_] ->
+        when [_] ->
             lst
-        [h|t] ->
+        when [h|t] ->
             h :: sep :: intersperse sep t
 
 test "intersperse" =
@@ -600,10 +600,10 @@ take n lst =
     if n == 0 then
         []
     else
-        case lst of
-            [] ->
+        match lst
+            when [] ->
                 []
-            [h|t] ->
+            when [h|t] ->
                 h :: take (n - 1) t
 
 test "take" =
@@ -620,10 +620,10 @@ drop n lst =
     if n == 0 then
         lst
     else
-        case lst of
-            [] ->
+        match lst
+            when [] ->
                 []
-            [_|t] ->
+            when [_|t] ->
                 drop (n - 1) t
 
 test "drop" =
@@ -637,10 +637,10 @@ test "drop" =
 export
 takeWhile : (a -> Bool) -> [a] -> [a]
 takeWhile pred lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             []
-        [h|t] ->
+        when [h|t] ->
             if pred h then
                 h :: takeWhile pred t
             else
@@ -658,10 +658,10 @@ test "takeWhile" =
 export
 dropWhile : (a -> Bool) -> [a] -> [a]
 dropWhile pred lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             []
-        [h|t] ->
+        when [h|t] ->
             if pred h then
                 dropWhile pred t
             else
@@ -680,10 +680,10 @@ export
 span : (a -> Bool) -> [a] -> ([a], [a])
 span pred lst =
     let rec go acc xs =
-        case xs of
-            [] ->
+        match xs
+            when [] ->
                 (reverse acc, [])
-            [h|t] ->
+            when [h|t] ->
                 if pred h then
                     go (h :: acc) t
                 else
@@ -707,10 +707,10 @@ test "span" =
 export
 find : (a -> Bool) -> [a] -> Maybe a
 find pred lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             Nothing
-        [h|t] ->
+        when [h|t] ->
             if pred h then
                 Just h
             else
@@ -729,10 +729,10 @@ export
 partition : (a -> Bool) -> [a] -> ([a], [a])
 partition pred lst =
     let rec go yes no xs =
-        case xs of
-            [] ->
+        match xs
+            when [] ->
                 (reverse yes, reverse no)
-            [h|t] ->
+            when [h|t] ->
                 if pred h then
                     go (h :: yes) no t
                 else
@@ -757,10 +757,10 @@ export
 unique : [a] -> [a]
 unique lst =
     let rec go acc xs =
-        case xs of
-            [] ->
+        match xs
+            when [] ->
                 reverse acc
-            [h|t] ->
+            when [h|t] ->
                 if acc |> any (\x -> x == h) then
                     go acc t
                 else
@@ -783,10 +783,10 @@ export
 uniqueBy : (a -> b) -> [a] -> [a]
 uniqueBy f lst =
     let rec go seen acc xs =
-        case xs of
-            [] ->
+        match xs
+            when [] ->
                 reverse acc
-            [h|t] ->
+            when [h|t] ->
                 let key = f h
                 in if seen |> any (\k -> k == key) then
                     go seen acc t

@@ -8,10 +8,10 @@ export type Map k v = Empty | Node int Map k v Map
 
 -- | Get the height of a map node (Empty = 0).
 height m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             0
-        Node h _ _ _ _ ->
+        when Node h _ _ _ _ ->
             h
 
 
@@ -29,37 +29,37 @@ node l k v r =
 
 -- | Balance factor (left height minus right height).
 balanceFactor m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             0
-        Node _ l _ _ r ->
+        when Node _ l _ _ r ->
             height l - height r
 
 
 -- | Rotate right around the root.
 rotateRight m =
-    case m of
-        Node _ (Node _ a xk xv b) yk yv c ->
+    match m
+        when Node _ (Node _ a xk xv b) yk yv c ->
             node a xk xv (node b yk yv c)
-        _ ->
+        when _ ->
             m
 
 
 -- | Rotate left around the root.
 rotateLeft m =
-    case m of
-        Node _ a xk xv (Node _ b yk yv c) ->
+    match m
+        when Node _ a xk xv (Node _ b yk yv c) ->
             node (node a xk xv b) yk yv c
-        _ ->
+        when _ ->
             m
 
 
 -- | Rebalance a node after insertion or removal.
 rebalance m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             Empty
-        Node _ l k v r ->
+        when Node _ l k v r ->
             let bf = height l - height r
             in if bf > 1 then
                 if balanceFactor l < 0 then
@@ -82,10 +82,10 @@ rebalance m =
 export
 size : Map k v -> Int
 size m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             0
-        Node _ l _ _ r ->
+        when Node _ l _ _ r ->
             1 + size l + size r
 
 
@@ -100,16 +100,16 @@ isEmpty m =
 export
 lookup : k -> Map k v -> Maybe v
 lookup key m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             Nothing
-        Node _ l k v r ->
-            case compare key k of
-                LT ->
+        when Node _ l k v r ->
+            match compare key k
+                when LT ->
                     lookup key l
-                GT ->
+                when GT ->
                     lookup key r
-                EQ ->
+                when EQ ->
                     Just v
 
 
@@ -117,16 +117,16 @@ lookup key m =
 export
 member : k -> Map k v -> Bool
 member key m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             false
-        Node _ l k _ r ->
-            case compare key k of
-                LT ->
+        when Node _ l k _ r ->
+            match compare key k
+                when LT ->
                     member key l
-                GT ->
+                when GT ->
                     member key r
-                EQ ->
+                when EQ ->
                     true
 
 
@@ -156,16 +156,16 @@ test "empty and singleton" =
 export
 insert : k -> v -> Map k v -> Map k v
 insert key val m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             Node 1 Empty key val Empty
-        Node h l k v r ->
-            case compare key k of
-                LT ->
+        when Node h l k v r ->
+            match compare key k
+                when LT ->
                     rebalance (node (insert key val l) k v r)
-                GT ->
+                when GT ->
                     rebalance (node l k v (insert key val r))
-                EQ ->
+                when EQ ->
                     Node h l key val r
 
 test "insert" =
@@ -184,13 +184,13 @@ test "insert replaces existing key" =
 
 -- | Remove the minimum element, returning (minKey, minValue, remaining).
 removeMin m =
-    case m of
-        Node _ (Empty) k v r ->
+    match m
+        when Node _ (Empty) k v r ->
             (k, v, r)
-        Node _ l k v r ->
+        when Node _ l k v r ->
             let (mk, mv, newL) = removeMin l
             in (mk, mv, rebalance (node newL k v r))
-        Empty ->
+        when Empty ->
             error "removeMin: empty map"
 
 
@@ -198,20 +198,20 @@ removeMin m =
 export
 remove : k -> Map k v -> Map k v
 remove key m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             Empty
-        Node _ l k v r ->
-            case compare key k of
-                LT ->
+        when Node _ l k v r ->
+            match compare key k
+                when LT ->
                     rebalance (node (remove key l) k v r)
-                GT ->
+                when GT ->
                     rebalance (node l k v (remove key r))
-                EQ ->
-                    case r of
-                        Empty ->
+                when EQ ->
+                    match r
+                        when Empty ->
                             l
-                        _ ->
+                        when _ ->
                             let (mk, mv, newR) = removeMin r
                             in rebalance (node l mk mv newR)
 
@@ -228,16 +228,16 @@ test "remove" =
 export
 update : k -> (v -> v) -> Map k v -> Map k v
 update key f m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             Empty
-        Node h l k v r ->
-            case compare key k of
-                LT ->
+        when Node h l k v r ->
+            match compare key k
+                when LT ->
                     Node h (update key f l) k v r
-                GT ->
+                when GT ->
                     Node h l k v (update key f r)
-                EQ ->
+                when EQ ->
                     Node h l k (f v) r
 
 test "update" =
@@ -251,10 +251,10 @@ export
 fromList : [(k, v)] -> Map k v
 fromList lst =
     let rec go acc pairs =
-        case pairs of
-            [] ->
+        match pairs
+            when [] ->
                 acc
-            [pair | rest] ->
+            when [pair | rest] ->
                 let (k, v) = pair
                 in go (insert k v acc) rest
     in
@@ -273,10 +273,10 @@ test "fromList" =
 export
 foldl : (k -> v -> a -> a) -> a -> Map k v -> a
 foldl f acc m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             acc
-        Node _ l k v r ->
+        when Node _ l k v r ->
             let
                 acc1 = foldl f acc l
                 acc2 = f k v acc1
@@ -291,10 +291,10 @@ test "foldl" =
 export
 foldr : (k -> v -> a -> a) -> a -> Map k v -> a
 foldr f acc m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             acc
-        Node _ l k v r ->
+        when Node _ l k v r ->
             let
                 acc1 = foldr f acc r
                 acc2 = f k v acc1
@@ -338,10 +338,10 @@ test "keys and values" =
 export
 map : (v -> w) -> Map k v -> Map k w
 map f m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             Empty
-        Node h l k v r ->
+        when Node h l k v r ->
             Node h (map f l) k (f v) (map f r)
 
 test "map" =
@@ -358,10 +358,10 @@ test "map" =
 export
 mapWithKey : (k -> v -> w) -> Map k v -> Map k w
 mapWithKey f m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             Empty
-        Node h l k v r ->
+        when Node h l k v r ->
             Node h (mapWithKey f l) k (f k v) (mapWithKey f r)
 
 test "mapWithKey" =
@@ -419,10 +419,10 @@ export
 unionWith : (v -> v -> v) -> Map k v -> Map k v -> Map k v
 unionWith f m1 m2 =
     foldl (\k v acc ->
-        case lookup k acc of
-            Just existing ->
+        match lookup k acc
+            when Just existing ->
                 insert k (f v existing) acc
-            Nothing ->
+            when Nothing ->
                 insert k v acc) m2 m1
 
 test "unionWith" =
@@ -459,10 +459,10 @@ export
 intersectWith : (v -> v -> v) -> Map k v -> Map k v -> Map k v
 intersectWith f m1 m2 =
     foldl (\k v acc ->
-        case lookup k m2 of
-            Just v2 ->
+        match lookup k m2
+            when Just v2 ->
                 insert k (f v v2) acc
-            Nothing ->
+            when Nothing ->
                 acc) empty m1
 
 test "intersectWith" =
@@ -502,12 +502,12 @@ test "difference" =
 export
 findMin : Map k v -> Maybe (k, v)
 findMin m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             Nothing
-        Node _ (Empty) k v _ ->
+        when Node _ (Empty) k v _ ->
             Just (k, v)
-        Node _ l _ _ _ ->
+        when Node _ l _ _ _ ->
             findMin l
 
 
@@ -518,12 +518,12 @@ findMin m =
 export
 findMax : Map k v -> Maybe (k, v)
 findMax m =
-    case m of
-        Empty ->
+    match m
+        when Empty ->
             Nothing
-        Node _ _ k v (Empty) ->
+        when Node _ _ k v (Empty) ->
             Just (k, v)
-        Node _ _ _ _ r ->
+        when Node _ _ _ _ r ->
             findMax r
 
 test "findMin and findMax" =

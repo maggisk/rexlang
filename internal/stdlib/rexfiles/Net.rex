@@ -4,10 +4,10 @@ export tcpListen, tcpAccept, tcpConnect, tcpRead, tcpWrite, tcpClose, tcpCloseLi
 
 
 unwrap result =
-    case result of
-        Ok v ->
+    match result
+        when Ok v ->
             v
-        Err _ ->
+        when Err _ ->
             error "unwrap failed"
 
 test "echo round-trip on port 0" =

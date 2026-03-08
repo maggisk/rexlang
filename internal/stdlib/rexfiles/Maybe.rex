@@ -14,10 +14,10 @@ export type Maybe a = Nothing | Just a
 export
 isNothing : Maybe a -> Bool
 isNothing x =
-    case x of
-        Nothing ->
+    match x
+        when Nothing ->
             true
-        Just _ ->
+        when Just _ ->
             false
 
 test "isNothing" =
@@ -33,10 +33,10 @@ test "isNothing" =
 export
 isSome : Maybe a -> Bool
 isSome x =
-    case x of
-        Nothing ->
+    match x
+        when Nothing ->
             false
-        Just _ ->
+        when Just _ ->
             true
 
 test "isSome" =
@@ -55,10 +55,10 @@ test "isSome" =
 export
 fromMaybe : a -> Maybe a -> a
 fromMaybe default x =
-    case x of
-        Nothing ->
+    match x
+        when Nothing ->
             default
-        Just v ->
+        when Just v ->
             v
 
 test "fromMaybe" =
@@ -91,10 +91,10 @@ test "withDefault" =
 export
 map : (a -> b) -> Maybe a -> Maybe b
 map f x =
-    case x of
-        Nothing ->
+    match x
+        when Nothing ->
             Nothing
-        Just v ->
+        when Just v ->
             Just (f v)
 
 test "map" =
@@ -112,10 +112,10 @@ test "map" =
 export
 andThen : (a -> Maybe b) -> Maybe a -> Maybe b
 andThen f x =
-    case x of
-        Nothing ->
+    match x
+        when Nothing ->
             Nothing
-        Just v ->
+        when Just v ->
             f v
 
 test "andThen" =
@@ -133,10 +133,10 @@ test "andThen" =
 export
 filter : (a -> Bool) -> Maybe a -> Maybe a
 filter pred x =
-    case x of
-        Nothing ->
+    match x
+        when Nothing ->
             Nothing
-        Just v ->
+        when Just v ->
             if pred v then
                 Just v
             else
@@ -157,10 +157,10 @@ test "filter" =
 export
 orElse : Maybe a -> Maybe a -> Maybe a
 orElse a b =
-    case a of
-        Just _ ->
+    match a
+        when Just _ ->
             a
-        Nothing ->
+        when Nothing ->
             b
 
 test "orElse" =

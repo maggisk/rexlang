@@ -73,21 +73,21 @@ stringify j =
             |> intersperse ", "
             |> foldl (\acc x -> acc ++ x) ""
     in
-    case j of
-        JNull ->
+    match j
+        when JNull ->
             "null"
-        JBool b ->
+        when JBool b ->
             if b then
                 "true"
             else
                 "false"
-        JNum n ->
+        when JNum n ->
             toString n
-        JStr s ->
+        when JStr s ->
             "\"${escapeStr s}\""
-        JArr arr ->
+        when JArr arr ->
             "[${strArr arr}]"
-        JObj obj ->
+        when JObj obj ->
             "{${strObj obj}}"
 
 test "stringify primitives" =
@@ -158,10 +158,10 @@ test "encodeArr and encodeObj" =
 export
 getField : String -> [(String, Json)] -> Maybe Json
 getField key pairs =
-    case pairs of
-        [] ->
+    match pairs
+        when [] ->
             Nothing
-        [(k, v)|rest] ->
+        when [(k, v)|rest] ->
             if k == key then
                 Just v
             else

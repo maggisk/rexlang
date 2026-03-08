@@ -5,10 +5,10 @@ type List = Nil | Cons int List
 
 
 length xs =
-    case xs of
-        Nil ->
+    match xs
+        when Nil ->
             0
-        Cons _ t ->
+        when Cons _ t ->
             1 + length t
 
 
@@ -18,10 +18,10 @@ test "custom list length" =
 
 test "option pattern match" =
     let get opt =
-        case opt of
-            None ->
+        match opt
+            when None ->
                 0
-            Some x ->
+            when Some x ->
                 x
     assert (Some 42 |> get == 42)
     assert (get None == 0)

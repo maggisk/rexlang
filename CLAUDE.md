@@ -82,7 +82,7 @@ gofmt -w .
 - **ADTs**: `type Foo = A | B int` registers constructors; `type Foo a = …` for parametric ADTs.
 - **Records**: `type Person = { name : String, age : Int }` — nominal record types tied to `type` declarations. Construction: `Person { name = "Alice", age = 30 }` or positional: `Person "Alice" 30`. The type name is a positional constructor function (`VRecordCtorFn`) that supports currying and can be passed as a higher-order function (e.g., `map2 Person ...`). Field access: `p.name` (chained: `p.addr.city`; lowercase `.` produces `FieldAccess`; uppercase `.` produces `DotAccess` for modules). Update: `{ alice | name = "Bob" }` — creates a new record with changed fields. Nested dot-path updates: `{ model | user.name = "Alice" }` — recursively clones and updates nested records. Pattern matching: `Person { name = n, age = a }` (partial patterns OK). Parametric records: `type Pair a b = { fst : a, snd : b }`. Typechecker infers record type from field name when the expression type is a TVar. Field metadata stored in `__record_fields__` registry (keyed by type name → `RecordInfo`). Module imports propagate `__record_fields__` and `TypeDefs` via `ModuleResult`, so record types defined in imported modules can be constructed, accessed, and updated by the importer.
 - **Let-block**: `let` on its own line followed by indented bindings, terminated by `in`. Parser-only — desugars to nested `Let` AST nodes. Detected when the token after `let` is on a different line and indented. `and` is only for `let rec ... and ...` mutual recursion.
-- **`let` requires `in`**: In expression contexts (case arms, function bodies, lambdas), `let x = expr in body` requires explicit `in`. `parseLetBody` bounds the RHS with `caseArmCol = letCol` so the body can't eat tokens at the `let` column or before — this prevents greedy parsing and gives clear errors when `in` is missing. Top-level and test-body `let` bindings (`Let{InExpr: nil}`) are unaffected — those contexts loop over independent expressions.
+- **`let` requires `in`**: In expression contexts (match arms, function bodies, lambdas), `let x = expr in body` requires explicit `in`. `parseLetBody` bounds the RHS with `caseArmCol = letCol` so the body can't eat tokens at the `let` column or before — this prevents greedy parsing and gives clear errors when `in` is missing. Top-level and test-body `let` bindings (`Let{InExpr: nil}`) are unaffected — those contexts loop over independent expressions.
 - **Pipe** `|>`: left-associative, desugars to function application at eval time.
 - **Trailing lambda**: when `\` appears after a function application (not inside `isAtomStart`), `parseApp()` treats it as the last argument. Sets `caseArmCol` to the function head's column so the lambda body terminates when indentation drops. Enables `Decoder \json -> ...` and `spawn \_ -> ...` without wrapping parens. One-line lambdas still use parens.
 - **Traits**: `trait`/`impl` (Rust-style naming) for ad-hoc polymorphism. Single-parameter traits, runtime dispatch. `Prelude.rex` auto-loaded with `Eq`, `Ord`, `Show`. Trait instances stored in `VInstances` keyed by `"TraitName:TypeName:MethodName"`.
@@ -107,30 +107,30 @@ gofmt -w .
 Branch bodies always go on the next indented line — never on the same line as `->`, `then`, or `else`:
 
 ```rex
--- case arms
-case lst of
-    [] ->
+-- match arms
+match lst
+    when [] ->
         0
-    [h|t] ->
+    when [h|t] ->
         1 + length t
 
 -- if-then-else
 if n == 0 then
     []
 else
-    case lst of
-        ...
+    match lst
+        when ...
 ```
 
-Trailing lambda: when a multi-line lambda is the last (or sole) argument to a function, write it without parens — the parser bounds the body by indentation (same `caseArmCol` mechanism as `case`/`test`). One-line lambdas keep parens.
+Trailing lambda: when a multi-line lambda is the last (or sole) argument to a function, write it without parens — the parser bounds the body by indentation (same `caseArmCol` mechanism as `match`/`test`). One-line lambdas keep parens.
 
 ```rex
 -- good: trailing lambda (multi-line, last argument)
 Decoder \json ->
-    case json of
-        JStr s ->
+    match json
+        when JStr s ->
             Ok s
-        _ ->
+        when _ ->
             Err (DecodeError { path = [], message = "expected a String", value = json })
 
 -- good: one-line lambda keeps parens
@@ -167,10 +167,10 @@ let
     _ = println "hello"
     x = computeStuff ()
 in
-case x of
-    Ok v ->
+match x
+    when Ok v ->
         v
-    Err _ ->
+    when Err _ ->
         0
 ```
 
@@ -221,7 +221,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Type annotations — optional `add : Int -> Int -> Int` before `let` binding
 - [x] Let-blocks — `let` + indented bindings + `in` (parser-only desugaring)
 - Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`)
-- [x] Exhaustiveness checking — static pass post-HM using `__ctor_families__`; rejects non-exhaustive `case` (ADTs, bools, lists require all constructors; literals/tuples require catch-all `_ ->`); refutable `let` patterns rejected via `isIrrefutable` check
+- [x] Exhaustiveness checking — static pass post-HM using `__ctor_families__`; rejects non-exhaustive `match` (ADTs, bools, lists require all constructors; literals/tuples require catch-all `_ ->`); refutable `let` patterns rejected via `isIrrefutable` check
 - Typed holes — `?name` in expression position; typechecker infers the required type from surrounding context and reports it along with in-scope bindings; enables type-directed, incremental program construction. Never reaches eval. Implementation: `HoleExpr{Name string}` AST node; typechecker unifies hole with inferred type, collects into a holes report instead of a hard error. Use `?name` (not `_`) to avoid ambiguity with pattern wildcards.
 
 ### Error experience
@@ -268,4 +268,5 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **Maybe in Std:Maybe**: `type Maybe a = Nothing | Just a` moved from Prelude to `Std:Maybe` module. Require `import Std:Maybe (Just, Nothing)` — type name `Maybe` is available in annotations via `TypeDefs` propagation. Prelude retains only `Ordering`, `Eq`, `Ord`, `Show`.
 - **Explicit imports**: Runtime env only contains `CoreBuiltins` (`not`, `error`, `todo`, `showInt`, `showFloat`). All other builtins (IO, Math, String, Env, Process) require module imports. `BuiltinsForModule()` gives each stdlib module only CoreBuiltins + its own specific builtins. `Std:Convert` provides cross-conversion between Maybe and Result (`toResult`, `toMaybe`, `fromMaybe`).
 - **Std:Net**: TCP networking module with 7 Go builtins: `tcpListen` (returns `(Listener, Int)` for port-0), `tcpAccept`, `tcpConnect`, `tcpRead` (4096-byte buffer, EOF → `Err "EOF"`), `tcpWrite`, `tcpClose`, `tcpCloseListener`. Opaque `Listener` and `Conn` types (no type params). All IO operations return `Result`. `VListener{L net.Listener}` and `VConn{C net.Conn}` value types in `values.go`. Registered in `BuiltinsForModule` and `typeEnvForModule`/`typeDefsForModule` under `"Net"`. Require `import Std:Net`.
+- **`match`/`when` syntax**: Pattern matching uses `match expr` + `when pat -> body` arms (not `case`/`of`). `match` and `when` are keywords; `case` and `of` are not reserved and can be used as identifiers. Parser: `parseMatch()` consumes `match`, parses scrutinee, then loops over `when` arms at the same column (`firstWhenCol`). `caseArmCol = firstWhenCol` bounds arm bodies. Nested matches work because inner `when` arms are indented further right than outer `firstWhenCol`. `MatchArm` has `Line`/`Col` fields for error reporting.
 - **`todo` builtin**: `todo : String -> a` — development placeholder that throws "TODO: message" at runtime. Typechecker emits a warning on every `todo` usage. `--safe` flag promotes warnings to errors (intended for CI/deploy). Warnings print in yellow, errors in red (TTY-aware). `Var` AST node has `Line int` for warning source locations.

@@ -952,27 +952,32 @@ func (p *parser) parsePattern() (ast.Pattern, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Case
+// Match
 // ---------------------------------------------------------------------------
 
-func (p *parser) parseCase() (ast.Expr, error) {
-	p.advance() // consume 'case'
+func (p *parser) parseMatch() (ast.Expr, error) {
+	p.advance() // consume 'match'
 	scrutinee, err := p.parseExpr()
 	if err != nil {
 		return nil, err
 	}
-	if err := p.expect(lexer.TokOf); err != nil {
-		return nil, err
+
+	if p.peek().Kind != lexer.TokWhen {
+		tok := p.peek()
+		return nil, &ParseError{
+			Msg:  fmt.Sprintf("expected 'when' after match expression, got '%s' at line %d, col %d", tok, tok.Line, tok.Col+1),
+			Line: tok.Line,
+			Col:  tok.Col,
+		}
 	}
-	// Optional leading '|'
-	if p.peek().Kind == lexer.TokPipe {
-		p.advance()
-	}
-	armCol := p.peek().Col
+	firstWhenCol := p.peek().Col
 	saved := p.caseArmCol
-	p.caseArmCol = armCol
+	p.caseArmCol = firstWhenCol
+
 	var arms []ast.MatchArm
-	for {
+	for p.peek().Kind == lexer.TokWhen && p.peek().Col == firstWhenCol {
+		whenTok := p.peek()
+		p.advance() // consume 'when'
 		pat, err := p.parsePattern()
 		if err != nil {
 			return nil, err
@@ -984,16 +989,9 @@ func (p *parser) parseCase() (ast.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		arms = append(arms, ast.MatchArm{Pat: pat, Body: body})
-		tok := p.peek()
-		if tok.Kind == lexer.TokEOF {
-			break
-		}
-		if tok.Col == armCol {
-			continue
-		}
-		break
+		arms = append(arms, ast.MatchArm{Pat: pat, Body: body, Line: whenTok.Line, Col: whenTok.Col})
 	}
+
 	p.caseArmCol = saved
 	return ast.Match{Scrutinee: scrutinee, Arms: arms}, nil
 }
@@ -1561,8 +1559,8 @@ func (p *parser) parseExpr() (ast.Expr, error) {
 		return p.parseIf()
 	case lexer.TokBackslash:
 		return p.parseFun()
-	case lexer.TokCase:
-		return p.parseCase()
+	case lexer.TokMatch:
+		return p.parseMatch()
 	case lexer.TokType:
 		return p.parseTypeDecl()
 	case lexer.TokImport:

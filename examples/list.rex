@@ -3,10 +3,10 @@
 xs = [1, 2, 3, 4, 5]
 
 sum lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             0
-        [h|t] ->
+        when [h|t] ->
             h + sum t
 
 test "sum" =
@@ -16,8 +16,8 @@ test "sum" =
 test "cons and pattern match" =
     let ys = 0 :: xs
     assert (sum ys == 15)
-    case ys of
-        [h|_] ->
+    match ys
+        when [h|_] ->
             assert (h == 0)
-        _ ->
+        when _ ->
             assert false

@@ -64,10 +64,10 @@ test "optional fields" =
     assert (decodeString decoder """{"host": "localhost"}""" == Ok (Config { host = "localhost", port = Nothing }))
     -- type mismatch still fails (unlike maybe)
     let typeErr =
-        case decodeString decoder """{"host": "localhost", "port": "bad"}""" of
-            Err e ->
+        match decodeString decoder """{"host": "localhost", "port": "bad"}"""
+            when Err e ->
                 e.path == ["port"] && e.message == "expected an Int"
-            _ ->
+            when _ ->
                 false
     assert typeErr
 
@@ -109,9 +109,9 @@ test "error path tracking" =
     let decoder = field "users" (list (field "name" string))
     let result = decodeString decoder json
     let ok =
-        case result of
-            Err e ->
+        match result
+            when Err e ->
                 errorToString e == "users.[1].name: expected a String"
-            _ ->
+            when _ ->
                 false
     assert ok

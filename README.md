@@ -70,10 +70,10 @@ let rec loop n = if n == 0 then 0 else loop (n - 1) in loop 10
 ### Pattern matching
 
 ```
-case shape of
-    Circle r ->
+match shape
+    when Circle r ->
         3.14159 * r * r
-    Rect w h ->
+    when Rect w h ->
         w * h
 ```
 
@@ -102,8 +102,8 @@ type PersonFull = { name : String, addr : Address }
 p2 = { person | addr.city = "LA" }
 
 -- pattern matching
-case alice of
-    Person { name = n } ->
+match alice
+    when Person { name = n } ->
         n
 
 -- parametric records
@@ -131,10 +131,10 @@ Type aliases are transparent — `Name` and `String` are fully interchangeable. 
 xs = [1, 2, 3]
 pair = (42, "hello")
 
-case xs of
-    [] ->
+match xs
+    when [] ->
         0
-    [h | t] ->
+    when [h | t] ->
         h + sum t
 ```
 
@@ -353,18 +353,18 @@ What can still fail at runtime:
 ```
 import Std:Result (try, Ok, Err, DivisionByZero, ModuloByZero)
 
-case try (\_ -> 10 / 0) of
-    Ok n ->
+match try (\_ -> 10 / 0)
+    when Ok n ->
         n
-    Err (DivisionByZero) ->
+    when Err (DivisionByZero) ->
         0
-    Err (ModuloByZero) ->
+    when Err (ModuloByZero) ->
         0
 ```
 
 - **Missing trait instance** — calling a trait method on a type without an `impl` (constraint tracking planned in Traits v2)
 
-Non-exhaustive patterns are caught at compile time — `case` expressions on ADTs, bools, and lists must cover all constructors, and literal/tuple patterns require a catch-all `_ ->` arm. Refutable patterns in `let` bindings are also rejected. IO operations like `readFile` and `getEnv` don't crash — they return `Result` or `Maybe`. Actor mailboxes are unbounded (Erlang-style) so `send` never fails.
+Non-exhaustive patterns are caught at compile time — `match` expressions on ADTs, bools, and lists must cover all constructors, and literal/tuple patterns require a catch-all `_ ->` arm. Refutable patterns in `let` bindings are also rejected. IO operations like `readFile` and `getEnv` don't crash — they return `Result` or `Maybe`. Actor mailboxes are unbounded (Erlang-style) so `send` never fails.
 
 ## Standard library
 
@@ -440,7 +440,7 @@ go test ./...
 - [x] Multi-line strings — `"""..."""` triple-quoted strings
 - [x] Type aliases — `type alias Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation
-- [x] Exhaustiveness checking — reject non-exhaustive `case` at compile time; refutable `let` patterns rejected
+- [x] Exhaustiveness checking — reject non-exhaustive `match` at compile time; refutable `let` patterns rejected
 - [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development
 - [x] Type annotations — optional `add : Int -> Int -> Int` before binding
 - [x] Let-blocks — `let` with indented bindings terminated by `in`

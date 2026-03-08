@@ -1,12 +1,12 @@
 -- Fibonacci
 
 fib n =
-    case n of
-        0 ->
+    match n
+        when 0 ->
             0
-        1 ->
+        when 1 ->
             1
-        _ ->
+        when _ ->
             fib (n - 1) + fib (n - 2)
 
 

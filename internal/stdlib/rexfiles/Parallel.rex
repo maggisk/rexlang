@@ -33,10 +33,10 @@ pmapN n f lst =
                     (total + n - 1) / n
     in
     let rec chunks l =
-        case l of
-            [] ->
+        match l
+            when [] ->
                 []
-            _ ->
+            when _ ->
                 take size l :: chunks (drop size l)
     in
     let pids = map (\chunk ->

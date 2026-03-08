@@ -1,10 +1,10 @@
 -- Factorial
 
 fact n =
-    case n of
-        0 ->
+    match n
+        when 0 ->
             1
-        _ ->
+        when _ ->
             n * fact (n - 1)
 
 

@@ -130,6 +130,8 @@ type Match struct {
 type MatchArm struct {
 	Pat  Pattern
 	Body Expr
+	Line int
+	Col  int
 }
 
 type TypeDecl struct {

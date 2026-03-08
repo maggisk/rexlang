@@ -16,10 +16,10 @@ export type Stream a = Empty | Cons a (() -> Stream a)
 export
 fromList : [a] -> Stream a
 fromList lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             Empty
-        [h|t] ->
+        when [h|t] ->
             Cons h (\_ -> fromList t)
 
 test "fromList" =
@@ -94,10 +94,10 @@ test "range" =
 export
 map : (a -> b) -> Stream a -> Stream b
 map f s =
-    case s of
-        Empty ->
+    match s
+        when Empty ->
             Empty
-        Cons h tail ->
+        when Cons h tail ->
             Cons (f h) (\_ -> map f (tail ()))
 
 test "map" =
@@ -111,10 +111,10 @@ test "map" =
 export
 filter : (a -> Bool) -> Stream a -> Stream a
 filter pred s =
-    case s of
-        Empty ->
+    match s
+        when Empty ->
             Empty
-        Cons h tail ->
+        when Cons h tail ->
             if pred h then
                 Cons h (\_ -> filter pred (tail ()))
             else
@@ -132,10 +132,10 @@ test "filter" =
 export
 flatMap : (a -> Stream b) -> Stream a -> Stream b
 flatMap f s =
-    case s of
-        Empty ->
+    match s
+        when Empty ->
             Empty
-        Cons h tail ->
+        when Cons h tail ->
             append (f h) (\_ -> flatMap f (tail ()))
 
 test "flatMap" =
@@ -145,10 +145,10 @@ test "flatMap" =
 -- | Append two streams. Second stream is a thunk to preserve laziness.
 append : Stream a -> (() -> Stream a) -> Stream a
 append s1 thunk =
-    case s1 of
-        Empty ->
+    match s1
+        when Empty ->
             thunk ()
-        Cons h tail ->
+        when Cons h tail ->
             Cons h (\_ -> append (tail ()) thunk)
 
 
@@ -161,10 +161,10 @@ indexedMap : (Int -> a -> b) -> Stream a -> Stream b
 indexedMap f s =
     let rec
         go i stream =
-            case stream of
-                Empty ->
+            match stream
+                when Empty ->
                     Empty
-                Cons h tail ->
+                when Cons h tail ->
                     Cons (f i h) (\_ -> go (i + 1) (tail ()))
     in
     go 0 s
@@ -186,10 +186,10 @@ take n s =
     if n <= 0 then
         []
     else
-        case s of
-            Empty ->
+        match s
+            when Empty ->
                 []
-            Cons h tail ->
+            when Cons h tail ->
                 h :: take (n - 1) (tail ())
 
 test "take" =
@@ -208,10 +208,10 @@ drop n s =
     if n <= 0 then
         s
     else
-        case s of
-            Empty ->
+        match s
+            when Empty ->
                 Empty
-            Cons _ tail ->
+            when Cons _ tail ->
                 drop (n - 1) (tail ())
 
 test "drop" =
@@ -227,10 +227,10 @@ test "drop" =
 export
 takeWhile : (a -> Bool) -> Stream a -> [a]
 takeWhile pred s =
-    case s of
-        Empty ->
+    match s
+        when Empty ->
             []
-        Cons h tail ->
+        when Cons h tail ->
             if pred h then
                 h :: takeWhile pred (tail ())
             else
@@ -248,10 +248,10 @@ test "takeWhile" =
 export
 dropWhile : (a -> Bool) -> Stream a -> Stream a
 dropWhile pred s =
-    case s of
-        Empty ->
+    match s
+        when Empty ->
             Empty
-        Cons h tail ->
+        when Cons h tail ->
             if pred h then
                 dropWhile pred (tail ())
             else
@@ -269,10 +269,10 @@ test "dropWhile" =
 export
 toList : Stream a -> [a]
 toList s =
-    case s of
-        Empty ->
+    match s
+        when Empty ->
             []
-        Cons h tail ->
+        when Cons h tail ->
             h :: toList (tail ())
 
 test "toList" =
@@ -286,10 +286,10 @@ test "toList" =
 export
 foldl : (b -> a -> b) -> b -> Stream a -> b
 foldl f acc s =
-    case s of
-        Empty ->
+    match s
+        when Empty ->
             acc
-        Cons h tail ->
+        when Cons h tail ->
             foldl f (f acc h) (tail ())
 
 test "foldl" =
@@ -304,10 +304,10 @@ test "foldl" =
 export
 head : Stream a -> Maybe a
 head s =
-    case s of
-        Empty ->
+    match s
+        when Empty ->
             Nothing
-        Cons h _ ->
+        when Cons h _ ->
             Just h
 
 test "head" =
@@ -321,10 +321,10 @@ test "head" =
 export
 isEmpty : Stream a -> Bool
 isEmpty s =
-    case s of
-        Empty ->
+    match s
+        when Empty ->
             true
-        _ ->
+        when _ ->
             false
 
 test "isEmpty" =
@@ -342,14 +342,14 @@ test "isEmpty" =
 export
 zip : Stream a -> Stream b -> Stream (a, b)
 zip s1 s2 =
-    case s1 of
-        Empty ->
+    match s1
+        when Empty ->
             Empty
-        Cons h1 tail1 ->
-            case s2 of
-                Empty ->
+        when Cons h1 tail1 ->
+            match s2
+                when Empty ->
                     Empty
-                Cons h2 tail2 ->
+                when Cons h2 tail2 ->
                     Cons (h1, h2) (\_ -> zip (tail1 ()) (tail2 ()))
 
 test "zip" =
@@ -364,14 +364,14 @@ test "zip" =
 export
 zipWith : (a -> b -> c) -> Stream a -> Stream b -> Stream c
 zipWith f s1 s2 =
-    case s1 of
-        Empty ->
+    match s1
+        when Empty ->
             Empty
-        Cons h1 tail1 ->
-            case s2 of
-                Empty ->
+        when Cons h1 tail1 ->
+            match s2
+                when Empty ->
                     Empty
-                Cons h2 tail2 ->
+                when Cons h2 tail2 ->
                     Cons (f h1 h2) (\_ -> zipWith f (tail1 ()) (tail2 ()))
 
 test "zipWith" =

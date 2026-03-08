@@ -10,10 +10,10 @@ import Std:Result (Ok, Err)
 export
 toResult : e -> Maybe a -> Result a e
 toResult err x =
-    case x of
-        Just v ->
+    match x
+        when Just v ->
             Ok v
-        Nothing ->
+        when Nothing ->
             Err err
 
 test "toResult" =
@@ -29,10 +29,10 @@ test "toResult" =
 export
 toMaybe : Result a e -> Maybe a
 toMaybe r =
-    case r of
-        Ok x ->
+    match r
+        when Ok x ->
             Just x
-        Err _ ->
+        when Err _ ->
             Nothing
 
 test "toMaybe" =
@@ -48,10 +48,10 @@ test "toMaybe" =
 export
 fromMaybe : e -> Maybe a -> Result a e
 fromMaybe err m =
-    case m of
-        Just x ->
+    match m
+        when Just x ->
             Ok x
-        Nothing ->
+        when Nothing ->
             Err err
 
 test "fromMaybe" =

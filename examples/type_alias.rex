@@ -17,8 +17,8 @@ type alias Pair a b = (a, b)
 
 swap : Pair a b -> Pair b a
 swap p =
-    case p of
-        (a, b) ->
+    match p
+        when (a, b) ->
             (b, a)
 
 -- Alias for list type
@@ -26,10 +26,10 @@ type alias IntList = [Int]
 
 sum : IntList -> Int
 sum lst =
-    case lst of
-        [] ->
+    match lst
+        when [] ->
             0
-        [h|t] ->
+        when [h|t] ->
             h + sum t
 
 -- Aliases are transparent — Name and String are interchangeable

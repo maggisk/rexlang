@@ -20,10 +20,10 @@ export try
 export
 isOk : Result a e -> Bool
 isOk r =
-    case r of
-        Ok _ ->
+    match r
+        when Ok _ ->
             true
-        Err _ ->
+        when Err _ ->
             false
 
 test "isOk" =
@@ -39,10 +39,10 @@ test "isOk" =
 export
 isErr : Result a e -> Bool
 isErr r =
-    case r of
-        Ok _ ->
+    match r
+        when Ok _ ->
             false
-        Err _ ->
+        when Err _ ->
             true
 
 test "isErr" =
@@ -61,10 +61,10 @@ test "isErr" =
 export
 withDefault : a -> Result a e -> a
 withDefault default r =
-    case r of
-        Ok x ->
+    match r
+        when Ok x ->
             x
-        Err _ ->
+        when Err _ ->
             default
 
 test "withDefault" =
@@ -83,10 +83,10 @@ test "withDefault" =
 export
 map : (a -> b) -> Result a e -> Result b e
 map f r =
-    case r of
-        Ok x ->
+    match r
+        when Ok x ->
             Ok (f x)
-        Err e ->
+        when Err e ->
             Err e
 
 test "map" =
@@ -102,10 +102,10 @@ test "map" =
 export
 mapErr : (e -> f) -> Result a e -> Result a f
 mapErr f r =
-    case r of
-        Ok x ->
+    match r
+        when Ok x ->
             Ok x
-        Err e ->
+        when Err e ->
             Err (f e)
 
 test "mapErr" =
@@ -122,10 +122,10 @@ test "mapErr" =
 export
 andThen : (a -> Result b e) -> Result a e -> Result b e
 andThen f r =
-    case r of
-        Ok x ->
+    match r
+        when Ok x ->
             f x
-        Err e ->
+        when Err e ->
             Err e
 
 test "andThen" =

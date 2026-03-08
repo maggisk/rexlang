@@ -40,11 +40,11 @@ test "custom trait" =
     assert (describe false == "no")
 
 test "ordering pattern match" =
-    let label = case compare 3 5 of
-        LT ->
+    let label = match compare 3 5
+        when LT ->
             "less"
-        EQ ->
+        when EQ ->
             "equal"
-        GT ->
+        when GT ->
             "greater"
     assert (label == "less")

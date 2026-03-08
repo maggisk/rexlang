@@ -14,13 +14,13 @@ type Msg = Inc | Get (Pid Int) | Stop
 counter =
     spawn \_ ->
         let rec loop n =
-            case receive () of
-                Inc ->
+            match receive ()
+                when Inc ->
                     loop (n + 1)
-                Get replyTo ->
+                when Get replyTo ->
                     let _ = send replyTo n
                     in loop n
-                Stop ->
+                when Stop ->
                     ()
         in
         loop 0
