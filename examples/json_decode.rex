@@ -8,9 +8,10 @@ import Std:Maybe (Just, Nothing)
 type User = { name : String, age : Int }
 
 test "decode user" =
-    let json = """{"name": "Alice", "age": 30}"""
-    let userDecoder = map2 User (field "name" string) (field "age" int)
-    assert (decodeString userDecoder json == Ok (User { name = "Alice", age = 30 }))
+    let
+        json = """{"name": "Alice", "age": 30}"""
+        userDecoder = map2 User (field "name" string) (field "age" int)
+    in assert (decodeString userDecoder json == Ok (User { name = "Alice", age = 30 }))
 
 
 -- Decode nested objects into records
@@ -18,18 +19,20 @@ test "decode user" =
 type Score = { player : String, score : Float }
 
 test "decode nested" =
-    let json = """{"user": {"name": "Bob", "score": 95.5}}"""
-    let decoder = map2 Score (at ["user", "name"] string) (at ["user", "score"] float)
-    assert (decodeString decoder json == Ok (Score { player = "Bob", score = 95.5 }))
+    let
+        json = """{"user": {"name": "Bob", "score": 95.5}}"""
+        decoder = map2 Score (at ["user", "name"] string) (at ["user", "score"] float)
+    in assert (decodeString decoder json == Ok (Score { player = "Bob", score = 95.5 }))
 
 
 -- Decode a list of records
 
 test "decode list of records" =
-    let json = """[{"name": "Alice", "age": 25}, {"name": "Bob", "age": 30}]"""
-    let userDecoder = map2 User (field "name" string) (field "age" int)
-    let result = decodeString (list userDecoder) json
-    assert (result == Ok [User { name = "Alice", age = 25 }, User { name = "Bob", age = 30 }])
+    let
+        json = """[{"name": "Alice", "age": 25}, {"name": "Bob", "age": 30}]"""
+        userDecoder = map2 User (field "name" string) (field "age" int)
+        result = decodeString (list userDecoder) json
+    in assert (result == Ok [User { name = "Alice", age = 25 }, User { name = "Bob", age = 30 }])
 
 
 -- Use oneOf for flexible decoding

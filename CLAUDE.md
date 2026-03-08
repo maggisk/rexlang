@@ -140,6 +140,40 @@ map (\x -> x + 1) list
 map (\x -> f x) list
 ```
 
+`in` always goes on its own line — never at the end of the binding line. Chained `let ... in let ... in` should use let-block syntax instead.
+
+```rex
+-- bad: in at end of line
+let msg = receive () in
+send me msg
+
+-- good: in on its own line
+let msg = receive ()
+in send me msg
+
+-- bad: chained let-in
+let _ = println "hello" in
+let x = computeStuff () in
+x
+
+-- good: let-block
+let
+    _ = println "hello"
+    x = computeStuff ()
+in x
+
+-- good: let-block, multi-line continuation
+let
+    _ = println "hello"
+    x = computeStuff ()
+in
+case x of
+    Ok v ->
+        v
+    Err _ ->
+        0
+```
+
 One blank line between top-level definitions; two blank lines between sections. Stdlib modules use `-- # Section` headers and `-- | doc` comments above each function. Every stdlib function should have its tests immediately after its definition — not grouped at the bottom of the file.
 
 ## Planned work (ordered by dependency)

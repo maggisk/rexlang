@@ -6,5 +6,5 @@ greet name =
     print ("Hello, " ++ name ++ "!")
 
 main _ =
-    let _ = greet "RexLang" in
-    0
+    let _ = greet "RexLang"
+    in 0

@@ -11,9 +11,10 @@ pmap : (a -> b) -> [a] -> [b]
 pmap f lst =
     let pids = map (\x ->
         spawn \_ ->
-            let result = f x in
-            let caller = receive () in
-            send caller result
+            let
+                result = f x
+                caller = receive ()
+            in send caller result
     ) lst
     in
     pids |> map (\pid -> call pid (\me -> me))
@@ -40,9 +41,10 @@ pmapN n f lst =
     in
     let pids = map (\chunk ->
         spawn \_ ->
-            let result = map f chunk in
-            let caller = receive () in
-            send caller result
+            let
+                result = map f chunk
+                caller = receive ()
+            in send caller result
     ) (chunks lst)
     in
     pids |> map (\pid -> call pid (\me -> me)) |> concat

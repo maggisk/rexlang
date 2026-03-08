@@ -1,16 +1,16 @@
 -- Tuple type and let destructuring
 
 swap pair =
-    let (a, b) = pair in
-    (b, a)
+    let (a, b) = pair
+    in (b, a)
 
 fst pair =
-    let (a, _) = pair in
-    a
+    let (a, _) = pair
+    in a
 
 snd pair =
-    let (_, b) = pair in
-    b
+    let (_, b) = pair
+    in b
 
 test "swap" =
     assert (swap (1, 2) == (2, 1))

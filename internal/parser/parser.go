@@ -624,6 +624,7 @@ func (p *parser) parseLetBody(letCol int) (ast.Expr, error) {
 
 // parseLetContinuation parses the continuation after a let body.
 // Explicit 'in' is required — no implicit continuation.
+// Returns nil when no 'in' is found (top-level / test body).
 func (p *parser) parseLetContinuation(_ int) (ast.Expr, error) {
 	if p.peek().Kind == lexer.TokIn {
 		p.advance()

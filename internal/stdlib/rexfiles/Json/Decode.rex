@@ -415,9 +415,10 @@ map2 f da db =
                         Ok (f a b)
 
 test "map2 decoder" =
-    let json = """{"x": 1, "y": 2}"""
-    let decoder = map2 (\x y -> x + y) (field "x" int) (field "y" int)
-    assert (decodeString decoder json == Ok 3)
+    let
+        json = """{"x": 1, "y": 2}"""
+        decoder = map2 (\x y -> x + y) (field "x" int) (field "y" int)
+    in assert (decodeString decoder json == Ok 3)
 
 
 -- | Apply a decoder of a function to a decoder of a value. Enables
@@ -607,9 +608,10 @@ test "succeed and fail" =
     assert failErr
 
 test "nested object decoding with map2" =
-    let json = """{"name": "Alice", "scores": [95, 87, 92]}"""
-    let decoder = map2 (\name scores -> (name, scores)) (field "name" string) (field "scores" (list int))
-    assert (decodeString decoder json == Ok ("Alice", [95, 87, 92]))
+    let
+        json = """{"name": "Alice", "scores": [95, 87, 92]}"""
+        decoder = map2 (\name scores -> (name, scores)) (field "name" string) (field "scores" (list int))
+    in assert (decodeString decoder json == Ok ("Alice", [95, 87, 92]))
 
 test "errorToString formatting" =
     let e1 = DecodeError { path = [], message = "expected a String", value = JNull }

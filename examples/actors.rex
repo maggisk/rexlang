@@ -18,8 +18,8 @@ counter =
                 Inc ->
                     loop (n + 1)
                 Get replyTo ->
-                    let _ = send replyTo n in
-                    loop n
+                    let _ = send replyTo n
+                    in loop n
                 Stop ->
                     ()
         in
@@ -32,5 +32,5 @@ n = call counter Get
 _ = send counter Stop
 
 main _ =
-    let _ = n |> toString |> println in
-    0
+    let _ = n |> toString |> println
+    in 0

@@ -556,8 +556,8 @@ unzip pairs =
             [] ->
                 (reverse xs, reverse ys)
             [h|t] ->
-                let (a, b) = h in
-                go (a :: xs) (b :: ys) t
+                let (a, b) = h
+                in go (a :: xs) (b :: ys) t
     in
     go [] [] pairs
 
@@ -787,8 +787,8 @@ uniqueBy f lst =
             [] ->
                 reverse acc
             [h|t] ->
-                let key = f h in
-                if seen |> any (\k -> k == key) then
+                let key = f h
+                in if seen |> any (\k -> k == key) then
                     go seen acc t
                 else
                     go (key :: seen) (h :: acc) t

@@ -60,8 +60,8 @@ rebalance m =
         Empty ->
             Empty
         Node _ l k v r ->
-            let bf = height l - height r in
-            if bf > 1 then
+            let bf = height l - height r
+            in if bf > 1 then
                 if balanceFactor l < 0 then
                     rotateRight (node (rotateLeft l) k v r)
                 else
@@ -188,8 +188,8 @@ removeMin m =
         Node _ (Empty) k v r ->
             (k, v, r)
         Node _ l k v r ->
-            let (mk, mv, newL) = removeMin l in
-            (mk, mv, rebalance (node newL k v r))
+            let (mk, mv, newL) = removeMin l
+            in (mk, mv, rebalance (node newL k v r))
         Empty ->
             error "removeMin: empty map"
 
@@ -212,8 +212,8 @@ remove key m =
                         Empty ->
                             l
                         _ ->
-                            let (mk, mv, newR) = removeMin r in
-                            rebalance (node l mk mv newR)
+                            let (mk, mv, newR) = removeMin r
+                            in rebalance (node l mk mv newR)
 
 test "remove" =
     let m = empty |> insert 1 10 |> insert 2 20 |> insert 3 30
@@ -255,8 +255,8 @@ fromList lst =
             [] ->
                 acc
             [pair | rest] ->
-                let (k, v) = pair in
-                go (insert k v acc) rest
+                let (k, v) = pair
+                in go (insert k v acc) rest
     in
     go empty lst
 
@@ -277,9 +277,10 @@ foldl f acc m =
         Empty ->
             acc
         Node _ l k v r ->
-            let acc1 = foldl f acc l in
-            let acc2 = f k v acc1 in
-            foldl f acc2 r
+            let
+                acc1 = foldl f acc l
+                acc2 = f k v acc1
+            in foldl f acc2 r
 
 test "foldl" =
     let m = fromList [(1, 10), (2, 20), (3, 30)]
@@ -294,9 +295,10 @@ foldr f acc m =
         Empty ->
             acc
         Node _ l k v r ->
-            let acc1 = foldr f acc r in
-            let acc2 = f k v acc1 in
-            foldr f acc2 l
+            let
+                acc1 = foldr f acc r
+                acc2 = f k v acc1
+            in foldr f acc2 l
 
 
 -- # Convert
