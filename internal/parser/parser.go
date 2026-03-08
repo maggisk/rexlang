@@ -533,7 +533,7 @@ func (p *parser) parseLet() (ast.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		return ast.LetPat{Pat: pat, Body: body, InExpr: inExpr}, nil
+		return ast.LetPat{Pat: pat, Body: body, InExpr: inExpr, Line: letTok.Line, Col: letTok.Col}, nil
 	}
 
 	recursive := p.peek().Kind == lexer.TokRec
@@ -598,7 +598,7 @@ func (p *parser) parseLet() (ast.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		return ast.LetRec{Bindings: bindings, InExpr: inExpr}, nil
+		return ast.LetRec{Bindings: bindings, InExpr: inExpr, Line: letTok.Line, Col: letTok.Col}, nil
 	}
 
 	inExpr, err := p.parseLetContinuation(letTok.Col)
@@ -606,7 +606,7 @@ func (p *parser) parseLet() (ast.Expr, error) {
 		return nil, err
 	}
 
-	return ast.Let{Name: name, Body: body, InExpr: inExpr, Recursive: recursive}, nil
+	return ast.Let{Name: name, Body: body, InExpr: inExpr, Recursive: recursive, Line: letTok.Line, Col: letTok.Col}, nil
 }
 
 // parseLetBody parses the RHS of a let binding, bounded so it cannot extend
@@ -708,6 +708,7 @@ func (p *parser) parseLetBlock() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseIf() (ast.Expr, error) {
+	ifTok := p.peek()
 	p.advance() // consume 'if'
 	cond, err := p.parseExpr()
 	if err != nil {
@@ -727,7 +728,7 @@ func (p *parser) parseIf() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ast.If{Cond: cond, ThenExpr: then, ElseExpr: els}, nil
+	return ast.If{Cond: cond, ThenExpr: then, ElseExpr: els, Line: ifTok.Line, Col: ifTok.Col}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -956,6 +957,7 @@ func (p *parser) parsePattern() (ast.Pattern, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseMatch() (ast.Expr, error) {
+	matchTok := p.peek()
 	p.advance() // consume 'match'
 	scrutinee, err := p.parseExpr()
 	if err != nil {
@@ -985,15 +987,16 @@ func (p *parser) parseMatch() (ast.Expr, error) {
 		if err := p.expect(lexer.TokArrow); err != nil {
 			return nil, err
 		}
+		bodyTok := p.peek()
 		body, err := p.parseExpr()
 		if err != nil {
 			return nil, err
 		}
-		arms = append(arms, ast.MatchArm{Pat: pat, Body: body, Line: whenTok.Line, Col: whenTok.Col})
+		arms = append(arms, ast.MatchArm{Pat: pat, Body: body, Line: whenTok.Line, Col: whenTok.Col, BodyLine: bodyTok.Line, BodyCol: bodyTok.Col})
 	}
 
 	p.caseArmCol = saved
-	return ast.Match{Scrutinee: scrutinee, Arms: arms}, nil
+	return ast.Match{Scrutinee: scrutinee, Arms: arms, Line: matchTok.Line, Col: matchTok.Col}, nil
 }
 
 // ---------------------------------------------------------------------------

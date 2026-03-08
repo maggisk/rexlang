@@ -59,8 +59,8 @@ go build -o rex ./cmd/rex/
 # REPL (blank line to eval, Ctrl-D to exit)
 ./rex
 
-# run all Go tests
-go test ./...
+# run all tests (build + rex tests + go tests)
+make test
 
 # format
 gofmt -w .
@@ -68,7 +68,7 @@ gofmt -w .
 
 ## Architecture notes
 
-- **Pipeline**: source → `lexer.Tokenize()` → `parser.Parse()` → `ValidateToplevel()` → `typechecker.CheckProgram()` → validate `main : List String -> Int` → `eval.RunProgram()` (which calls `main` with program args)
+- **Pipeline**: source → `lexer.Tokenize()` → `parser.Parse()` → `ValidateToplevel()` → `ValidateIndentation()` → `ReorderToplevel()` → `typechecker.CheckProgram()` → validate `main : List String -> Int` → `eval.RunProgram()` (which calls `main` with program args)
 - **Top-level restriction**: only declarations allowed at top level (bare bindings `name params = body`, `let`, `type`, `trait`, `impl`, `import`, `export`, `test`, type annotations). Bare expressions are rejected. Applies in both file mode and `--test` mode; REPL is exempt.
 - **Top-level bindings**: bare `name params = body` at top level (no `let` needed). Parser detects lowercase ident followed by `[ident]* =` and produces `Let{Recursive: true}`. All top-level `let` bindings also auto-set `Recursive: true`. Mutual recursion between top-level bindings is detected automatically by `ReorderToplevel` (cycle detection groups them into `LetRec`). `let`/`let rec` remain for expression-level bindings only.
 - **`main` entry point**: programs run with `./rex file.rex` must define `export main args = ...` where `main : List String -> Int`. `args` receives command-line arguments as a list of strings. The return value is the process exit code. `--test` mode does not require `main`.

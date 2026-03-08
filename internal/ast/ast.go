@@ -102,6 +102,8 @@ type If struct {
 	Cond     Expr
 	ThenExpr Expr
 	ElseExpr Expr
+	Line     int
+	Col      int
 }
 
 type Let struct {
@@ -110,6 +112,8 @@ type Let struct {
 	Exported  bool
 	Body      Expr
 	InExpr    Expr // nil = top-level
+	Line      int
+	Col       int
 }
 
 type Fun struct {
@@ -125,13 +129,17 @@ type App struct {
 type Match struct {
 	Scrutinee Expr
 	Arms      []MatchArm
+	Line      int
+	Col       int
 }
 
 type MatchArm struct {
-	Pat  Pattern
-	Body Expr
-	Line int
-	Col  int
+	Pat      Pattern
+	Body     Expr
+	Line     int // line of 'when' keyword
+	Col      int // col of 'when' keyword
+	BodyLine int // line of first token in body
+	BodyCol  int // col of first token in body
 }
 
 type TypeDecl struct {
@@ -188,12 +196,16 @@ type LetPat struct {
 	Pat      Pattern
 	Body     Expr
 	InExpr   Expr // nil = top-level
+	Line     int
+	Col      int
 }
 
 type LetRec struct {
 	Exported bool
 	Bindings []LetRecBinding
 	InExpr   Expr // nil = top-level
+	Line     int
+	Col      int
 }
 
 type LetRecBinding struct {

@@ -204,6 +204,12 @@ func runFile(path string, programArgs []string) {
 		os.Exit(1)
 	}
 
+	// Validate indentation
+	if err := parser.ValidateIndentation(exprs); err != nil {
+		printErr("Indentation error", err)
+		os.Exit(1)
+	}
+
 	// Reorder top-level bindings by dependency
 	exprs, err = typechecker.ReorderToplevel(exprs)
 	if err != nil {
@@ -284,6 +290,12 @@ func runTests(path string, only string) (int, []eval.FailedTest) {
 	// Validate no bare expressions at top level
 	if err := eval.ValidateToplevel(exprs); err != nil {
 		printTestErr(path, "Syntax error", err)
+		return 1, nil
+	}
+
+	// Validate indentation
+	if err := parser.ValidateIndentation(exprs); err != nil {
+		printTestErr(path, "Indentation error", err)
 		return 1, nil
 	}
 

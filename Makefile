@@ -4,8 +4,7 @@ build:
 	go build -o rex ./cmd/rex/
 
 test: build
-	go test ./...
-	./rex --test internal/stdlib/rexfiles/*.rex examples/*.rex
+	bash scripts/test-all.sh
 
 fmt:
 	gofmt -w .
