@@ -48,3 +48,78 @@ test "ordering pattern match" =
         when GT ->
             "greater"
     assert (label == "less")
+
+
+-- ## Parameterized instances
+
+import Std:Maybe (Just, Nothing)
+import Std:Result (Ok, Err)
+
+test "show list" =
+    assert (show [1, 2, 3] == "[1, 2, 3]")
+    assert (show [] == "[]")
+    assert (show ["hello", "world"] == "[hello, world]")
+
+test "show tuple" =
+    assert (show (1, "hello") == "(1, hello)")
+    assert (show (true, 42) == "(true, 42)")
+
+test "show unit" =
+    assert (show () == "()")
+
+test "show Maybe" =
+    assert (show (Just 42) == "Just 42")
+    assert (show Nothing == "Nothing")
+    assert (show (Just "hello") == "Just hello")
+
+test "show Result" =
+    assert (show (Ok 42) == "Ok 42")
+    assert (show (Err "oops") == "Err oops")
+
+test "show nested" =
+    assert (show [Just 1, Nothing, Just 3] == "[Just 1, Nothing, Just 3]")
+    assert (show (Just [1, 2]) == "Just [1, 2]")
+
+test "eq list" =
+    assert (eq [1, 2, 3] [1, 2, 3])
+    assert (eq [1, 2] [1, 3] |> not)
+    assert (eq [] [1] |> not)
+    assert (eq [1] [] |> not)
+
+test "eq tuple" =
+    assert (eq (1, 2) (1, 2))
+    assert (eq (1, 2) (1, 3) |> not)
+
+test "eq Maybe" =
+    assert (eq (Just 1) (Just 1))
+    assert (eq (Just 1) (Just 2) |> not)
+    assert (eq Nothing Nothing)
+    assert (eq (Just 1) Nothing |> not)
+
+test "eq Result" =
+    assert (eq (Ok 1) (Ok 1))
+    assert (eq (Ok 1) (Ok 2) |> not)
+    assert (eq (Err "a") (Err "a"))
+    assert (eq (Ok 1) (Err 1) |> not)
+
+test "ord list" =
+    assert (compare [1, 2] [1, 3] == LT)
+    assert (compare [1, 2, 3] [1, 2] == GT)
+    assert (compare [1, 2] [1, 2] == EQ)
+    assert (compare [] [1] == LT)
+
+test "ord tuple" =
+    assert (compare (1, 2) (1, 3) == LT)
+    assert (compare (2, 1) (1, 9) == GT)
+    assert (compare (1, 2) (1, 2) == EQ)
+
+test "ord Maybe" =
+    assert (compare Nothing (Just 1) == LT)
+    assert (compare (Just 1) Nothing == GT)
+    assert (compare (Just 1) (Just 2) == LT)
+    assert (compare Nothing Nothing == EQ)
+
+test "string interpolation with compound types" =
+    assert ("list is ${[1, 2, 3]}" == "list is [1, 2, 3]")
+    assert ("maybe is ${Just 42}" == "maybe is Just 42")
+    assert ("pair is ${(1, true)}" == "pair is (1, true)")

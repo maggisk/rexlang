@@ -3,6 +3,31 @@ export type Result a e = Ok a | Err e
 export type RuntimeError = DivisionByZero | ModuloByZero
 
 
+impl Show (Result a b) where
+    show r =
+        match r
+            when Ok v ->
+                "Ok " ++ show v
+            when Err e ->
+                "Err " ++ show e
+
+impl Eq (Result a b) where
+    eq x y =
+        match x
+            when Ok a ->
+                match y
+                    when Ok b ->
+                        eq a b
+                    when _ ->
+                        false
+            when Err a ->
+                match y
+                    when Err b ->
+                        eq a b
+                    when _ ->
+                        false
+
+
 -- # Recovery
 
 
@@ -142,3 +167,13 @@ test "try catches modulo by zero" =
 
 test "try returns Ok on success" =
     assert (try (\_ -> 10 / 2) == Ok 5)
+
+test "show" =
+    assert (show (Ok 42) == "Ok 42")
+    assert (show (Err "oops") == "Err oops")
+
+test "eq" =
+    assert (eq (Ok 1) (Ok 1))
+    assert (eq (Ok 1) (Ok 2) |> not)
+    assert (eq (Err "a") (Err "a"))
+    assert (eq (Ok 1) (Err 1) |> not)

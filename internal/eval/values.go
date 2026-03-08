@@ -83,6 +83,11 @@ type VInstances struct {
 	M map[string]Value // key: "TraitName:TypeName:MethodName"
 }
 
+// VCtorTypes maps constructor names to their parent type names for trait dispatch.
+type VCtorTypes struct {
+	M map[string]string // key: "Just" → "Maybe", "Ok" → "Result"
+}
+
 // ---------------------------------------------------------------------------
 // Process / actor types
 // ---------------------------------------------------------------------------
@@ -152,6 +157,7 @@ func (VTraitMethod) valueKind()  {}
 func (VPid) valueKind()          {}
 func (VRecord) valueKind()       {}
 func (VRecordCtorFn) valueKind() {}
+func (VCtorTypes) valueKind()    {}
 
 // RuntimeError is a runtime error.
 type RuntimeError struct{ Msg string }
@@ -433,8 +439,9 @@ func AsBool(v Value) (bool, error) {
 }
 
 // RuntimeTypeName returns the runtime type name for trait dispatch.
-func RuntimeTypeName(v Value) (string, error) {
-	switch v.(type) {
+// For compound types, it returns the outer type constructor name.
+func RuntimeTypeName(v Value, env Env) (string, error) {
+	switch val := v.(type) {
 	case VInt:
 		return "Int", nil
 	case VFloat:
@@ -443,6 +450,27 @@ func RuntimeTypeName(v Value) (string, error) {
 		return "String", nil
 	case VBool:
 		return "Bool", nil
+	case VUnit:
+		return "Unit", nil
+	case VList:
+		return "List", nil
+	case VTuple:
+		return fmt.Sprintf("Tuple%d", len(val.Items)), nil
+	case VRecord:
+		return val.TypeName, nil
+	case VPid:
+		return "Pid", nil
+	case VCtor:
+		if env != nil {
+			if ctorTypes, ok := env["__ctor_types__"]; ok {
+				if m, ok := ctorTypes.(VCtorTypes); ok {
+					if typeName, ok := m.M[val.Name]; ok {
+						return typeName, nil
+					}
+				}
+			}
+		}
+		return "", runtimeErr("no trait dispatch for constructor %s (type unknown)", val.Name)
 	}
 	return "", runtimeErr("no trait dispatch for %s", ValueToString(v))
 }

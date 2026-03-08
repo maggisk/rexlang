@@ -355,7 +355,7 @@ func showValue(env Env, v Value) (string, error) {
 		return s.V, nil
 	}
 	// Try Show trait dispatch
-	typeName, err := RuntimeTypeName(v)
+	typeName, err := RuntimeTypeName(v, env)
 	if err == nil {
 		if inst, ok := env["__instances__"]; ok {
 			if vi, ok := inst.(VInstances); ok {
@@ -570,7 +570,7 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			case VBuiltin:
 				return fn.Fn(arg)
 			case VTraitMethod:
-				typeName, err := RuntimeTypeName(arg)
+				typeName, err := RuntimeTypeName(arg, env)
 				if err != nil {
 					return nil, err
 				}
@@ -587,7 +587,16 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 				}
 				switch impl := implFn.(type) {
 				case VClosure:
-					env = impl.Env.Extend(impl.Param, arg)
+					implEnv := impl.Env.Extend(impl.Param, arg)
+					// Propagate caller's __instances__ and __ctor_types__ so
+					// trait dispatch works with types from imported modules.
+					if callerInst, ok := env["__instances__"]; ok {
+						implEnv["__instances__"] = callerInst
+					}
+					if callerCT, ok := env["__ctor_types__"]; ok {
+						implEnv["__ctor_types__"] = callerCT
+					}
+					env = implEnv
 					expr = impl.Body
 				case VBuiltin:
 					return impl.Fn(arg)
@@ -987,6 +996,39 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 }
 
 // ---------------------------------------------------------------------------
+// Helper: extract outer type name from TySyntax (for impl dispatch keys)
+// ---------------------------------------------------------------------------
+
+func implTargetName(ty ast.TySyntax) string {
+	switch t := ty.(type) {
+	case ast.TyName:
+		return t.Name
+	case ast.TyApp:
+		return t.Name
+	case ast.TyList:
+		return "List"
+	case ast.TyTuple:
+		return fmt.Sprintf("Tuple%d", len(t.Elems))
+	case ast.TyUnit:
+		return "Unit"
+	}
+	return fmt.Sprintf("%T", ty)
+}
+
+// getCtorTypes returns a mutable copy of the __ctor_types__ map from env.
+func getCtorTypes(env Env) map[string]string {
+	m := map[string]string{}
+	if ct, ok := env["__ctor_types__"]; ok {
+		if vct, ok := ct.(VCtorTypes); ok {
+			for k, v := range vct.M {
+				m[k] = v
+			}
+		}
+	}
+	return m
+}
+
+// ---------------------------------------------------------------------------
 // EvalToplevel
 // ---------------------------------------------------------------------------
 
@@ -1002,6 +1044,10 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 				fieldNames[i] = f.Name
 			}
 			newEnv[e.Name] = VRecordCtorFn{TypeName: e.Name, FieldNames: fieldNames, Remaining: len(e.RecordFields)}
+			// Register record type name in __ctor_types__
+			ctorTypes := getCtorTypes(newEnv)
+			ctorTypes[e.Name] = e.Name
+			newEnv["__ctor_types__"] = VCtorTypes{M: ctorTypes}
 			return VBool{V: false}, newEnv, nil
 		}
 		for _, ctor := range e.Ctors {
@@ -1010,6 +1056,14 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 			} else {
 				newEnv[ctor.Name] = VCtorFn{Name: ctor.Name, Remaining: len(ctor.ArgTypes)}
 			}
+		}
+		// Register constructor → type name mappings
+		if len(e.Ctors) > 0 {
+			ctorTypes := getCtorTypes(newEnv)
+			for _, ctor := range e.Ctors {
+				ctorTypes[ctor.Name] = e.Name
+			}
+			newEnv["__ctor_types__"] = VCtorTypes{M: ctorTypes}
 		}
 		return VBool{V: false}, newEnv, nil
 
@@ -1058,6 +1112,16 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 				newEnv["__instances__"] = VInstances{M: merged}
 			}
 		}
+		// Merge module's __ctor_types__ into caller's env
+		if modCT, ok := mod.env["__ctor_types__"]; ok {
+			if modVCT, ok := modCT.(VCtorTypes); ok {
+				mergedCT := getCtorTypes(newEnv)
+				for k, v := range modVCT.M {
+					mergedCT[k] = v
+				}
+				newEnv["__ctor_types__"] = VCtorTypes{M: mergedCT}
+			}
+		}
 		if e.Alias != "" {
 			modBindings := Env{}
 			for n := range mod.exports {
@@ -1095,15 +1159,25 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 				}
 			}
 		}
+		targetName := implTargetName(e.TargetType)
 		for _, m := range e.Methods {
 			implVal, err := Eval(env, m.Body)
 			if err != nil {
 				return nil, nil, err
 			}
-			key := e.TraitName + ":" + e.TargetType + ":" + m.Name
+			key := e.TraitName + ":" + targetName + ":" + m.Name
 			instances[key] = implVal
 		}
-		newEnv["__instances__"] = VInstances{M: instances}
+		// Back-patch closures so they see the new instances (enables recursive trait dispatch)
+		newInstances := VInstances{M: instances}
+		for _, m := range e.Methods {
+			key := e.TraitName + ":" + targetName + ":" + m.Name
+			if cl, ok := instances[key].(VClosure); ok {
+				cl.Env["__instances__"] = newInstances
+				instances[key] = cl
+			}
+		}
+		newEnv["__instances__"] = newInstances
 		return VBool{V: false}, newEnv, nil
 
 	case ast.TestDecl:

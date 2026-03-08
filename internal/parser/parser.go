@@ -1456,7 +1456,7 @@ func (p *parser) parseImpl() (ast.Expr, error) {
 	if err != nil {
 		return nil, err
 	}
-	targetType, err := p.expectIdent()
+	targetType, err := p.parseImplTarget()
 	if err != nil {
 		return nil, err
 	}
@@ -1494,6 +1494,26 @@ func (p *parser) parseImpl() (ast.Expr, error) {
 	}
 	p.caseArmCol = saved
 	return ast.ImplDecl{TraitName: traitName, TargetType: targetType, Methods: methods}, nil
+}
+
+// parseImplTarget parses the target type in an impl declaration.
+// Handles: `Int`, `(List a)`, `(a, b)`, etc. Stops before `where`.
+func (p *parser) parseImplTarget() (ast.TySyntax, error) {
+	tok := p.peek()
+	if tok.Kind == lexer.TokLParen {
+		// Parenthesized type expression: (List a), (a, b), etc.
+		return p.parseTypeSigAtom()
+	}
+	if tok.Kind == lexer.TokLBrack {
+		// [Int] sugar for List Int
+		return p.parseTypeSigAtom()
+	}
+	// Simple ident: Int, String, etc.
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	return ast.TyName{Name: name}, nil
 }
 
 // ---------------------------------------------------------------------------

@@ -242,7 +242,7 @@ type TraitMethod struct {
 
 type ImplDecl struct {
 	TraitName  string
-	TargetType string
+	TargetType TySyntax
 	Methods    []ImplMethod
 }
 

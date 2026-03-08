@@ -87,6 +87,19 @@ func (tc *TypeChecker) fresh() types.Type {
 	return types.TVar{Name: fmt.Sprintf("t%d", tc.counter)}
 }
 
+// freshenType replaces all TVars in a type with fresh variables.
+func (tc *TypeChecker) freshenType(ty types.Type) types.Type {
+	freeVars := types.FreeVars(ty)
+	if len(freeVars) == 0 {
+		return ty
+	}
+	subst := make(types.Subst, len(freeVars))
+	for v := range freeVars {
+		subst[v] = tc.fresh()
+	}
+	return types.ApplySubst(subst, ty)
+}
+
 func (tc *TypeChecker) instantiate(s types.Scheme) types.Type {
 	subst := make(types.Subst, len(s.Vars))
 	for _, v := range s.Vars {
@@ -1523,17 +1536,20 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		if !ok {
 			return InferToplevelResult{}, &types.TypeError{Msg: "unknown trait: " + e.TraitName}
 		}
-		targetTy, err := tc.resolveTypeSig(ast.TyName{Name: e.TargetType}, typeDefs)
+		targetTy, err := tc.resolveTypeSig(e.TargetType, typeDefs)
 		if err != nil {
 			return InferToplevelResult{}, err
 		}
+		// Freshen type variables in target type to avoid collision with trait param
+		targetTy = tc.freshenType(targetTy)
+		targetName := implTargetNameTC(e.TargetType)
 		implNames := map[string]bool{}
 		for _, m := range e.Methods {
 			implNames[m.Name] = true
 		}
 		for name := range traitInfo.Methods {
 			if !implNames[name] {
-				return InferToplevelResult{}, &types.TypeError{Msg: fmt.Sprintf("impl %s %s is missing: %s", e.TraitName, e.TargetType, name)}
+				return InferToplevelResult{}, &types.TypeError{Msg: fmt.Sprintf("impl %s %s is missing: %s", e.TraitName, targetName, name)}
 			}
 		}
 		for _, m := range e.Methods {
@@ -1549,7 +1565,7 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 			}
 			_, err = types.Unify(types.ApplySubst(s1, actualTy), types.ApplySubst(s1, expectedTy))
 			if err != nil {
-				return InferToplevelResult{}, &types.TypeError{Msg: fmt.Sprintf("in impl %s %s, method '%s': %s", e.TraitName, e.TargetType, m.Name, err.Error())}
+				return InferToplevelResult{}, &types.TypeError{Msg: fmt.Sprintf("in impl %s %s, method '%s': %s", e.TraitName, targetName, m.Name, err.Error())}
 			}
 		}
 		instances := map[string]map[string]bool{}
@@ -1560,7 +1576,7 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 				}
 			}
 		}
-		key := e.TraitName + ":" + e.TargetType
+		key := e.TraitName + ":" + targetName
 		instances[key] = implNames
 		newEnv := env.clone()
 		newEnv["__trait_instances__"] = instances
@@ -1573,6 +1589,23 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		return InferToplevelResult{}, err
 	}
 	return InferToplevelResult{Subst: s, Ty: ty, Env: env, TypeDefs: typeDefs}, nil
+}
+
+// implTargetNameTC extracts the outer type name from an impl target TySyntax.
+func implTargetNameTC(ty ast.TySyntax) string {
+	switch t := ty.(type) {
+	case ast.TyName:
+		return t.Name
+	case ast.TyApp:
+		return t.Name
+	case ast.TyList:
+		return "List"
+	case ast.TyTuple:
+		return fmt.Sprintf("Tuple%d", len(t.Elems))
+	case ast.TyUnit:
+		return "Unit"
+	}
+	return fmt.Sprintf("%T", ty)
 }
 
 // checkAnnotation checks if a pending annotation matches the inferred scheme.

@@ -3,6 +3,47 @@ import Std:Result (Ok, Err)
 export type Maybe a = Nothing | Just a
 
 
+impl Show (Maybe a) where
+    show x =
+        match x
+            when Nothing ->
+                "Nothing"
+            when Just v ->
+                "Just " ++ show v
+
+impl Eq (Maybe a) where
+    eq x y =
+        match x
+            when Nothing ->
+                match y
+                    when Nothing ->
+                        true
+                    when _ ->
+                        false
+            when Just a ->
+                match y
+                    when Just b ->
+                        eq a b
+                    when _ ->
+                        false
+
+impl Ord (Maybe a) where
+    compare x y =
+        match x
+            when Nothing ->
+                match y
+                    when Nothing ->
+                        EQ
+                    when _ ->
+                        LT
+            when Just a ->
+                match y
+                    when Nothing ->
+                        GT
+                    when Just b ->
+                        compare a b
+
+
 -- # Query
 
 
@@ -167,3 +208,22 @@ test "orElse" =
     assert (orElse (Just 1) (Just 2) == Just 1)
     assert (orElse Nothing (Just 2) == Just 2)
     assert (orElse Nothing Nothing == Nothing)
+
+
+-- # Trait instances
+
+test "show" =
+    assert (show (Just 42) == "Just 42")
+    assert (show Nothing == "Nothing")
+
+test "eq" =
+    assert (eq (Just 1) (Just 1))
+    assert (eq (Just 1) (Just 2) |> not)
+    assert (eq Nothing Nothing)
+    assert (eq (Just 1) Nothing |> not)
+
+test "ord" =
+    assert (compare Nothing (Just 1) == LT)
+    assert (compare (Just 1) Nothing == GT)
+    assert (compare (Just 1) (Just 2) == LT)
+    assert (compare Nothing Nothing == EQ)
