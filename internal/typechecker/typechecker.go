@@ -939,7 +939,9 @@ func (tc *TypeChecker) inferLetrec(env TypeEnv, typeDefs map[string]types.Type, 
 	return s, types.ApplySubst(s, genEnv[lastName].Ty), nil
 }
 
-// checkExhaustive checks that a match is exhaustive.
+// --- Exhaustiveness checking (Maranget's usefulness algorithm) ---
+
+// isIrrefutable returns true if a pattern matches any value.
 func isIrrefutable(p ast.Pattern) bool {
 	switch p := p.(type) {
 	case ast.PWild, ast.PVar, ast.PUnit, ast.PRecord:
@@ -956,160 +958,342 @@ func isIrrefutable(p ast.Pattern) bool {
 	}
 }
 
+// checkExhaustive checks that a match expression's arms cover all cases.
+// Uses Maranget's usefulness algorithm: a match is exhaustive iff
+// the wildcard vector is NOT useful against the pattern matrix.
 func checkExhaustive(arms []ast.MatchArm, ctorFamilies map[string]map[string]bool) error {
-	pats := make([]ast.Pattern, len(arms))
+	// Build a pattern matrix: each row is a single-column vector [pattern].
+	matrix := make([][]ast.Pattern, len(arms))
 	for i, a := range arms {
-		pats[i] = a.Pat
+		matrix[i] = []ast.Pattern{a.Pat}
 	}
-	return patsExhaustive(pats, ctorFamilies)
+	wildcard := []ast.Pattern{ast.PWild{}}
+	if isUseful(matrix, wildcard, ctorFamilies) {
+		// Find missing patterns for a helpful error message.
+		return missingPatternsError(matrix, ctorFamilies)
+	}
+	return nil
 }
 
-// patsExhaustive checks whether a set of patterns is exhaustive.
-func patsExhaustive(pats []ast.Pattern, ctorFamilies map[string]map[string]bool) error {
-	for _, p := range pats {
-		if isIrrefutable(p) {
-			return nil
-		}
-	}
-
-	// Tuple patterns: check each column independently.
-	// Extract all PTuple patterns (irrefutable patterns like _ or vars
-	// act as wildcards for every column).
-	if hasTuplePattern(pats) {
-		arity := tuplePatsArity(pats)
-		if arity > 0 {
-			for col := 0; col < arity; col++ {
-				colPats := extractTupleColumn(pats, col)
-				if err := patsExhaustive(colPats, ctorFamilies); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-	}
-
-	// Bool patterns
-	if hasBoolPattern(pats) {
-		covered := map[bool]bool{}
-		for _, p := range pats {
-			if pb, ok := p.(ast.PBool); ok {
-				covered[pb.Value] = true
-			}
-		}
-		var missing []string
-		if !covered[true] {
-			missing = append(missing, "true")
-		}
-		if !covered[false] {
-			missing = append(missing, "false")
-		}
-		if len(missing) > 0 {
-			return &types.TypeError{Msg: fmt.Sprintf("non-exhaustive patterns: missing %v", missing)}
-		}
-		return nil
-	}
-
-	// List patterns
-	hasNil, hasCons := false, false
-	for _, p := range pats {
-		if _, ok := p.(ast.PNil); ok {
-			hasNil = true
-		}
-		if _, ok := p.(ast.PCons); ok {
-			hasCons = true
-		}
-	}
-	if hasNil || hasCons {
-		var missing []string
-		if !hasNil {
-			missing = append(missing, "[]")
-		}
-		if !hasCons {
-			missing = append(missing, "[h|t]")
-		}
-		if len(missing) > 0 {
-			return &types.TypeError{Msg: fmt.Sprintf("non-exhaustive patterns: missing %v", missing)}
-		}
-		return nil
-	}
-
-	// Constructor patterns
-	var ctorPats []ast.PCtor
-	for _, p := range pats {
-		if pc, ok := p.(ast.PCtor); ok {
-			ctorPats = append(ctorPats, pc)
-		}
-	}
-	if len(ctorPats) > 0 {
-		firstName := ctorPats[0].Name
-		if family, ok := ctorFamilies[firstName]; ok {
-			covered := map[string]bool{}
-			for _, pc := range ctorPats {
-				covered[pc.Name] = true
-			}
-			var missing []string
-			for name := range family {
-				if !covered[name] {
-					missing = append(missing, name)
-				}
-			}
-			if len(missing) > 0 {
-				return &types.TypeError{Msg: fmt.Sprintf("non-exhaustive patterns: missing %v", missing)}
-			}
-			return nil
-		}
-	}
-
-	return &types.TypeError{Msg: "non-exhaustive patterns: add a catch-all `_ ->` arm"}
+// conTag represents a constructor for pattern matrix operations.
+type conTag struct {
+	kind  string // "bool", "nil", "cons", "ctor", "tuple", "unit", "int", "float", "string"
+	name  string // constructor name for "ctor", "true"/"false" for bool, literal value for int/float/string
+	arity int    // number of sub-patterns
 }
 
-func hasTuplePattern(pats []ast.Pattern) bool {
-	for _, p := range pats {
-		if _, ok := p.(ast.PTuple); ok {
-			return true
+// patternHead extracts the constructor tag and sub-patterns from a pattern.
+// Wildcard/var patterns return nil tag (handled by caller).
+func patternHead(p ast.Pattern) (*conTag, []ast.Pattern) {
+	switch p := p.(type) {
+	case ast.PWild, ast.PVar:
+		return nil, nil
+	case ast.PBool:
+		name := "false"
+		if p.Value {
+			name = "true"
 		}
+		return &conTag{kind: "bool", name: name, arity: 0}, nil
+	case ast.PNil:
+		return &conTag{kind: "nil", name: "[]", arity: 0}, nil
+	case ast.PCons:
+		return &conTag{kind: "cons", name: "[h|t]", arity: 2}, []ast.Pattern{p.Head, p.Tail}
+	case ast.PCtor:
+		arity := len(p.Args)
+		return &conTag{kind: "ctor", name: p.Name, arity: arity}, p.Args
+	case ast.PTuple:
+		return &conTag{kind: "tuple", name: "tuple", arity: len(p.Pats)}, p.Pats
+	case ast.PUnit:
+		return &conTag{kind: "unit", name: "()", arity: 0}, nil
+	case ast.PRecord:
+		return &conTag{kind: "record", name: "record", arity: 0}, nil
+	case ast.PInt:
+		return &conTag{kind: "int", name: fmt.Sprintf("%d", p.Value), arity: 0}, nil
+	case ast.PFloat:
+		return &conTag{kind: "float", name: fmt.Sprintf("%g", p.Value), arity: 0}, nil
+	case ast.PString:
+		return &conTag{kind: "string", name: p.Value, arity: 0}, nil
 	}
-	return false
+	return nil, nil
 }
 
-func hasBoolPattern(pats []ast.Pattern) bool {
-	for _, p := range pats {
-		if _, ok := p.(ast.PBool); ok {
-			return true
-		}
-	}
-	return false
-}
-
-// tuplePatsArity returns the arity of the first PTuple found, or 0.
-func tuplePatsArity(pats []ast.Pattern) int {
-	for _, p := range pats {
-		if pt, ok := p.(ast.PTuple); ok {
-			return len(pt.Pats)
-		}
-	}
-	return 0
-}
-
-// extractTupleColumn extracts the sub-pattern at position col from each pattern.
-// PTuple patterns contribute their col-th element.
-// Irrefutable patterns (_, var) contribute PWild (wildcard for that column).
-// Non-tuple refutable patterns are skipped (shouldn't happen in well-typed code).
-func extractTupleColumn(pats []ast.Pattern, col int) []ast.Pattern {
-	var result []ast.Pattern
-	for _, p := range pats {
-		switch pt := p.(type) {
-		case ast.PTuple:
-			if col < len(pt.Pats) {
-				result = append(result, pt.Pats[col])
+// specializeMatrix returns a new matrix specialized for constructor c.
+// Each row is transformed:
+//   - If row[0] matches c: replace row[0] with c's sub-patterns + rest of row
+//   - If row[0] is wildcard: expand to c.arity wildcards + rest of row
+//   - Otherwise: row is dropped
+func specializeMatrix(matrix [][]ast.Pattern, c conTag) [][]ast.Pattern {
+	var result [][]ast.Pattern
+	for _, row := range matrix {
+		tag, subPats := patternHead(row[0])
+		rest := row[1:]
+		if tag == nil {
+			// Wildcard — expand to arity wildcards
+			newRow := make([]ast.Pattern, c.arity+len(rest))
+			for i := 0; i < c.arity; i++ {
+				newRow[i] = ast.PWild{}
 			}
-		default:
-			if isIrrefutable(p) {
-				result = append(result, ast.PWild{})
+			copy(newRow[c.arity:], rest)
+			result = append(result, newRow)
+		} else if tag.kind == c.kind && tag.name == c.name {
+			// Matching constructor — replace with sub-patterns
+			newRow := make([]ast.Pattern, len(subPats)+len(rest))
+			copy(newRow, subPats)
+			copy(newRow[len(subPats):], rest)
+			result = append(result, newRow)
+		}
+		// Otherwise: different constructor, drop this row.
+	}
+	return result
+}
+
+// specializeVector specializes a test vector for constructor c.
+func specializeVector(vec []ast.Pattern, c conTag) []ast.Pattern {
+	tag, subPats := patternHead(vec[0])
+	rest := vec[1:]
+	if tag == nil {
+		// Wildcard — expand
+		newVec := make([]ast.Pattern, c.arity+len(rest))
+		for i := 0; i < c.arity; i++ {
+			newVec[i] = ast.PWild{}
+		}
+		copy(newVec[c.arity:], rest)
+		return newVec
+	}
+	if tag.kind == c.kind && tag.name == c.name {
+		newVec := make([]ast.Pattern, len(subPats)+len(rest))
+		copy(newVec, subPats)
+		copy(newVec[len(subPats):], rest)
+		return newVec
+	}
+	return nil // doesn't match
+}
+
+// defaultMatrix returns rows where column 0 is a wildcard, with column 0 removed.
+func defaultMatrix(matrix [][]ast.Pattern) [][]ast.Pattern {
+	var result [][]ast.Pattern
+	for _, row := range matrix {
+		tag, _ := patternHead(row[0])
+		if tag == nil {
+			// Wildcard row — include with column 0 removed
+			result = append(result, row[1:])
+		}
+	}
+	return result
+}
+
+// collectConstructors collects all distinct constructor tags from column 0 of the matrix.
+func collectConstructors(matrix [][]ast.Pattern) []conTag {
+	seen := map[string]bool{}
+	var result []conTag
+	for _, row := range matrix {
+		tag, _ := patternHead(row[0])
+		if tag != nil {
+			key := tag.kind + ":" + tag.name
+			if !seen[key] {
+				seen[key] = true
+				result = append(result, *tag)
 			}
 		}
 	}
 	return result
+}
+
+// isSignatureComplete checks whether the given constructors form a complete
+// signature for their type (i.e., all possible values are covered).
+func isSignatureComplete(ctors []conTag, ctorFamilies map[string]map[string]bool) bool {
+	if len(ctors) == 0 {
+		return false
+	}
+	kind := ctors[0].kind
+	switch kind {
+	case "bool":
+		has := map[string]bool{}
+		for _, c := range ctors {
+			has[c.name] = true
+		}
+		return has["true"] && has["false"]
+	case "nil", "cons":
+		has := map[string]bool{}
+		for _, c := range ctors {
+			has[c.kind] = true
+		}
+		return has["nil"] && has["cons"]
+	case "ctor":
+		firstName := ctors[0].name
+		family, ok := ctorFamilies[firstName]
+		if !ok {
+			return false
+		}
+		covered := map[string]bool{}
+		for _, c := range ctors {
+			covered[c.name] = true
+		}
+		for name := range family {
+			if !covered[name] {
+				return false
+			}
+		}
+		return true
+	case "tuple", "unit", "record":
+		// Single constructor — always complete
+		return true
+	case "int", "float", "string":
+		// Infinite domain — never complete
+		return false
+	}
+	return false
+}
+
+// isUseful implements Maranget's usefulness algorithm.
+// Returns true if vector `vec` is useful against the pattern matrix `matrix`,
+// meaning there exists a value matched by vec that is NOT matched by any row in matrix.
+func isUseful(matrix [][]ast.Pattern, vec []ast.Pattern, ctorFamilies map[string]map[string]bool) bool {
+	// Base case: no columns — useful iff matrix has no rows.
+	if len(vec) == 0 {
+		return len(matrix) == 0
+	}
+
+	tag, _ := patternHead(vec[0])
+
+	if tag != nil {
+		// vec[0] is a constructor — specialize matrix and vector by this constructor.
+		sMatrix := specializeMatrix(matrix, *tag)
+		sVec := specializeVector(vec, *tag)
+		return isUseful(sMatrix, sVec, ctorFamilies)
+	}
+
+	// vec[0] is a wildcard — check constructors in column 0 of matrix.
+	ctors := collectConstructors(matrix)
+
+	if isSignatureComplete(ctors, ctorFamilies) {
+		// All constructors present — check each specialization.
+		// Must also handle constructors not yet seen but in the family,
+		// using proper arities from the matrix.
+		allCtors := allConstructorsWithArities(ctors, ctorFamilies)
+		for _, c := range allCtors {
+			sMatrix := specializeMatrix(matrix, c)
+			sVec := specializeVector(vec, c)
+			if isUseful(sMatrix, sVec, ctorFamilies) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Incomplete signature — use the default matrix.
+	dMatrix := defaultMatrix(matrix)
+	dVec := vec[1:]
+	return isUseful(dMatrix, dVec, ctorFamilies)
+}
+
+// allConstructorsWithArities returns all constructors for a complete signature,
+// using actual arities observed in the matrix constructors.
+func allConstructorsWithArities(observed []conTag, ctorFamilies map[string]map[string]bool) []conTag {
+	if len(observed) == 0 {
+		return nil
+	}
+	kind := observed[0].kind
+	switch kind {
+	case "bool":
+		return []conTag{
+			{kind: "bool", name: "true", arity: 0},
+			{kind: "bool", name: "false", arity: 0},
+		}
+	case "nil", "cons":
+		return []conTag{
+			{kind: "nil", name: "[]", arity: 0},
+			{kind: "cons", name: "[h|t]", arity: 2},
+		}
+	case "ctor":
+		// Build arity map from observed constructors.
+		arityMap := map[string]int{}
+		for _, c := range observed {
+			arityMap[c.name] = c.arity
+		}
+		firstName := observed[0].name
+		family, ok := ctorFamilies[firstName]
+		if !ok {
+			return observed
+		}
+		var result []conTag
+		for name := range family {
+			arity := arityMap[name] // 0 if not observed (nullary constructor)
+			result = append(result, conTag{kind: "ctor", name: name, arity: arity})
+		}
+		return result
+	case "tuple":
+		return []conTag{observed[0]}
+	case "unit":
+		return []conTag{observed[0]}
+	}
+	return observed
+}
+
+// missingPatternsError generates a helpful error message about which patterns are missing.
+func missingPatternsError(matrix [][]ast.Pattern, ctorFamilies map[string]map[string]bool) error {
+	// Collect constructors from column 0.
+	pats := make([]ast.Pattern, len(matrix))
+	for i, row := range matrix {
+		pats[i] = row[0]
+	}
+
+	ctors := collectConstructors(matrix)
+
+	if len(ctors) > 0 {
+		kind := ctors[0].kind
+		switch kind {
+		case "bool":
+			has := map[string]bool{}
+			for _, c := range ctors {
+				has[c.name] = true
+			}
+			var missing []string
+			if !has["true"] {
+				missing = append(missing, "true")
+			}
+			if !has["false"] {
+				missing = append(missing, "false")
+			}
+			if len(missing) > 0 {
+				return &types.TypeError{Msg: fmt.Sprintf("non-exhaustive patterns: missing %v", missing)}
+			}
+		case "nil", "cons":
+			has := map[string]bool{}
+			for _, c := range ctors {
+				has[c.kind] = true
+			}
+			var missing []string
+			if !has["nil"] {
+				missing = append(missing, "[]")
+			}
+			if !has["cons"] {
+				missing = append(missing, "[h|t]")
+			}
+			if len(missing) > 0 {
+				return &types.TypeError{Msg: fmt.Sprintf("non-exhaustive patterns: missing %v", missing)}
+			}
+		case "ctor":
+			firstName := ctors[0].name
+			if family, ok := ctorFamilies[firstName]; ok {
+				covered := map[string]bool{}
+				for _, c := range ctors {
+					covered[c.name] = true
+				}
+				var missing []string
+				for name := range family {
+					if !covered[name] {
+						missing = append(missing, name)
+					}
+				}
+				if len(missing) > 0 {
+					return &types.TypeError{Msg: fmt.Sprintf("non-exhaustive patterns: missing %v", missing)}
+				}
+			}
+		}
+	}
+
+	return &types.TypeError{Msg: "non-exhaustive patterns: add a catch-all `_ ->` arm"}
 }
 
 func (tc *TypeChecker) inferMatch(env TypeEnv, typeDefs map[string]types.Type, subst types.Subst, e ast.Match) (types.Subst, types.Type, error) {
