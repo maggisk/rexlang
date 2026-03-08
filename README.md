@@ -209,7 +209,7 @@ fact n =
         n * fact (n - 1)
 ```
 
-Annotations go on a separate line before the binding. If the annotation doesn't match the inferred type, you get a clear error. Annotations can also constrain polymorphic types — `identity : Int -> Int` narrows `a -> a` to `Int -> Int`.
+Annotations go on a separate line before the binding. If the annotation doesn't match the inferred type, you get a clear error. Annotations can also constrain polymorphic types — `identity : Int -> Int` narrows `a -> a` to `Int -> Int`. Trait constraints use `=>` syntax: `sort : Ord a => [a] -> [a]`.
 
 ### Traits (typeclasses)
 
@@ -221,7 +221,28 @@ impl Describable Int where
     describe n = "the number " ++ show n
 ```
 
-The prelude provides `Eq`, `Ord`, `Show`, and `Ordering` with instances for `Int`, `Float`, `String`, and `Bool`.
+The prelude provides `Eq`, `Ord`, `Show`, and `Ordering` with instances for `Int`, `Float`, `String`, `Bool`, lists, tuples, `Maybe`, and `Result`.
+
+Trait constraints are tracked at compile time. When a function uses a trait method on a polymorphic value, the constraint is inferred automatically and propagated to callers:
+
+```
+-- inferred as: Ord a => [a] -> [a]
+mySort lst = sort lst
+
+-- optional annotation syntax (single or multiple constraints)
+showMin : (Ord a, Show a) => a -> a -> String
+showMin x y =
+    if compare x y == LT then
+        show x
+    else
+        show y
+```
+
+Calling a constrained function with a type that lacks the required instance is a compile-time error:
+
+```
+sort [(\x -> x)]    -- Error: no Ord instance for type a -> a
+```
 
 ### Imports and modules
 
@@ -364,7 +385,7 @@ match try (\_ -> 10 / 0)
         0
 ```
 
-- **Missing trait instance** — calling a trait method on a type without an `impl` (constraint tracking planned in Traits v2)
+- **Missing trait instance on inner types** — `[Int -> Int] == [Int -> Int]` passes because the outer type (`List`) has an `Eq` instance, but fails at runtime because `Int -> Int` doesn't. Full inner constraint propagation is planned.
 
 Non-exhaustive patterns are caught at compile time — `match` expressions on ADTs, bools, and lists must cover all constructors, and literal/tuple patterns require a catch-all `_ ->` arm. Refutable patterns in `let` bindings are also rejected. IO operations like `readFile` and `getEnv` don't crash — they return `Result` or `Maybe`. Actor mailboxes are unbounded (Erlang-style) so `send` never fails.
 
@@ -401,7 +422,7 @@ Non-exhaustive patterns are caught at compile time — `match` expressions on AD
 | `examples/list.rex` | List stdlib |
 | `examples/tuple.rex` | Tuples and destructuring |
 | `examples/mutual_recursion.rex` | Mutual recursion (auto-detected) |
-| `examples/traits.rex` | Trait declarations and implementations |
+| `examples/traits.rex` | Traits, parameterized instances, and compile-time constraint tracking |
 | `examples/map.rex` | `Std:Map` sorted map |
 | `examples/interpolation.rex` | String interpolation with `${expr}` |
 | `examples/import.rex` | Module imports (selective and qualified) |
@@ -441,7 +462,7 @@ go test ./...
 - [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
 - [x] Multi-line strings — `"""..."""` triple-quoted strings
 - [x] Type aliases — `type alias Name = String`
-- [ ] Traits v2 — parameterized instances, constraint propagation
+- [x] Traits v2 — parameterized instances (`impl Show (List a)`), compile-time constraint tracking (`Ord a => ...`)
 - [x] Exhaustiveness checking — reject non-exhaustive `match` at compile time; refutable `let` patterns rejected
 - [x] `--types` flag — show inferred types for all bindings in a file or stdlib module (`./rex --types Std:List`)
 - [x] Type annotations — optional `add : Int -> Int -> Int` before binding
