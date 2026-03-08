@@ -222,7 +222,7 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Let-blocks — `let` + indented bindings + `in` (parser-only desugaring)
 - Traits v2 — parameterized instances (e.g., `impl Ord (List a)`), constraint tracking in types (`Ord a => ...`)
 - [x] Exhaustiveness checking — static pass post-HM using `__ctor_families__`; rejects non-exhaustive `match` (ADTs, bools, lists require all constructors; literals/tuples require catch-all `_ ->`); refutable `let` patterns rejected via `isIrrefutable` check
-- Typed holes — `?name` in expression position; typechecker infers the required type from surrounding context and reports it along with in-scope bindings; enables type-directed, incremental program construction. Never reaches eval. Implementation: `HoleExpr{Name string}` AST node; typechecker unifies hole with inferred type, collects into a holes report instead of a hard error. Use `?name` (not `_`) to avoid ambiguity with pattern wildcards.
+- ~~Typed holes~~ — skipped; better suited as a language server / LSP feature than a CLI compiler feature. Revisit if/when LSP is built.
 
 ### Error experience
 

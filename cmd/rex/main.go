@@ -42,6 +42,14 @@ func main() {
 		repl()
 		return
 	}
+	if args[0] == "--types" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: rex --types <file.rex | Std:Module>")
+			os.Exit(1)
+		}
+		showTypes(args[1])
+		return
+	}
 	if args[0] == "--test" {
 		var only string
 		var files []string
@@ -327,6 +335,138 @@ func runTests(path string, only string) (int, []eval.FailedTest) {
 		return 1, nil
 	}
 	return failed, failedNames
+}
+
+// ---------------------------------------------------------------------------
+// showTypes
+// ---------------------------------------------------------------------------
+
+// showTypes prints the types of all top-level bindings in a file or stdlib module.
+func showTypes(target string) {
+	// Check if target is a stdlib module (starts with "Std:")
+	if strings.HasPrefix(target, "Std:") {
+		result, err := typechecker.CheckModule(target)
+		if err != nil {
+			printErr("Type error", err)
+			os.Exit(1)
+		}
+		printTypeEnv(result.Env)
+		return
+	}
+
+	// Otherwise treat as a .rex file
+	setupSrcRoot(target)
+
+	source, err := os.ReadFile(target)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
+	}
+
+	exprs, err := parser.Parse(string(source))
+	if err != nil {
+		printErr("Parse error", err)
+		os.Exit(1)
+	}
+
+	if err := eval.ValidateToplevel(exprs); err != nil {
+		printErr("Syntax error", err)
+		os.Exit(1)
+	}
+
+	if err := parser.ValidateIndentation(exprs); err != nil {
+		printErr("Indentation error", err)
+		os.Exit(1)
+	}
+
+	exprs, err = typechecker.ReorderToplevel(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+
+	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+	handleWarnings(target, warnings)
+
+	// Collect top-level names from the AST (in order)
+	names := collectToplevelNames(exprs)
+
+	for _, name := range names {
+		v, ok := typeEnv[name]
+		if !ok {
+			continue
+		}
+		scheme, ok := v.(types.Scheme)
+		if !ok {
+			continue
+		}
+		fmt.Printf("%s : %s\n", name, types.TypeToString(scheme.Ty))
+	}
+}
+
+// collectToplevelNames returns the names of all top-level bindings in AST order.
+func collectToplevelNames(exprs []ast.Expr) []string {
+	seen := map[string]bool{}
+	var names []string
+	add := func(name string) {
+		if !seen[name] && !strings.HasPrefix(name, "__") && name != "_" {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	for _, expr := range exprs {
+		switch e := expr.(type) {
+		case ast.Let:
+			if e.InExpr == nil {
+				add(e.Name)
+			}
+		case ast.LetRec:
+			if e.InExpr == nil {
+				for _, b := range e.Bindings {
+					add(b.Name)
+				}
+			}
+		case ast.TypeDecl:
+			for _, ctor := range e.Ctors {
+				add(ctor.Name)
+			}
+			if len(e.RecordFields) > 0 {
+				add(e.Name)
+			}
+		}
+	}
+	return names
+}
+
+// printTypeEnv prints a TypeEnv sorted alphabetically.
+func printTypeEnv(env typechecker.TypeEnv) {
+	var names []string
+	for name := range env {
+		if !strings.HasPrefix(name, "__") {
+			names = append(names, name)
+		}
+	}
+	sortStrings(names)
+	for _, name := range names {
+		scheme, ok := env[name].(types.Scheme)
+		if !ok {
+			continue
+		}
+		fmt.Printf("%s : %s\n", name, types.TypeToString(scheme.Ty))
+	}
+}
+
+// sortStrings sorts a string slice in place.
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
 }
 
 // stdlibModuleForPath detects if path is inside the embedded stdlib.

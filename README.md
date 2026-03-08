@@ -12,6 +12,8 @@ go build -o rex ./cmd/rex/
 ./rex examples/io.rex             # run a program (requires main)
 ./rex --test examples/factorial.rex  # run tests
 ./rex --safe examples/io.rex      # --safe: reject any `todo` usage
+./rex --types Std:List            # show all exported types in a module
+./rex --types myfile.rex          # show all top-level binding types
 ./rex                             # start the REPL
 ```
 
@@ -441,7 +443,7 @@ go test ./...
 - [x] Type aliases — `type alias Name = String`
 - [ ] Traits v2 — parameterized instances, constraint propagation
 - [x] Exhaustiveness checking — reject non-exhaustive `match` at compile time; refutable `let` patterns rejected
-- [ ] Typed holes — `?name` in expression position; compiler infers the required type and reports it with in-scope bindings, enabling type-directed incremental development
+- [x] `--types` flag — show inferred types for all bindings in a file or stdlib module (`./rex --types Std:List`)
 - [x] Type annotations — optional `add : Int -> Int -> Int` before binding
 - [x] Let-blocks — `let` with indented bindings terminated by `in`
 - [x] Bare top-level bindings — `name params = body` (no `let` needed); implicit self and mutual recursion
@@ -459,6 +461,7 @@ go test ./...
 
 ### Tooling
 
+- [x] `--types` — type query for files and stdlib modules
 - [ ] Installable `rex` CLI (`go install`)
 - [ ] REPL history (`readline`)
 - [ ] Better error messages with source locations
