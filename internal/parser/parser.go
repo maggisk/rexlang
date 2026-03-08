@@ -623,26 +623,10 @@ func (p *parser) parseLetBody(letCol int) (ast.Expr, error) {
 }
 
 // parseLetContinuation parses the continuation after a let body.
-// Explicit 'in' is consumed. Otherwise, if the 'let' is indented inside a
-// caseArmCol-bounded context and the next token is at the same column as the
-// 'let', it is treated as an implicit continuation. This enables:
-//
-//	case x of
-//	    Ok v ->
-//	        let _ = doSomething v
-//	        useResult v            <-- implicit continuation
-//
-// Top-level and test-body lets (where letCol == caseArmCol) are NOT affected;
-// those contexts loop over independent expressions.
-func (p *parser) parseLetContinuation(letCol int) (ast.Expr, error) {
+// Explicit 'in' is required — no implicit continuation.
+func (p *parser) parseLetContinuation(_ int) (ast.Expr, error) {
 	if p.peek().Kind == lexer.TokIn {
 		p.advance()
-		return p.parseExpr()
-	}
-	// Implicit continuation: only when 'let' is indented past the outer boundary.
-	tok := p.peek()
-	if p.caseArmCol >= 0 && letCol > p.caseArmCol &&
-		tok.Kind != lexer.TokEOF && tok.Col == letCol {
 		return p.parseExpr()
 	}
 	return nil, nil
