@@ -41,10 +41,17 @@ type TCon struct {
 func (TVar) typeNode() {}
 func (TCon) typeNode() {}
 
+// Constraint represents a trait constraint on a type variable.
+type Constraint struct {
+	Trait string
+	Var   string // type variable name
+}
+
 // Scheme is a universally quantified type.
 type Scheme struct {
-	Vars []string // quantified type variable names
-	Ty   Type
+	Vars        []string // quantified type variable names
+	Constraints []Constraint
+	Ty          Type
 }
 
 // ---------------------------------------------------------------------------
@@ -224,7 +231,20 @@ func ApplySubstScheme(s Subst, scheme Scheme) Scheme {
 	for _, v := range scheme.Vars {
 		delete(restricted, v)
 	}
-	return Scheme{Vars: scheme.Vars, Ty: ApplySubst(restricted, scheme.Ty)}
+	// Remap constraints through the substitution
+	var newConstraints []Constraint
+	for _, c := range scheme.Constraints {
+		if _, bound := restricted[c.Var]; !bound {
+			newConstraints = append(newConstraints, c)
+		} else {
+			resolved := ApplySubst(restricted, TVar{Name: c.Var})
+			if tv, ok := resolved.(TVar); ok {
+				newConstraints = append(newConstraints, Constraint{Trait: c.Trait, Var: tv.Name})
+			}
+			// If resolved to concrete type, constraint is consumed (checked elsewhere)
+		}
+	}
+	return Scheme{Vars: scheme.Vars, Constraints: newConstraints, Ty: ApplySubst(restricted, scheme.Ty)}
 }
 
 // ApplySubstEnv applies s to every Scheme value in env; non-Scheme values pass through.
@@ -305,7 +325,8 @@ func Unify(t1, t2 Type) (Subst, error) {
 }
 
 // Generalize generalizes ty over type variables not free in env.
-func Generalize(env map[string]interface{}, ty Type) Scheme {
+// If constraints are provided, those on quantified vars are included in the Scheme.
+func Generalize(env map[string]interface{}, ty Type, constraints ...[]Constraint) Scheme {
 	envFree := map[string]bool{}
 	for _, v := range env {
 		if scheme, ok := v.(Scheme); ok {
@@ -315,14 +336,36 @@ func Generalize(env map[string]interface{}, ty Type) Scheme {
 		}
 	}
 	tyFree := FreeVars(ty)
+	quantifiedSet := map[string]bool{}
 	var quantified []string
 	for name := range tyFree {
 		if !envFree[name] {
 			quantified = append(quantified, name)
+			quantifiedSet[name] = true
 		}
 	}
 	sort.Strings(quantified)
-	return Scheme{Vars: quantified, Ty: ty}
+	var cs []Constraint
+	if len(constraints) > 0 {
+		seen := map[string]bool{}
+		for _, c := range constraints[0] {
+			if quantifiedSet[c.Var] {
+				key := c.Trait + ":" + c.Var
+				if !seen[key] {
+					seen[key] = true
+					cs = append(cs, c)
+				}
+			}
+		}
+		// Sort constraints for deterministic output
+		sort.Slice(cs, func(i, j int) bool {
+			if cs[i].Var != cs[j].Var {
+				return cs[i].Var < cs[j].Var
+			}
+			return cs[i].Trait < cs[j].Trait
+		})
+	}
+	return Scheme{Vars: quantified, Constraints: cs, Ty: ty}
 }
 
 // ---------------------------------------------------------------------------
@@ -388,4 +431,55 @@ func TypeToString(ty Type) string {
 		return fmt.Sprintf("%v", ty)
 	}
 	return render(ty, false)
+}
+
+// SchemeToString pretty-prints a scheme, including constraints if any.
+// e.g. "Ord a => [a] -> [a]"
+func SchemeToString(s Scheme) string {
+	tyStr := TypeToString(s.Ty)
+	if len(s.Constraints) == 0 {
+		return tyStr
+	}
+	// Build the TVar name mapping consistent with TypeToString
+	mapping := map[string]string{}
+	counter := 0
+	nameFor := func(varName string) string {
+		if n, ok := mapping[varName]; ok {
+			return n
+		}
+		var n string
+		if counter < 26 {
+			n = string(rune('a' + counter))
+		} else {
+			n = fmt.Sprintf("t%d", counter)
+		}
+		counter++
+		mapping[varName] = n
+		return n
+	}
+	// Walk the type to establish variable naming order (same as TypeToString)
+	var walkType func(ty Type)
+	walkType = func(ty Type) {
+		switch t := ty.(type) {
+		case TVar:
+			nameFor(t.Name)
+		case TCon:
+			for _, a := range t.Args {
+				walkType(a)
+			}
+		}
+	}
+	walkType(s.Ty)
+	// Render constraints using the same mapping
+	var parts []string
+	for _, c := range s.Constraints {
+		parts = append(parts, c.Trait+" "+nameFor(c.Var))
+	}
+	prefix := ""
+	if len(parts) == 1 {
+		prefix = parts[0] + " => "
+	} else {
+		prefix = "(" + strings.Join(parts, ", ") + ") => "
+	}
+	return prefix + tyStr
 }

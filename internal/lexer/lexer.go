@@ -320,6 +320,9 @@ func Tokenize(source string) ([]Token, error) {
 			if pos < n && runes[pos] == '=' {
 				pos++
 				tokens = append(tokens, Token{Kind: TokEqEq, Line: tokLine, Col: tokCol})
+			} else if pos < n && runes[pos] == '>' {
+				pos++
+				tokens = append(tokens, Token{Kind: TokFatArrow, Line: tokLine, Col: tokCol})
 			} else {
 				tokens = append(tokens, Token{Kind: TokEq, Line: tokLine, Col: tokCol})
 			}

@@ -75,6 +75,7 @@ type TypeChecker struct {
 	counter     int
 	typeAliases map[string]types.TypeAliasInfo
 	Warnings    []Warning
+	constraints []types.Constraint
 }
 
 // NewTypeChecker creates a new TypeChecker.
@@ -85,6 +86,44 @@ func NewTypeChecker() *TypeChecker {
 func (tc *TypeChecker) fresh() types.Type {
 	tc.counter++
 	return types.TVar{Name: fmt.Sprintf("t%d", tc.counter)}
+}
+
+// resolveConstraints applies the final substitution to accumulated constraints
+// (from startIdx onward), checks concrete types against __trait_instances__,
+// and returns constraints on quantified vars for inclusion in the Scheme.
+func (tc *TypeChecker) resolveConstraints(s types.Subst, env TypeEnv, startIdx int) ([]types.Constraint, error) {
+	if startIdx >= len(tc.constraints) {
+		return nil, nil
+	}
+	newConstraints := make([]types.Constraint, len(tc.constraints)-startIdx)
+	copy(newConstraints, tc.constraints[startIdx:])
+	tc.constraints = tc.constraints[:startIdx]
+
+	instances := map[string]map[string]bool{}
+	if inst, ok := env["__trait_instances__"]; ok {
+		if im, ok := inst.(map[string]map[string]bool); ok {
+			instances = im
+		}
+	}
+
+	var result []types.Constraint
+	for _, c := range newConstraints {
+		resolved := types.ApplySubst(s, types.TVar{Name: c.Var})
+		switch t := resolved.(type) {
+		case types.TVar:
+			result = append(result, types.Constraint{Trait: c.Trait, Var: t.Name})
+		case types.TCon:
+			typeName := t.Name
+			if typeName == "Tuple" {
+				typeName = fmt.Sprintf("Tuple%d", len(t.Args))
+			}
+			key := c.Trait + ":" + typeName
+			if _, ok := instances[key]; !ok {
+				return nil, &types.TypeError{Msg: fmt.Sprintf("no %s instance for type %s", c.Trait, types.TypeToString(resolved))}
+			}
+		}
+	}
+	return result, nil
 }
 
 // freshenType replaces all TVars in a type with fresh variables.
@@ -104,6 +143,14 @@ func (tc *TypeChecker) instantiate(s types.Scheme) types.Type {
 	subst := make(types.Subst, len(s.Vars))
 	for _, v := range s.Vars {
 		subst[v] = tc.fresh()
+	}
+	// Remap constraints from the scheme into fresh type variables
+	for _, c := range s.Constraints {
+		if newTy, ok := subst[c.Var]; ok {
+			if tv, ok := newTy.(types.TVar); ok {
+				tc.constraints = append(tc.constraints, types.Constraint{Trait: c.Trait, Var: tv.Name})
+			}
+		}
 	}
 	return types.SubstOnce(subst, s.Ty)
 }
@@ -850,6 +897,7 @@ func (tc *TypeChecker) inferLet(env TypeEnv, typeDefs map[string]types.Type, sub
 	if e.Recursive {
 		tv := tc.fresh()
 		env1 := env.extend(e.Name, types.Scheme{Ty: tv})
+		cStart := len(tc.constraints)
 		s1, t1, err := tc.infer(env1, typeDefs, subst, e.Body)
 		if err != nil {
 			return nil, nil, err
@@ -860,7 +908,11 @@ func (tc *TypeChecker) inferLet(env TypeEnv, typeDefs map[string]types.Type, sub
 		}
 		s12 := types.ComposeSubst(s2, s1)
 		env2 := applySubstEnv(s12, env)
-		gen := types.Generalize(env2, types.ApplySubst(s12, t1))
+		cs, err := tc.resolveConstraints(s12, env2, cStart)
+		if err != nil {
+			return nil, nil, err
+		}
+		gen := types.Generalize(env2, types.ApplySubst(s12, t1), cs)
 		env3 := env2.extend(e.Name, gen)
 		if e.InExpr != nil {
 			s3, t3, err := tc.infer(env3, typeDefs, s12, e.InExpr)
@@ -871,12 +923,17 @@ func (tc *TypeChecker) inferLet(env TypeEnv, typeDefs map[string]types.Type, sub
 		}
 		return s12, types.ApplySubst(s12, gen.Ty), nil
 	}
+	cStart := len(tc.constraints)
 	s1, t1, err := tc.infer(env, typeDefs, subst, e.Body)
 	if err != nil {
 		return nil, nil, err
 	}
 	env1 := applySubstEnv(s1, env)
-	gen := types.Generalize(env1, types.ApplySubst(s1, t1))
+	cs, err := tc.resolveConstraints(s1, env1, cStart)
+	if err != nil {
+		return nil, nil, err
+	}
+	gen := types.Generalize(env1, types.ApplySubst(s1, t1), cs)
 	env2 := env1.extend(e.Name, gen)
 	if e.InExpr != nil {
 		s2, t2, err := tc.infer(env2, typeDefs, types.ComposeSubst(s1, subst), e.InExpr)
@@ -897,6 +954,7 @@ func (tc *TypeChecker) inferLetrecCore(env TypeEnv, typeDefs map[string]types.Ty
 		envExt[b.Name] = types.Scheme{Ty: tv}
 	}
 	env1 := env.extendMany(envExt)
+	cStart := len(tc.constraints)
 	s := subst
 	for _, b := range bindings {
 		s1, t1, err := tc.infer(env1, typeDefs, s, b.Body)
@@ -910,9 +968,13 @@ func (tc *TypeChecker) inferLetrecCore(env TypeEnv, typeDefs map[string]types.Ty
 		s = types.ComposeSubst(s2, s1)
 	}
 	env2 := applySubstEnv(s, env)
+	cs, err := tc.resolveConstraints(s, env2, cStart)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	genEnv := map[string]types.Scheme{}
 	for name, tv := range tvs {
-		gen := types.Generalize(env2, types.ApplySubst(s, tv))
+		gen := types.Generalize(env2, types.ApplySubst(s, tv), cs)
 		genEnv[name] = gen
 	}
 	newEnvExt := make(TypeEnv)
@@ -1454,6 +1516,9 @@ func (tc *TypeChecker) resolveTypeSig(node ast.TySyntax, typeDefs map[string]typ
 		// Record type syntax in annotations — not a standalone type, just pass through
 		// This would need a type name lookup; for now we don't support anonymous record types
 		return nil, &types.TypeError{Msg: "anonymous record types are not supported; use the named type instead"}
+	case ast.TyConstrained:
+		// Resolve the inner type; constraints are handled at the annotation level
+		return tc.resolveTypeSig(n.Inner, typeDefs)
 	}
 	return nil, &types.TypeError{Msg: fmt.Sprintf("unknown type syntax node: %T", node)}
 }
@@ -1600,7 +1665,14 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		if err != nil {
 			return InferToplevelResult{}, err
 		}
-		gen := types.Generalize(env, resolved)
+		// Extract constraints from TyConstrained annotation
+		var annConstraints []types.Constraint
+		if tc2, ok := e.Type.(ast.TyConstrained); ok {
+			for _, c := range tc2.Constraints {
+				annConstraints = append(annConstraints, types.Constraint{Trait: c.Trait, Var: c.Var})
+			}
+		}
+		gen := types.Generalize(env, resolved, annConstraints)
 		newEnv := env.extend("__ann:"+e.Name, gen)
 		return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: newEnv, TypeDefs: typeDefs}, nil
 
@@ -1746,10 +1818,12 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 			}
 			fv := types.FreeVars(ty)
 			var qvars []string
+			var constraints []types.Constraint
 			if fv[e.Param] {
 				qvars = []string{e.Param}
+				constraints = []types.Constraint{{Trait: e.Name, Var: e.Param}}
 			}
-			sc := types.Scheme{Vars: qvars, Ty: ty}
+			sc := types.Scheme{Vars: qvars, Constraints: constraints, Ty: ty}
 			methodsDict[m.Name] = sc
 			newEnv[m.Name] = sc
 		}
@@ -1861,6 +1935,7 @@ func implTargetNameTC(ty ast.TySyntax) string {
 
 // checkAnnotation checks if a pending annotation matches the inferred scheme.
 // Returns the annotation scheme if it exists (to constrain the type), or nil.
+// When an annotation exists, the inferred constraints are preserved on it.
 func (tc *TypeChecker) checkAnnotation(env TypeEnv, inferred types.Scheme, name string) (*types.Scheme, error) {
 	annKey := "__ann:" + name
 	annVal, ok := env[annKey]
@@ -1873,11 +1948,76 @@ func (tc *TypeChecker) checkAnnotation(env TypeEnv, inferred types.Scheme, name 
 	}
 	annTy := tc.instantiate(annScheme)
 	infTy := tc.instantiate(inferred)
-	if _, err := types.Unify(annTy, infTy); err != nil {
+	_, err := types.Unify(annTy, infTy)
+	if err != nil {
 		return nil, &types.TypeError{Msg: fmt.Sprintf(
 			"type annotation mismatch for '%s': declared %s but inferred %s",
 			name, types.TypeToString(annScheme.Ty), types.TypeToString(inferred.Ty),
 		)}
+	}
+	// Map inferred constraints to annotation variable names.
+	// The inferred scheme's constraint vars reference its own Vars (e.g. "t5"),
+	// not the annotation's vars (e.g. "a"). Build a mapping between them by
+	// matching positions in the type structure.
+	if len(inferred.Constraints) > 0 {
+		// Build mapping: inferred var name -> annotation var name
+		infVarToAnn := map[string]string{}
+		// Use the same instantiation approach: create fresh vars for both,
+		// unify, then trace through the substitution
+		annSubst := make(types.Subst, len(annScheme.Vars))
+		for _, v := range annScheme.Vars {
+			annSubst[v] = tc.fresh()
+		}
+		infSubst := make(types.Subst, len(inferred.Vars))
+		for _, v := range inferred.Vars {
+			infSubst[v] = tc.fresh()
+		}
+		annFresh := types.SubstOnce(annSubst, annScheme.Ty)
+		infFresh := types.SubstOnce(infSubst, inferred.Ty)
+		if s2, err := types.Unify(annFresh, infFresh); err == nil {
+			// Build reverse lookup: fresh var name -> annotation original var
+			annFreshToOrig := map[string]string{}
+			for annVar, annFreshTy := range annSubst {
+				if afv, ok := annFreshTy.(types.TVar); ok {
+					annFreshToOrig[afv.Name] = annVar
+				}
+			}
+			// For each inferred var, trace through unification to find annotation var
+			for infVar, infFreshTy := range infSubst {
+				ifv, ok := infFreshTy.(types.TVar)
+				if !ok {
+					continue
+				}
+				// Try resolving the inferred fresh var
+				resolved := types.ApplySubst(s2, ifv)
+				if tv, ok := resolved.(types.TVar); ok {
+					if annOrig, ok := annFreshToOrig[tv.Name]; ok {
+						infVarToAnn[infVar] = annOrig
+						continue
+					}
+				}
+				// Also try: check if any annotation fresh var maps to this inferred fresh var
+				for annFreshName, annOrig := range annFreshToOrig {
+					resolved := types.ApplySubst(s2, types.TVar{Name: annFreshName})
+					if tv, ok := resolved.(types.TVar); ok && tv.Name == ifv.Name {
+						infVarToAnn[infVar] = annOrig
+						break
+					}
+				}
+			}
+		}
+		seen := map[string]bool{}
+		for _, c := range inferred.Constraints {
+			annVar, ok := infVarToAnn[c.Var]
+			if !ok {
+				continue
+			}
+			key := c.Trait + ":" + annVar
+			if !seen[key] {
+				seen[key] = true
+				annScheme.Constraints = append(annScheme.Constraints, types.Constraint{Trait: c.Trait, Var: annVar})
+			}
+		}
 	}
 	return &annScheme, nil
 }
@@ -1886,6 +2026,7 @@ func (tc *TypeChecker) toplevelLet(env TypeEnv, typeDefs map[string]types.Type, 
 	if e.Recursive {
 		tv := tc.fresh()
 		env1 := env.extend(e.Name, types.Scheme{Ty: tv})
+		cStart := len(tc.constraints)
 		s1, t1, err := tc.infer(env1, typeDefs, subst, e.Body)
 		if err != nil {
 			return nil, nil, nil, err
@@ -1896,7 +2037,11 @@ func (tc *TypeChecker) toplevelLet(env TypeEnv, typeDefs map[string]types.Type, 
 		}
 		s12 := types.ComposeSubst(s2, s1)
 		env2 := applySubstEnv(s12, env)
-		gen := types.Generalize(env2, types.ApplySubst(s12, t1))
+		cs, err := tc.resolveConstraints(s12, env2, cStart)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		gen := types.Generalize(env2, types.ApplySubst(s12, t1), cs)
 		annScheme, err := tc.checkAnnotation(env2, gen, e.Name)
 		if err != nil {
 			return nil, nil, nil, err
@@ -1908,12 +2053,17 @@ func (tc *TypeChecker) toplevelLet(env TypeEnv, typeDefs map[string]types.Type, 
 		delete(newEnv, "__ann:"+e.Name)
 		return s12, types.ApplySubst(s12, gen.Ty), newEnv, nil
 	}
+	cStart := len(tc.constraints)
 	s1, t1, err := tc.infer(env, typeDefs, subst, e.Body)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	env1 := applySubstEnv(s1, env)
-	gen := types.Generalize(env1, types.ApplySubst(s1, t1))
+	cs, err := tc.resolveConstraints(s1, env1, cStart)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	gen := types.Generalize(env1, types.ApplySubst(s1, t1), cs)
 	annScheme, err := tc.checkAnnotation(env1, gen, e.Name)
 	if err != nil {
 		return nil, nil, nil, err

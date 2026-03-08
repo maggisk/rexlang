@@ -327,10 +327,21 @@ type TyRecordField struct {
 	Type TySyntax
 }
 
-func (TyName) tySyntaxNode()   {}
-func (TyApp) tySyntaxNode()    {}
-func (TyFun) tySyntaxNode()    {}
-func (TyList) tySyntaxNode()   {}
-func (TyTuple) tySyntaxNode()  {}
-func (TyUnit) tySyntaxNode()   {}
-func (TyRecord) tySyntaxNode() {}
+type TyConstraint struct {
+	Trait string
+	Var   string
+}
+
+type TyConstrained struct {
+	Constraints []TyConstraint
+	Inner       TySyntax
+}
+
+func (TyName) tySyntaxNode()        {}
+func (TyApp) tySyntaxNode()         {}
+func (TyFun) tySyntaxNode()         {}
+func (TyList) tySyntaxNode()        {}
+func (TyTuple) tySyntaxNode()       {}
+func (TyUnit) tySyntaxNode()        {}
+func (TyRecord) tySyntaxNode()      {}
+func (TyConstrained) tySyntaxNode() {}

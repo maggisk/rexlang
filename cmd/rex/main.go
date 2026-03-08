@@ -404,7 +404,7 @@ func showTypes(target string) {
 		if !ok {
 			continue
 		}
-		fmt.Printf("%s : %s\n", name, types.TypeToString(scheme.Ty))
+		fmt.Printf("%s : %s\n", name, types.SchemeToString(scheme))
 	}
 }
 
@@ -456,7 +456,7 @@ func printTypeEnv(env typechecker.TypeEnv) {
 		if !ok {
 			continue
 		}
-		fmt.Printf("%s : %s\n", name, types.TypeToString(scheme.Ty))
+		fmt.Printf("%s : %s\n", name, types.SchemeToString(scheme))
 	}
 }
 
@@ -571,7 +571,6 @@ func repl() {
 				continue
 			}
 
-			tyStr := types.TypeToString(res.Ty)
 			var name string
 			switch x := expr.(type) {
 			case ast.Let:
@@ -582,6 +581,20 @@ func repl() {
 				name = "_"
 			default:
 				name = "it"
+			}
+			// Use scheme display if available (shows constraints)
+			tyStr := types.TypeToString(res.Ty)
+			lookupName := name
+			if name == "it" {
+				// For bare variable expressions, look up the scheme by var name
+				if v, ok := expr.(ast.Var); ok {
+					lookupName = v.Name
+				}
+			}
+			if lookupName != "it" && lookupName != "_" {
+				if s, ok := typeEnv[lookupName].(types.Scheme); ok {
+					tyStr = types.SchemeToString(s)
+				}
 			}
 			fmt.Printf("%s : %s\n", name, tyStr)
 			fmt.Printf("=> %s\n", eval.ValueToString(val))

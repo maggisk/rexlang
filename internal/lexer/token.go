@@ -54,6 +54,7 @@ const (
 	TokPipeGt     = "|>"
 	TokPipe       = "|"
 	TokArrow      = "->"
+	TokFatArrow   = "=>"
 	TokColonColon = "::"
 	TokColon      = ":"
 	TokDot        = "."

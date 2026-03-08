@@ -123,3 +123,57 @@ test "string interpolation with compound types" =
     assert ("list is ${[1, 2, 3]}" == "list is [1, 2, 3]")
     assert ("maybe is ${Just 42}" == "maybe is Just 42")
     assert ("pair is ${(1, true)}" == "pair is (1, true)")
+
+
+-- ## Compile-time constraint tracking (Traits v2 Phase 2)
+--
+-- The typechecker now tracks trait constraints on type variables.
+-- Calling a trait method like `compare` or `show` on a polymorphic value
+-- propagates the constraint to the function's type scheme.
+-- When a constrained type variable is resolved to a concrete type,
+-- the typechecker verifies an instance exists at compile time.
+
+import Std:List (sort, sortBy, maximum, minimum)
+
+-- Constraint annotation syntax: single and multiple constraints
+sortAnnotated : Ord a => [a] -> [a]
+sortAnnotated lst = sort lst
+
+showAndCompare : (Ord a, Show a) => a -> a -> String
+showAndCompare x y =
+    if compare x y == LT then
+        show x
+    else
+        show y
+
+-- Annotation without constraint is also fine (inferred is a superset)
+sortNoAnnotation : [a] -> [a]
+sortNoAnnotation lst = sort lst
+
+test "sort with concrete Ord type" =
+    assert (sort [3, 1, 2] == [1, 2, 3])
+    assert (sort ["banana", "apple", "cherry"] == ["apple", "banana", "cherry"])
+
+test "compare with concrete Ord type" =
+    assert (compare 1 2 == LT)
+    assert (compare "z" "a" == GT)
+
+test "show with concrete Show type" =
+    assert (show 42 == "42")
+    assert (show [1, 2, 3] == "[1, 2, 3]")
+
+test "multiple constraints" =
+    assert (showAndCompare 1 2 == "1")
+    assert (showAndCompare 5 3 == "3")
+
+test "constraint propagation through sort" =
+    assert (sortAnnotated [3, 1, 2] == [1, 2, 3])
+    assert (sortNoAnnotation [3, 1, 2] == [1, 2, 3])
+
+test "maximum and minimum carry Ord" =
+    assert (maximum [3, 1, 5, 2] == Just 5)
+    assert (minimum [3, 1, 5, 2] == Just 1)
+
+test "sortBy with derived key" =
+    let result = sortBy (\x -> 0 - x) [3, 1, 2]
+    assert (result == [3, 2, 1])

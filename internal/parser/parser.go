@@ -643,8 +643,8 @@ func (p *parser) parseLetBlock() (ast.Expr, error) {
 	//   name [params] = body       → Let (or nested Fun for params)
 	//   (pat) = body               → LetPat
 	type letBinding struct {
-		name string       // non-empty for named bindings
-		pat  ast.Pattern  // non-nil for pattern bindings
+		name string      // non-empty for named bindings
+		pat  ast.Pattern // non-nil for pattern bindings
 		body ast.Expr
 	}
 	bindingCol := p.peek().Col
@@ -1319,6 +1319,16 @@ func (p *parser) parseExport() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseTypeSig() (ast.TySyntax, error) {
+	// Try to parse constraint prefix: Trait a => ... or (Trait a, Trait2 b) => ...
+	constraints, ok := p.tryParseConstraintPrefix()
+	if ok {
+		inner, err := p.parseTypeSig()
+		if err != nil {
+			return nil, err
+		}
+		return ast.TyConstrained{Constraints: constraints, Inner: inner}, nil
+	}
+
 	ty, err := p.parseTypeSigAtom()
 	if err != nil {
 		return nil, err
@@ -1332,6 +1342,76 @@ func (p *parser) parseTypeSig() (ast.TySyntax, error) {
 		return ast.TyFun{Arg: ty, Ret: ret}, nil
 	}
 	return ty, nil
+}
+
+// tryParseConstraintPrefix tries to parse "Trait a =>" or "(Trait a, Trait b) =>"
+// Returns constraints and true if successful, or nil and false (with position reset).
+func (p *parser) tryParseConstraintPrefix() ([]ast.TyConstraint, bool) {
+	savedPos := p.pos
+	// Case 1: (Trait a, Trait b) => ...
+	if p.peek().Kind == lexer.TokLParen {
+		p.advance()
+		var constraints []ast.TyConstraint
+		for {
+			trait, tvar, ok := p.tryParseOneConstraint()
+			if !ok {
+				p.pos = savedPos
+				return nil, false
+			}
+			constraints = append(constraints, ast.TyConstraint{Trait: trait, Var: tvar})
+			if p.peek().Kind == lexer.TokComma {
+				p.advance()
+			} else {
+				break
+			}
+		}
+		if p.peek().Kind != lexer.TokRParen {
+			p.pos = savedPos
+			return nil, false
+		}
+		p.advance()
+		if p.peek().Kind != lexer.TokFatArrow {
+			p.pos = savedPos
+			return nil, false
+		}
+		p.advance()
+		return constraints, true
+	}
+	// Case 2: Trait a => ...
+	trait, tvar, ok := p.tryParseOneConstraint()
+	if !ok {
+		p.pos = savedPos
+		return nil, false
+	}
+	if p.peek().Kind != lexer.TokFatArrow {
+		p.pos = savedPos
+		return nil, false
+	}
+	p.advance()
+	return []ast.TyConstraint{{Trait: trait, Var: tvar}}, true
+}
+
+// tryParseOneConstraint tries to parse "TraitName varName"
+func (p *parser) tryParseOneConstraint() (string, string, bool) {
+	tok := p.peek()
+	if tok.Kind != lexer.TokIdent {
+		return "", "", false
+	}
+	name, ok := tok.Value.(string)
+	if !ok || !isUppercase(name) {
+		return "", "", false
+	}
+	p.advance()
+	tok2 := p.peek()
+	if tok2.Kind != lexer.TokIdent {
+		return "", "", false
+	}
+	varName, ok := tok2.Value.(string)
+	if !ok || isUppercase(varName) {
+		return "", "", false
+	}
+	p.advance()
+	return name, varName, true
 }
 
 func (p *parser) isTypeSigAtomStart() bool {
