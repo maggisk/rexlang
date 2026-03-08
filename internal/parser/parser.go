@@ -513,7 +513,8 @@ func (p *parser) parseLet() (ast.Expr, error) {
 	//   in a + b
 	// Detected when the next token is on a different line and indented past 'let'.
 	if p.peek().Line > letTok.Line && p.peek().Col > letTok.Col &&
-		p.peek().Kind == lexer.TokIdent && !isUppercase(p.peek().Value.(string)) {
+		(p.peek().Kind == lexer.TokLParen ||
+			(p.peek().Kind == lexer.TokIdent && !isUppercase(p.peek().Value.(string)))) {
 		return p.parseLetBlock()
 	}
 
@@ -638,44 +639,82 @@ func (p *parser) parseLetContinuation(_ int) (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseLetBlock() (ast.Expr, error) {
+	// A let-block binding is either:
+	//   name [params] = body       → Let (or nested Fun for params)
+	//   (pat) = body               → LetPat
 	type letBinding struct {
-		name string
+		name string       // non-empty for named bindings
+		pat  ast.Pattern  // non-nil for pattern bindings
 		body ast.Expr
 	}
 	bindingCol := p.peek().Col
 	var bindings []letBinding
 
+	isBindingStart := func() bool {
+		tok := p.peek()
+		if tok.Col != bindingCol {
+			return false
+		}
+		if tok.Kind == lexer.TokLParen {
+			return true
+		}
+		if tok.Kind == lexer.TokIdent && !isUppercase(tok.Value.(string)) {
+			return true
+		}
+		return false
+	}
+
 	// Use caseArmCol to bound each binding body so it doesn't consume the next binding.
 	savedCAC := p.caseArmCol
 	p.caseArmCol = bindingCol
-	for p.peek().Kind == lexer.TokIdent && !isUppercase(p.peek().Value.(string)) && p.peek().Col == bindingCol {
-		name, err := p.expectIdent()
-		if err != nil {
-			p.caseArmCol = savedCAC
-			return nil, err
-		}
-		var params []string
-		for p.peek().Kind == lexer.TokIdent {
-			param, err := p.expectIdent()
+	for isBindingStart() {
+		if p.peek().Kind == lexer.TokLParen {
+			// Pattern binding: (a, b) = expr
+			pat, err := p.parseAtomPattern()
 			if err != nil {
 				p.caseArmCol = savedCAC
 				return nil, err
 			}
-			params = append(params, param)
+			if err := p.expect(lexer.TokEq); err != nil {
+				p.caseArmCol = savedCAC
+				return nil, err
+			}
+			body, err := p.parseExpr()
+			if err != nil {
+				p.caseArmCol = savedCAC
+				return nil, err
+			}
+			bindings = append(bindings, letBinding{pat: pat, body: body})
+		} else {
+			// Named binding: name [params] = body
+			name, err := p.expectIdent()
+			if err != nil {
+				p.caseArmCol = savedCAC
+				return nil, err
+			}
+			var params []string
+			for p.peek().Kind == lexer.TokIdent {
+				param, err := p.expectIdent()
+				if err != nil {
+					p.caseArmCol = savedCAC
+					return nil, err
+				}
+				params = append(params, param)
+			}
+			if err := p.expect(lexer.TokEq); err != nil {
+				p.caseArmCol = savedCAC
+				return nil, err
+			}
+			body, err := p.parseExpr()
+			if err != nil {
+				p.caseArmCol = savedCAC
+				return nil, err
+			}
+			for i := len(params) - 1; i >= 0; i-- {
+				body = ast.Fun{Param: params[i], Body: body}
+			}
+			bindings = append(bindings, letBinding{name: name, body: body})
 		}
-		if err := p.expect(lexer.TokEq); err != nil {
-			p.caseArmCol = savedCAC
-			return nil, err
-		}
-		body, err := p.parseExpr()
-		if err != nil {
-			p.caseArmCol = savedCAC
-			return nil, err
-		}
-		for i := len(params) - 1; i >= 0; i-- {
-			body = ast.Fun{Param: params[i], Body: body}
-		}
-		bindings = append(bindings, letBinding{name, body})
 	}
 	p.caseArmCol = savedCAC
 
@@ -695,10 +734,16 @@ func (p *parser) parseLetBlock() (ast.Expr, error) {
 		return nil, err
 	}
 
-	// Desugar: [a=1, b=2, c=3] + inExpr → Let{a,1, Let{b,2, Let{c,3, inExpr}}}
-	result := ast.Let{Name: bindings[len(bindings)-1].name, Body: bindings[len(bindings)-1].body, InExpr: inExpr}
-	for i := len(bindings) - 2; i >= 0; i-- {
-		result = ast.Let{Name: bindings[i].name, Body: bindings[i].body, InExpr: result}
+	// Desugar: [a=1, (x,y)=pair, c=3] + inExpr
+	//   → Let{a,1, LetPat{(x,y),pair, Let{c,3, inExpr}}}
+	var result ast.Expr = inExpr
+	for i := len(bindings) - 1; i >= 0; i-- {
+		b := bindings[i]
+		if b.pat != nil {
+			result = ast.LetPat{Pat: b.pat, Body: b.body, InExpr: result}
+		} else {
+			result = ast.Let{Name: b.name, Body: b.body, InExpr: result}
+		}
 	}
 	return result, nil
 }
