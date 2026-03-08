@@ -384,6 +384,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `Std:Process` | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages |
 | `Std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
 | `Std:Stream` | Lazy streams: `fromList`, `repeat`, `iterate`, `from`, `range`, `map`, `filter`, `flatMap`, `take`, `drop`, `takeWhile`, `dropWhile`, `zip`, `zipWith`, `toList`, `foldl`, `head`, `isEmpty`, `indexedMap` — supports infinite sequences |
+| `Std:Net` | TCP networking: `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener` — opaque `Listener`/`Conn` types; all operations return `Result` |
 
 ## Examples
 
@@ -420,6 +421,7 @@ Non-exhaustive patterns are caught at compile time — `case` expressions on ADT
 | `examples/forward_ref.rex` | Forward references between top-level bindings |
 | `examples/testing.rex` | Built-in test framework |
 | `examples/json_decode.rex` | JSON decoder combinators with `Std:Json.Decode` |
+| `examples/tcp_echo.rex` | TCP echo server with `Std:Net` and `Std:Process` |
 | `examples/user_modules/` | User module imports with `src/` directory |
 
 ## Running tests
@@ -451,6 +453,7 @@ go test ./...
 
 - [x] JSON — `Std:Json` with ADT, `parse`/`stringify`, encode/decode helpers
 - [x] JSON decoder combinators — `Std:Json.Decode` with Elm-style `field`, `map2`, `oneOf`, `andThen`, `list`, `dict`, `maybe`
+- [x] TCP networking — `Std:Net` with `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener`
 - [ ] Date/Time
 - [ ] Random numbers
 

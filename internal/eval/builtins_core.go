@@ -3,7 +3,9 @@ package eval
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
+	"net"
 	"os"
 	"runtime"
 	"sort"
@@ -978,6 +980,10 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 		for k, v := range ParallelBuiltins() {
 			result[k] = v
 		}
+	case "Net":
+		for k, v := range NetBuiltins() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -986,6 +992,100 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 func ParallelBuiltins() map[string]Value {
 	return map[string]Value{
 		"numCPU": VInt{V: runtime.NumCPU()},
+	}
+}
+
+// NetBuiltins returns TCP networking builtins.
+func NetBuiltins() map[string]Value {
+	return map[string]Value{
+		"tcpListen": makeBuiltin("tcpListen", func(v Value) (Value, error) {
+			port, err := AsInt(v)
+			if err != nil {
+				return nil, err
+			}
+			ln, netErr := net.Listen("tcp", fmt.Sprintf(":%d", port))
+			if netErr != nil {
+				return VCtor{Name: "Err", Args: []Value{VString{V: netErr.Error()}}}, nil
+			}
+			actualPort := ln.Addr().(*net.TCPAddr).Port
+			return VCtor{Name: "Ok", Args: []Value{VTuple{Items: []Value{VListener{L: ln}, VInt{V: actualPort}}}}}, nil
+		}),
+		"tcpAccept": makeBuiltin("tcpAccept", func(v Value) (Value, error) {
+			ln, ok := v.(VListener)
+			if !ok {
+				return nil, runtimeErr("tcpAccept: expected Listener, got %s", ValueToString(v))
+			}
+			conn, netErr := ln.L.Accept()
+			if netErr != nil {
+				return VCtor{Name: "Err", Args: []Value{VString{V: netErr.Error()}}}, nil
+			}
+			return VCtor{Name: "Ok", Args: []Value{VConn{C: conn}}}, nil
+		}),
+		"tcpConnect": curried2("tcpConnect", func(hostV, portV Value) (Value, error) {
+			host, err := CheckStr("tcpConnect", hostV)
+			if err != nil {
+				return nil, err
+			}
+			port, err := AsInt(portV)
+			if err != nil {
+				return nil, err
+			}
+			conn, netErr := net.Dial("tcp", fmt.Sprintf("%s:%d", host, port))
+			if netErr != nil {
+				return VCtor{Name: "Err", Args: []Value{VString{V: netErr.Error()}}}, nil
+			}
+			return VCtor{Name: "Ok", Args: []Value{VConn{C: conn}}}, nil
+		}),
+		"tcpRead": makeBuiltin("tcpRead", func(v Value) (Value, error) {
+			c, ok := v.(VConn)
+			if !ok {
+				return nil, runtimeErr("tcpRead: expected Conn, got %s", ValueToString(v))
+			}
+			buf := make([]byte, 4096)
+			n, readErr := c.C.Read(buf)
+			if readErr != nil {
+				if readErr == io.EOF {
+					return VCtor{Name: "Err", Args: []Value{VString{V: "EOF"}}}, nil
+				}
+				return VCtor{Name: "Err", Args: []Value{VString{V: readErr.Error()}}}, nil
+			}
+			return VCtor{Name: "Ok", Args: []Value{VString{V: string(buf[:n])}}}, nil
+		}),
+		"tcpWrite": curried2("tcpWrite", func(connV, dataV Value) (Value, error) {
+			c, ok := connV.(VConn)
+			if !ok {
+				return nil, runtimeErr("tcpWrite: expected Conn, got %s", ValueToString(connV))
+			}
+			data, err := CheckStr("tcpWrite", dataV)
+			if err != nil {
+				return nil, err
+			}
+			_, writeErr := c.C.Write([]byte(data))
+			if writeErr != nil {
+				return VCtor{Name: "Err", Args: []Value{VString{V: writeErr.Error()}}}, nil
+			}
+			return VCtor{Name: "Ok", Args: []Value{VUnit{}}}, nil
+		}),
+		"tcpClose": makeBuiltin("tcpClose", func(v Value) (Value, error) {
+			c, ok := v.(VConn)
+			if !ok {
+				return nil, runtimeErr("tcpClose: expected Conn, got %s", ValueToString(v))
+			}
+			if closeErr := c.C.Close(); closeErr != nil {
+				return VCtor{Name: "Err", Args: []Value{VString{V: closeErr.Error()}}}, nil
+			}
+			return VCtor{Name: "Ok", Args: []Value{VUnit{}}}, nil
+		}),
+		"tcpCloseListener": makeBuiltin("tcpCloseListener", func(v Value) (Value, error) {
+			ln, ok := v.(VListener)
+			if !ok {
+				return nil, runtimeErr("tcpCloseListener: expected Listener, got %s", ValueToString(v))
+			}
+			if closeErr := ln.L.Close(); closeErr != nil {
+				return VCtor{Name: "Err", Args: []Value{VString{V: closeErr.Error()}}}, nil
+			}
+			return VCtor{Name: "Ok", Args: []Value{VUnit{}}}, nil
+		}),
 	}
 }
 

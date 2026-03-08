@@ -89,6 +89,9 @@ func TPid(a Type) Type {
 	return TCon{Name: "Pid", Args: []Type{a}}
 }
 
+var TListener = TCon{Name: "Listener"}
+var TConn = TCon{Name: "Conn"}
+
 // ---------------------------------------------------------------------------
 // Type equality (structural)
 // ---------------------------------------------------------------------------

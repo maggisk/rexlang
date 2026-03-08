@@ -3,6 +3,7 @@ package eval
 
 import (
 	"fmt"
+	"net"
 	"sort"
 	"strings"
 	"sync"
@@ -10,6 +11,16 @@ import (
 
 	"github.com/maggisk/rexlang/internal/ast"
 )
+
+// ---------------------------------------------------------------------------
+// Network types
+// ---------------------------------------------------------------------------
+
+type VListener struct{ L net.Listener }
+type VConn struct{ C net.Conn }
+
+func (VListener) valueKind() {}
+func (VConn) valueKind()     {}
 
 // ---------------------------------------------------------------------------
 // Value types
@@ -270,6 +281,10 @@ func StructuralEq(l, r Value) bool {
 			}
 		}
 		return true
+	case VListener:
+		return false
+	case VConn:
+		return false
 	}
 	return false
 }
@@ -369,6 +384,10 @@ func ValueToString(v Value) string {
 		// Sort for deterministic output
 		sort.Strings(parts)
 		return val.TypeName + " { " + strings.Join(parts, ", ") + " }"
+	case VListener:
+		return "<listener>"
+	case VConn:
+		return "<conn>"
 	}
 	panic(fmt.Sprintf("unknown value type: %T", v))
 }

@@ -2088,6 +2088,10 @@ func typeEnvForModule(name string) TypeEnv {
 		for k, v := range parallelTypeEnv() {
 			result[k] = v
 		}
+	case "Net":
+		for k, v := range netTypeEnv() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -2099,8 +2103,32 @@ func typeDefsForModule(name string) map[string]types.Type {
 		return map[string]types.Type{
 			"Pid": types.TCon{Name: "Pid", Args: []types.Type{types.TVar{Name: "a"}}},
 		}
+	case "Net":
+		return map[string]types.Type{
+			"Listener": types.TListener,
+			"Conn":     types.TConn,
+		}
 	}
 	return nil
+}
+
+func netTypeEnv() TypeEnv {
+	return TypeEnv{
+		// tcpListen : Int -> Result (Listener, Int) String
+		"tcpListen": types.Scheme{Ty: types.TFun(types.TInt, types.TResult(types.TTuple([]types.Type{types.TListener, types.TInt}), types.TString))},
+		// tcpAccept : Listener -> Result Conn String
+		"tcpAccept": types.Scheme{Ty: types.TFun(types.TListener, types.TResult(types.TConn, types.TString))},
+		// tcpConnect : String -> Int -> Result Conn String
+		"tcpConnect": types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TInt, types.TResult(types.TConn, types.TString)))},
+		// tcpRead : Conn -> Result String String
+		"tcpRead": types.Scheme{Ty: types.TFun(types.TConn, types.TResult(types.TString, types.TString))},
+		// tcpWrite : Conn -> String -> Result () String
+		"tcpWrite": types.Scheme{Ty: types.TFun(types.TConn, types.TFun(types.TString, types.TResult(types.TUnit, types.TString)))},
+		// tcpClose : Conn -> Result () String
+		"tcpClose": types.Scheme{Ty: types.TFun(types.TConn, types.TResult(types.TUnit, types.TString))},
+		// tcpCloseListener : Listener -> Result () String
+		"tcpCloseListener": types.Scheme{Ty: types.TFun(types.TListener, types.TResult(types.TUnit, types.TString))},
+	}
 }
 
 func parallelTypeEnv() TypeEnv {
