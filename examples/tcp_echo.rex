@@ -16,7 +16,7 @@ handleClient conn =
         Err _ ->
             tcpClose conn
         Ok msg ->
-            let _ = tcpWrite conn msg in
+            let _ = tcpWrite conn msg
             handleClient conn
 
 
@@ -26,17 +26,18 @@ acceptLoop ln =
         Err _ ->
             ()
         Ok conn ->
-            let _ = spawn (\_ -> handleClient conn) in
+            let _ = spawn \_ ->
+                    handleClient conn
             acceptLoop ln
 
 
 export main _ =
     case tcpListen 9000 of
         Err e ->
-            let _ = println "Failed to listen: ${e}" in
+            let _ = println "Failed to listen: ${e}"
             1
         Ok (ln, port) ->
-            let _ = println "Listening on port ${toString port}" in
-            let _ = acceptLoop ln in
-            let _ = tcpCloseListener ln in
+            let _ = println "Listening on port ${toString port}"
+            let _ = acceptLoop ln
+            let _ = tcpCloseListener ln
             0
