@@ -2251,6 +2251,8 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 		return nil, err
 	}
 	exports := map[string]bool{}
+	opaqueTypes := map[string]bool{}
+	opaqueCtors := map[string]bool{}
 
 	for _, expr := range exprs {
 		if ex, ok := expr.(ast.Export); ok {
@@ -2276,11 +2278,22 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 				// LetPat exports are unusual; skip for now
 			case ast.TypeDecl:
 				if e.Exported {
-					for _, ctor := range e.Ctors {
-						exports[ctor.Name] = true
-					}
-					if len(e.RecordFields) > 0 {
-						exports[e.Name] = true
+					if e.Opaque {
+						// Opaque: export the type (via TypeDefs) but not constructors
+						opaqueTypes[e.Name] = true
+						for _, ctor := range e.Ctors {
+							opaqueCtors[ctor.Name] = true
+						}
+						if len(e.RecordFields) > 0 {
+							opaqueCtors[e.Name] = true
+						}
+					} else {
+						for _, ctor := range e.Ctors {
+							exports[ctor.Name] = true
+						}
+						if len(e.RecordFields) > 0 {
+							exports[e.Name] = true
+						}
 					}
 				}
 			case ast.TraitDecl:
@@ -2308,7 +2321,12 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 	ctorFamilies := map[string]map[string]bool{}
 	if cf, ok := env["__ctor_families__"]; ok {
 		if cfm, ok := cf.(map[string]map[string]bool); ok {
-			ctorFamilies = cfm
+			// Filter out ctor families for opaque types
+			for ctorName, family := range cfm {
+				if !opaqueCtors[ctorName] {
+					ctorFamilies[ctorName] = family
+				}
+			}
 		}
 	}
 	traits := map[string]TraitInfo{}
@@ -2327,7 +2345,12 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 	recordFields := map[string]types.RecordInfo{}
 	if rf, ok := env["__record_fields__"]; ok {
 		if rfm, ok := rf.(map[string]types.RecordInfo); ok {
-			recordFields = rfm
+			// Filter out record fields for opaque types
+			for typeName, ri := range rfm {
+				if !opaqueTypes[typeName] {
+					recordFields[typeName] = ri
+				}
+			}
 		}
 	}
 

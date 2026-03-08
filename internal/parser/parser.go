@@ -1271,6 +1271,22 @@ func (p *parser) parseExport() (ast.Expr, error) {
 			return e, nil
 		}
 		return expr, nil
+	case p.peek().Kind == lexer.TokOpaque:
+		p.advance() // consume 'opaque'
+		if p.peek().Kind != lexer.TokType {
+			tok := p.peek()
+			return nil, &ParseError{Msg: fmt.Sprintf("expected 'type' after 'opaque' at line %d, col %d", tok.Line, tok.Col+1), Line: tok.Line, Col: tok.Col}
+		}
+		expr, err := p.parseTypeDecl()
+		if err != nil {
+			return nil, err
+		}
+		if td, ok := expr.(ast.TypeDecl); ok {
+			td.Exported = true
+			td.Opaque = true
+			return td, nil
+		}
+		return expr, nil
 	case p.peek().Kind == lexer.TokType:
 		expr, err := p.parseTypeDecl()
 		if err != nil {

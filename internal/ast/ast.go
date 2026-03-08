@@ -145,6 +145,7 @@ type MatchArm struct {
 type TypeDecl struct {
 	Name         string
 	Exported     bool
+	Opaque       bool
 	Params       []string
 	Ctors        []CtorDef
 	RecordFields []RecordFieldDef // non-nil for record types (mutually exclusive with Ctors)

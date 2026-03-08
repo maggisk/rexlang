@@ -22,7 +22,7 @@ var keywords = map[string]bool{
 	"if": true, "then": true, "else": true,
 	"match": true, "when": true, "type": true, "import": true,
 	"export": true, "as": true, "trait": true, "impl": true,
-	"where": true, "test": true, "assert": true, "alias": true,
+	"where": true, "test": true, "assert": true, "alias": true, "opaque": true,
 }
 
 // Tokenize converts source code into a slice of tokens.

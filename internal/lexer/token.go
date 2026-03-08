@@ -34,6 +34,7 @@ const (
 	TokAlias     = "alias"
 	TokTest      = "test"
 	TokAssert    = "assert"
+	TokOpaque    = "opaque"
 
 	// Symbols
 	TokPlus       = "+"

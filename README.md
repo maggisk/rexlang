@@ -280,6 +280,38 @@ For types and traits, use `export type` / `export trait` inline:
 export type Shape = Circle Float | Rect Float Float
 ```
 
+### Opaque types
+
+Use `export opaque type` to export a type without its constructors. Consumers can use the type in annotations but can't construct or destructure values directly — they must go through your exported functions:
+
+```
+-- Email.rex
+export opaque type Email = Email String
+
+export
+make : String -> Email
+make s = Email s
+
+export
+toString : Email -> String
+toString e =
+    match e
+        when Email s ->
+            s
+```
+
+From the outside:
+
+```
+import Email (make, toString)
+
+email = make "alice@example.com"    -- OK: smart constructor
+s = toString email                  -- OK: exported accessor
+x = Email "hack"                    -- Error: Email constructor not exported
+```
+
+Works with both ADTs and records. For opaque records, field access (`.field`) is also blocked.
+
 ### Entry point
 
 Programs run with `./rex file.rex` need a `main` function that takes command-line args and returns an exit code:
@@ -470,7 +502,7 @@ go test ./...
 - [x] Bare top-level bindings — `name params = body` (no `let` needed); implicit self and mutual recursion
 - [x] `todo` builtin — development placeholder; `--safe` flag rejects it for CI/deploy
 - [x] User modules — import your own `.rex` files from `src/` directory
-- [ ] Opaque types — export a type without its constructor; consumers interact only through provided functions (`exposing (Email)` vs `exposing (Email(..))`). Prerequisite: user modules.
+- [x] Opaque types — `export opaque type Email = Email String`; type name available for annotations, constructors hidden from importers
 
 ### Stdlib
 

@@ -961,7 +961,7 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 					}
 				}
 			case ast.TypeDecl:
-				if e.Exported {
+				if e.Exported && !e.Opaque {
 					for _, ctor := range e.Ctors {
 						exports[ctor.Name] = true
 					}
