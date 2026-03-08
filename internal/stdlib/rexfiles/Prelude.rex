@@ -111,19 +111,13 @@ impl Show () where
 
 impl Eq (List a) where
     eq xs ys =
-        match xs
-            when [] ->
-                match ys
-                    when [] ->
-                        true
-                    when _ ->
-                        false
-            when [x|xrest] ->
-                match ys
-                    when [] ->
-                        false
-                    when [y|yrest] ->
-                        eq x y && eq xrest yrest
+        match (xs, ys)
+            when ([], []) ->
+                true
+            when ([x|xrest], [y|yrest]) ->
+                eq x y && eq xrest yrest
+            when _ ->
+                false
 
 impl Eq (a, b) where
     eq x y =
@@ -133,23 +127,19 @@ impl Eq (a, b) where
 
 impl Ord (List a) where
     compare xs ys =
-        match xs
-            when [] ->
-                match ys
-                    when [] ->
-                        EQ
-                    when _ ->
-                        LT
-            when [x|xrest] ->
-                match ys
-                    when [] ->
-                        GT
-                    when [y|yrest] ->
-                        match compare x y
-                            when EQ ->
-                                compare xrest yrest
-                            when result ->
-                                result
+        match (xs, ys)
+            when ([], []) ->
+                EQ
+            when ([], _) ->
+                LT
+            when (_, []) ->
+                GT
+            when ([x|xrest], [y|yrest]) ->
+                match compare x y
+                    when EQ ->
+                        compare xrest yrest
+                    when result ->
+                        result
 
 impl Ord (a, b) where
     compare x y =

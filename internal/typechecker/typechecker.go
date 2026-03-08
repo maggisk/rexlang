@@ -961,20 +961,35 @@ func checkExhaustive(arms []ast.MatchArm, ctorFamilies map[string]map[string]boo
 	for i, a := range arms {
 		pats[i] = a.Pat
 	}
+	return patsExhaustive(pats, ctorFamilies)
+}
+
+// patsExhaustive checks whether a set of patterns is exhaustive.
+func patsExhaustive(pats []ast.Pattern, ctorFamilies map[string]map[string]bool) error {
 	for _, p := range pats {
 		if isIrrefutable(p) {
 			return nil
 		}
 	}
-	// Bool patterns
-	hasBool := false
-	for _, p := range pats {
-		if _, ok := p.(ast.PBool); ok {
-			hasBool = true
-			break
+
+	// Tuple patterns: check each column independently.
+	// Extract all PTuple patterns (irrefutable patterns like _ or vars
+	// act as wildcards for every column).
+	if hasTuplePattern(pats) {
+		arity := tuplePatsArity(pats)
+		if arity > 0 {
+			for col := 0; col < arity; col++ {
+				colPats := extractTupleColumn(pats, col)
+				if err := patsExhaustive(colPats, ctorFamilies); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 	}
-	if hasBool {
+
+	// Bool patterns
+	if hasBoolPattern(pats) {
 		covered := map[bool]bool{}
 		for _, p := range pats {
 			if pb, ok := p.(ast.PBool); ok {
@@ -993,6 +1008,7 @@ func checkExhaustive(arms []ast.MatchArm, ctorFamilies map[string]map[string]boo
 		}
 		return nil
 	}
+
 	// List patterns
 	hasNil, hasCons := false, false
 	for _, p := range pats {
@@ -1016,6 +1032,7 @@ func checkExhaustive(arms []ast.MatchArm, ctorFamilies map[string]map[string]boo
 		}
 		return nil
 	}
+
 	// Constructor patterns
 	var ctorPats []ast.PCtor
 	for _, p := range pats {
@@ -1042,7 +1059,57 @@ func checkExhaustive(arms []ast.MatchArm, ctorFamilies map[string]map[string]boo
 			return nil
 		}
 	}
+
 	return &types.TypeError{Msg: "non-exhaustive patterns: add a catch-all `_ ->` arm"}
+}
+
+func hasTuplePattern(pats []ast.Pattern) bool {
+	for _, p := range pats {
+		if _, ok := p.(ast.PTuple); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func hasBoolPattern(pats []ast.Pattern) bool {
+	for _, p := range pats {
+		if _, ok := p.(ast.PBool); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// tuplePatsArity returns the arity of the first PTuple found, or 0.
+func tuplePatsArity(pats []ast.Pattern) int {
+	for _, p := range pats {
+		if pt, ok := p.(ast.PTuple); ok {
+			return len(pt.Pats)
+		}
+	}
+	return 0
+}
+
+// extractTupleColumn extracts the sub-pattern at position col from each pattern.
+// PTuple patterns contribute their col-th element.
+// Irrefutable patterns (_, var) contribute PWild (wildcard for that column).
+// Non-tuple refutable patterns are skipped (shouldn't happen in well-typed code).
+func extractTupleColumn(pats []ast.Pattern, col int) []ast.Pattern {
+	var result []ast.Pattern
+	for _, p := range pats {
+		switch pt := p.(type) {
+		case ast.PTuple:
+			if col < len(pt.Pats) {
+				result = append(result, pt.Pats[col])
+			}
+		default:
+			if isIrrefutable(p) {
+				result = append(result, ast.PWild{})
+			}
+		}
+	}
+	return result
 }
 
 func (tc *TypeChecker) inferMatch(env TypeEnv, typeDefs map[string]types.Type, subst types.Subst, e ast.Match) (types.Subst, types.Type, error) {

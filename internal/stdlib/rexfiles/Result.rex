@@ -13,19 +13,13 @@ impl Show (Result a b) where
 
 impl Eq (Result a b) where
     eq x y =
-        match x
-            when Ok a ->
-                match y
-                    when Ok b ->
-                        eq a b
-                    when _ ->
-                        false
-            when Err a ->
-                match y
-                    when Err b ->
-                        eq a b
-                    when _ ->
-                        false
+        match (x, y)
+            when (Ok a, Ok b) ->
+                eq a b
+            when (Err a, Err b) ->
+                eq a b
+            when _ ->
+                false
 
 
 -- # Recovery

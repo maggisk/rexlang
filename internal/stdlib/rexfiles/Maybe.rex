@@ -13,35 +13,25 @@ impl Show (Maybe a) where
 
 impl Eq (Maybe a) where
     eq x y =
-        match x
-            when Nothing ->
-                match y
-                    when Nothing ->
-                        true
-                    when _ ->
-                        false
-            when Just a ->
-                match y
-                    when Just b ->
-                        eq a b
-                    when _ ->
-                        false
+        match (x, y)
+            when (Nothing, Nothing) ->
+                true
+            when (Just a, Just b) ->
+                eq a b
+            when _ ->
+                false
 
 impl Ord (Maybe a) where
     compare x y =
-        match x
-            when Nothing ->
-                match y
-                    when Nothing ->
-                        EQ
-                    when _ ->
-                        LT
-            when Just a ->
-                match y
-                    when Nothing ->
-                        GT
-                    when Just b ->
-                        compare a b
+        match (x, y)
+            when (Nothing, Nothing) ->
+                EQ
+            when (Nothing, _) ->
+                LT
+            when (_, Nothing) ->
+                GT
+            when (Just a, Just b) ->
+                compare a b
 
 
 -- # Query
