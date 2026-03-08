@@ -440,6 +440,7 @@ Non-exhaustive patterns are caught at compile time — `match` expressions on AD
 | `Std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
 | `Std:Stream` | Lazy streams: `fromList`, `repeat`, `iterate`, `from`, `range`, `map`, `filter`, `flatMap`, `take`, `drop`, `takeWhile`, `dropWhile`, `zip`, `zipWith`, `toList`, `foldl`, `head`, `isEmpty`, `indexedMap` — supports infinite sequences |
 | `Std:Net` | TCP networking: `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener` — opaque `Listener`/`Conn` types; all operations return `Result` |
+| `Std:Random` | Pure seed-based RNG (`rngMake`, `rngInt`, `rngFloat`, `rngBool`, `rngList`) and actor facade (`randomInt`, `randomFloat`, `randomBool`, `shuffle`) — Park-Miller LCG; opaque `Rng` type |
 
 ## Examples
 
@@ -509,8 +510,8 @@ go test ./...
 - [x] JSON — `Std:Json` with ADT, `parse`/`stringify`, encode/decode helpers
 - [x] JSON decoder combinators — `Std:Json.Decode` with Elm-style `field`, `map2`, `oneOf`, `andThen`, `list`, `dict`, `maybe`
 - [x] TCP networking — `Std:Net` with `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener`
+- [x] Random numbers — `Std:Random` with pure seed-based API and actor facade; `randomInt`, `randomFloat`, `randomBool`, `shuffle`
 - [ ] Date/Time
-- [ ] Random numbers
 
 ### Tooling
 

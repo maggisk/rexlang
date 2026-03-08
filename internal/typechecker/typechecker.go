@@ -2549,6 +2549,10 @@ func typeEnvForModule(name string) TypeEnv {
 		for k, v := range netTypeEnv() {
 			result[k] = v
 		}
+	case "Random":
+		for k, v := range randomTypeEnv() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -2556,7 +2560,7 @@ func typeEnvForModule(name string) TypeEnv {
 // typeDefsForModule returns extra type definitions needed by specific modules.
 func typeDefsForModule(name string) map[string]types.Type {
 	switch name {
-	case "Process", "Parallel":
+	case "Process":
 		return map[string]types.Type{
 			"Pid": types.TCon{Name: "Pid", Args: []types.Type{types.TVar{Name: "a"}}},
 		}
@@ -2591,6 +2595,12 @@ func netTypeEnv() TypeEnv {
 func parallelTypeEnv() TypeEnv {
 	return TypeEnv{
 		"numCPU": types.Scheme{Ty: types.TInt},
+	}
+}
+
+func randomTypeEnv() TypeEnv {
+	return TypeEnv{
+		"systemSeed": types.Scheme{Ty: types.TFun(types.TUnit, types.TInt)},
 	}
 }
 

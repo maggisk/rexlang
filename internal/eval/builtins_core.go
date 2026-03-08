@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/rand/v2"
 	"net"
 	"os"
 	"runtime"
@@ -984,6 +985,10 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 		for k, v := range NetBuiltins() {
 			result[k] = v
 		}
+	case "Random":
+		for k, v := range RandomBuiltins() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -992,6 +997,16 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 func ParallelBuiltins() map[string]Value {
 	return map[string]Value{
 		"numCPU": VInt{V: runtime.NumCPU()},
+	}
+}
+
+// RandomBuiltins returns builtins for the Random module.
+func RandomBuiltins() map[string]Value {
+	return map[string]Value{
+		"systemSeed": makeBuiltin("systemSeed", func(_ Value) (Value, error) {
+			n := rand.IntN(2147483646) + 1 // [1, 2147483646]
+			return VInt{V: n}, nil
+		}),
 	}
 }
 
