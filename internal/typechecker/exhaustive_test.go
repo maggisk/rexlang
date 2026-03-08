@@ -342,36 +342,30 @@ f pair =
 // --- Nested patterns ---
 
 func TestExhaustive_NestedADTInTuple(t *testing.T) {
-	// Nested nullary constructors inside tuple (parser requires parens
-	// for constructors with args inside tuples, so we use nullary here).
 	expectOK(t, "nested ADT in tuple", `
-type AB = A | B
-type XY = X | Y
+import Std:Maybe (Just, Nothing)
 
 f pair =
     match pair
-        when (A, X) ->
+        when (Just (Just _), _) ->
             1
-        when (A, Y) ->
+        when (Just Nothing, _) ->
             2
-        when (B, X) ->
+        when (Nothing, _) ->
             3
-        when (B, Y) ->
-            4
 `)
 }
 
 func TestExhaustive_NestedADTInTupleMissing(t *testing.T) {
-	// Missing (B, X) and (B, Y)
+	// Missing (Just Nothing, _)
 	expectExhaustiveError(t, "nested ADT in tuple missing", `
-type AB = A | B
-type XY = X | Y
+import Std:Maybe (Just, Nothing)
 
 f pair =
     match pair
-        when (A, X) ->
+        when (Just (Just _), _) ->
             1
-        when (A, Y) ->
+        when (Nothing, _) ->
             2
 `)
 }

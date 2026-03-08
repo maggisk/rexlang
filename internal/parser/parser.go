@@ -799,7 +799,11 @@ func (p *parser) parseAtomPattern() (ast.Pattern, error) {
 			p.advance()
 			return ast.PVar{Name: name}, nil
 		}
-		// uppercase ident — fall through to error (caller must handle via parsePattern)
+		// Uppercase ident as atom pattern — nullary constructor (no args).
+		// This allows constructors like Nothing to appear as arguments
+		// to other constructors (e.g. Just Nothing) and inside tuples.
+		p.advance()
+		return ast.PCtor{Name: name, Args: nil}, nil
 	}
 	switch tok.Kind {
 	case lexer.TokInt:
@@ -887,10 +891,9 @@ func (p *parser) parseAtomPattern() (ast.Pattern, error) {
 	}
 }
 
-func isPatternAtomStart(kind string, value interface{}) bool {
+func isPatternAtomStart(kind string) bool {
 	if kind == lexer.TokIdent {
-		s := value.(string)
-		return s == "_" || !isUppercase(s)
+		return true
 	}
 	switch kind {
 	case lexer.TokInt, lexer.TokFloat, lexer.TokString, lexer.TokBool,
@@ -934,15 +937,12 @@ func (p *parser) parsePattern() (ast.Pattern, error) {
 		var args []ast.Pattern
 		for {
 			t := p.peek()
-			if isPatternAtomStart(t.Kind, t.Value) {
+			if isPatternAtomStart(t.Kind) {
 				arg, err := p.parseAtomPattern()
 				if err != nil {
 					return nil, err
 				}
 				args = append(args, arg)
-			} else if t.Kind == lexer.TokIdent && isUppercase(t.Value.(string)) {
-				// Uppercase in parens is handled in parseAtomPattern via TokLParen
-				break
 			} else {
 				break
 			}

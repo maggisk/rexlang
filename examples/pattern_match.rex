@@ -216,41 +216,36 @@ test "tuple Maybe with catch-all" =
 -- # Nested patterns
 
 
--- | Nested Maybe patterns (constructors with args need parens).
+-- | Nested Maybe patterns.
 deepMaybe x =
     match x
         when Just (Just v) ->
             v
-        when Just (Nothing) ->
+        when Just Nothing ->
             0
         when Nothing ->
             0
 
 test "nested Maybe" =
     assert (deepMaybe (Just (Just 42)) == 42)
-    assert (deepMaybe (Just (Nothing)) == 0)
+    assert (deepMaybe (Just Nothing) == 0)
     assert (deepMaybe Nothing == 0)
 
 
--- | Two ADTs in a tuple — cross-column with full coverage.
-type AB = A | B
-
-twoADTs pair =
+-- | Nested constructors in a tuple — cross-column with nesting.
+nestedInTuple pair =
     match pair
-        when (A, Just _) ->
-            "A-just"
-        when (A, Nothing) ->
-            "A-nothing"
-        when (B, Just _) ->
-            "B-just"
-        when (B, Nothing) ->
-            "B-nothing"
+        when (Just (Just _), _) ->
+            "deep"
+        when (Just Nothing, _) ->
+            "shallow"
+        when (Nothing, _) ->
+            "none"
 
-test "two ADTs in tuple" =
-    assert (twoADTs (A, Just 1) == "A-just")
-    assert (twoADTs (A, Nothing) == "A-nothing")
-    assert (twoADTs (B, Just 1) == "B-just")
-    assert (twoADTs (B, Nothing) == "B-nothing")
+test "nested ADT in tuple" =
+    assert (nestedInTuple (Just (Just 1), 0) == "deep")
+    assert (nestedInTuple (Just Nothing, 0) == "shallow")
+    assert (nestedInTuple (Nothing, 0) == "none")
 
 
 -- | List nested inside Maybe.
