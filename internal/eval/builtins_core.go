@@ -989,6 +989,10 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 		for k, v := range RandomBuiltins() {
 			result[k] = v
 		}
+	case "Bitwise":
+		for k, v := range BitwiseBuiltins() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -997,6 +1001,74 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 func ParallelBuiltins() map[string]Value {
 	return map[string]Value{
 		"numCPU": VInt{V: runtime.NumCPU()},
+	}
+}
+
+// BitwiseBuiltins returns builtins for the Bitwise module.
+func BitwiseBuiltins() map[string]Value {
+	return map[string]Value{
+		"bitAnd": curried2("bitAnd", func(a, b Value) (Value, error) {
+			x, err := AsInt(a)
+			if err != nil {
+				return nil, err
+			}
+			y, err := AsInt(b)
+			if err != nil {
+				return nil, err
+			}
+			return VInt{V: x & y}, nil
+		}),
+		"bitOr": curried2("bitOr", func(a, b Value) (Value, error) {
+			x, err := AsInt(a)
+			if err != nil {
+				return nil, err
+			}
+			y, err := AsInt(b)
+			if err != nil {
+				return nil, err
+			}
+			return VInt{V: x | y}, nil
+		}),
+		"bitXor": curried2("bitXor", func(a, b Value) (Value, error) {
+			x, err := AsInt(a)
+			if err != nil {
+				return nil, err
+			}
+			y, err := AsInt(b)
+			if err != nil {
+				return nil, err
+			}
+			return VInt{V: x ^ y}, nil
+		}),
+		"bitNot": makeBuiltin("bitNot", func(v Value) (Value, error) {
+			x, err := AsInt(v)
+			if err != nil {
+				return nil, err
+			}
+			return VInt{V: ^x}, nil
+		}),
+		"shiftLeft": curried2("shiftLeft", func(a, b Value) (Value, error) {
+			x, err := AsInt(a)
+			if err != nil {
+				return nil, err
+			}
+			n, err := AsInt(b)
+			if err != nil {
+				return nil, err
+			}
+			return VInt{V: x << uint(n)}, nil
+		}),
+		"shiftRight": curried2("shiftRight", func(a, b Value) (Value, error) {
+			x, err := AsInt(a)
+			if err != nil {
+				return nil, err
+			}
+			n, err := AsInt(b)
+			if err != nil {
+				return nil, err
+			}
+			return VInt{V: x >> uint(n)}, nil
+		}),
 	}
 }
 

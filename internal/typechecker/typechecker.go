@@ -2553,6 +2553,10 @@ func typeEnvForModule(name string) TypeEnv {
 		for k, v := range randomTypeEnv() {
 			result[k] = v
 		}
+	case "Bitwise":
+		for k, v := range bitwiseTypeEnv() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -2595,6 +2599,17 @@ func netTypeEnv() TypeEnv {
 func parallelTypeEnv() TypeEnv {
 	return TypeEnv{
 		"numCPU": types.Scheme{Ty: types.TInt},
+	}
+}
+
+func bitwiseTypeEnv() TypeEnv {
+	return TypeEnv{
+		"bitAnd":     types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
+		"bitOr":      types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
+		"bitXor":     types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
+		"bitNot":     types.Scheme{Ty: types.TFun(types.TInt, types.TInt)},
+		"shiftLeft":  types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
+		"shiftRight": types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
 	}
 }
 

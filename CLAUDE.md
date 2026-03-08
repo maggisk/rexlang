@@ -33,7 +33,7 @@ internal/
     builtins_core.go  All builtins: core, math, string, IO, env, JSON
   stdlib/
     embed.go       //go:embed all:rexfiles; Source(name) string (dots → subdirs)
-    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Json/Decode, Process, Parallel, Stream, Convert, Net, Random)
+    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Json/Decode, Process, Parallel, Stream, Convert, Net, Random, Bitwise)
 ```
 
 ## Development commands
@@ -176,6 +176,19 @@ match x
 
 One blank line between top-level definitions; two blank lines between sections. Stdlib modules use `-- # Section` headers and `-- | doc` comments above each function. Every stdlib function should have its tests immediately after its definition — not grouped at the bottom of the file.
 
+Exports: `export` on its own line above each exported function. For types, `export` is inline: `export type Foo = ...` or `export opaque type Foo = ...`. Standalone `export name, ...` lists only for re-exporting builtins (e.g., IO.rex, Env.rex).
+
+```rex
+-- good: export above function
+export
+rngMake : Int -> Rng
+rngMake seed = ...
+
+-- good: export inline with type
+export type Rng = | Rng Int
+export opaque type Rng = | Rng Int
+```
+
 ## Planned work (ordered by dependency)
 
 ### Data structures & types
@@ -211,7 +224,8 @@ One blank line between top-level definitions; two blank lines between sections. 
 - [x] Convert — `toResult` (Maybe→Result), `toMaybe` (Result→Maybe), `fromMaybe` (Maybe→Result); cross-conversion between Maybe and Result
 - [x] Stream — lazy streams via thunks (`type Stream a = Empty | Cons a (() -> Stream a)`); pure Rex, no Go builtins; `fromList`, `repeat`, `iterate`, `from`, `range`, `map`, `filter`, `flatMap`, `take`, `drop`, `takeWhile`, `dropWhile`, `zip`, `zipWith`, `toList`, `foldl`, `head`, `isEmpty`, `indexedMap`; supports infinite sequences
 - [x] Net — TCP networking: `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener`; opaque `Listener` and `Conn` types; all operations return `Result`; `tcpListen` returns `(Listener, Int)` tuple for port-0 usage
-- [x] Random — `Std:Random` with pure seed-based API (`rngMake`, `rngInt`, `rngFloat`, `rngBool`, `rngList`) and actor facade (`randomInt`, `randomFloat`, `randomBool`, `shuffle`); Park-Miller LCG; opaque `Rng` type; one Go builtin (`systemSeed`)
+- [x] Random — `Std:Random` with pure seed-based API (`rngMake`, `rngInt`, `rngFloat`, `rngBool`, `rngList`) and actor facade (`randomInt`, `randomFloat`, `randomBool`, `shuffle`); xorshift32 algorithm; opaque `Rng` type; one Go builtin (`systemSeed`)
+- [x] Bitwise — `Std:Bitwise` with `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shiftLeft`, `shiftRight`; all operate on `Int`; Go builtins
 - Date/Time (even basic)
 
 ### Language ergonomics
@@ -273,5 +287,6 @@ One blank line between top-level definitions; two blank lines between sections. 
 - **Traits v2 Phase 1 — parameterized instances**: `impl Show (List a)`, `impl Eq (Maybe a)`, etc. `ImplDecl.TargetType` is now `TySyntax` (was `string`). Parser's `parseImplTarget()` handles parenthesized type expressions (`(List a)`, `(a, b)`). `RuntimeTypeName(v, env)` resolves compound types — Lists → `"List"`, tuples → `"Tuple2"`, VCtor → lookup in `__ctor_types__` map (constructor→type-name registry built from TypeDecl eval). `__ctor_types__` merged on import alongside `__instances__`. Typechecker freshens type variables in the resolved target type before substitution (prevents `{a → List a}` infinite recursion in `ApplySubst`). Trait dispatch propagates caller's `__instances__` and `__ctor_types__` into impl closures so cross-module types work (e.g., `show [Just 1]` where List impl is in Prelude and Maybe is imported). Impl closures are back-patched with new instances for self-referential dispatch (e.g., `eq [1,2] [1,2]` recursively calls `eq` on elements and sublists). Prelude adds: `Show/Eq/Ord (List a)`, `Show/Eq/Ord (a, b)`, `Show ()`. Maybe.rex adds: `Show/Eq/Ord (Maybe a)`. Result.rex adds: `Show/Eq (Result a b)`.
 - **Traits v2 Phase 2 — compile-time constraints**: `types.Constraint{Trait, Var}` tracks trait requirements on type variables. `Scheme.Constraints` carries constraints on quantified vars. Constraints are seeded when `TraitDecl` methods get schemes with constraints on the trait param. `instantiate` remaps constraints to fresh vars and appends to `tc.constraints`. `resolveConstraints(s, env, startIdx)` applies the final substitution — TVars stay as constraints; TCons are checked against `__trait_instances__` (error if no instance). Called at all 6 `Generalize` sites. `checkAnnotation` maps inferred constraint vars to annotation vars via fresh instantiation + unification. Parser: `tryParseConstraintPrefix()` handles `Ord a => ...` and `(Eq a, Show a) => ...` syntax via backtracking. AST: `TyConstrained{Constraints, Inner}`. Lexer: `TokFatArrow` (`=>`). REPL: `SchemeToString` renders `Ord a => [a] -> [a]`. Key design: `==`/`!=`/`<`/`>` use built-in comparison (not trait dispatch), so they do NOT generate constraints. Only explicit trait method calls (e.g., `compare`, `show`) generate constraints. Inner constraints (e.g., `Eq (List a)` doesn't check that `a` has `Eq`) are NOT tracked — follow-up work.
 - **`todo` builtin**: `todo : String -> a` — development placeholder that throws "TODO: message" at runtime. Typechecker emits a warning on every `todo` usage. `--safe` flag promotes warnings to errors (intended for CI/deploy). Warnings print in yellow, errors in red (TTY-aware). `Var` AST node has `Line int` for warning source locations.
-- **Std:Random**: Pure seed-based RNG with actor facade. One Go builtin (`systemSeed` — uses `math/rand/v2` for crypto-seeded entropy in [1, 2147483646]). Algorithm: Park-Miller LCG (`state' = (state * 48271) % 2147483647`), period ~2.1 billion. Opaque `Rng` type hides internal state. Pure API: `rngMake` (seed → Rng), `rngInt` (range), `rngFloat` ([0,1)), `rngBool`, `rngList` (generate n values) — each returns `(value, newRng)` for deterministic threading. Actor facade: module-level actor holds Rng state; `randomInt`/`randomFloat`/`randomBool`/`shuffle` use `call` for convenient stateful API. `shuffle` uses Fisher-Yates selection. Imports `Std:Math (toFloat)` for float conversion and `Std:Process` for actor primitives. For concurrent programs, use the pure seed-based API (give each goroutine its own `Rng`).
+- **Std:Bitwise**: Six Go builtins: `bitAnd`, `bitOr`, `bitXor` (`Int -> Int -> Int`), `bitNot` (`Int -> Int`), `shiftLeft`, `shiftRight` (`Int -> Int -> Int`). Named functions instead of operators — avoids `|` conflict with ADT syntax and keeps rarely-used operations out of operator space.
+- **Std:Random**: Pure seed-based RNG with actor facade. One Go builtin (`systemSeed` — uses `math/rand/v2` for crypto-seeded entropy). Algorithm: xorshift32 (three XOR-shifts, masked to 32 bits), period ~2^32. Opaque `Rng` type hides internal state. Pure API: `rngMake` (seed → Rng), `rngInt` (range), `rngFloat` ([0,1)), `rngBool`, `rngList` (generate n values) — each returns `(value, newRng)` for deterministic threading. Actor facade: module-level actor holds Rng state; `randomInt`/`randomFloat`/`randomBool`/`shuffle` use `call` for convenient stateful API. `shuffle` uses Fisher-Yates selection. Imports `Std:Math (toFloat)` for float conversion and `Std:Process` for actor primitives. For concurrent programs, use the pure seed-based API (give each goroutine its own `Rng`).
 - **Opaque types**: `export opaque type Email = Email String` — exports the type name (for annotations via `TypeDefs`) but hides constructors from importers. Consumers can't construct, pattern match, or access fields of opaque types directly — they must use exported smart constructors and accessor functions. `opaque` is a keyword; only valid as `export opaque type`. Works with both ADTs and records. In `CheckModule`/`loadModule`, opaque constructors are excluded from the exports set, and opaque record fields are excluded from propagated `__record_fields__`. `__ctor_families__` entries for opaque constructors are also filtered out to prevent pattern matching. `TypeDefs` still propagates the type name so annotations like `Email -> String` work. Trait instances on opaque types propagate normally (e.g., `impl Show Email` works for callers). Tests in `internal/typechecker/opaque_test.go` and `examples/user_modules/src/Email.rex`.
