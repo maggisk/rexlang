@@ -271,6 +271,45 @@ f x =
 	}
 }
 
+func TestMatchArmMultipleExpressions(t *testing.T) {
+	// Multiple assert statements in a match arm should give a clear error
+	code := `
+import Std:Result (Ok, Err)
+
+f r =
+    match r
+        when Ok _ ->
+            assert true
+            assert true
+        when Err _ ->
+            assert false
+`
+	_, err := Parse(code)
+	if err == nil {
+		t.Fatal("expected parse error for multiple expressions in match arm, got nil")
+	}
+	if !strings.Contains(err.Error(), "single expression") {
+		t.Fatalf("expected 'single expression' error, got: %v", err)
+	}
+}
+
+func TestMatchArmSingleExpressionOK(t *testing.T) {
+	// A properly formatted match with single expressions per arm should parse fine
+	code := `
+f x =
+    match x
+        when 0 ->
+            let y = 1
+            in y + 2
+        when _ ->
+            0
+`
+	_, err := Parse(code)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+}
+
 func TestValidateIndentation_MatchInLambda(t *testing.T) {
 	code := `
 import Std:List (map)

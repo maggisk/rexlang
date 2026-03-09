@@ -226,6 +226,61 @@ func TestConstraintSortModuleScheme(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Record update on TVar
+// ---------------------------------------------------------------------------
+
+func TestRecordUpdateOnTVar(t *testing.T) {
+	// Record update should work when the record type is inferred from field names
+	code := `
+type Point = { x : Int, y : Int }
+
+setX n p = { p | x = n }
+
+test "record update on TVar" =
+    let p = Point { x = 1, y = 2 }
+    let p2 = setX 10 p
+    assert p2.x == 10
+    assert p2.y == 2
+`
+	if err := typecheck(code); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestRecordUpdateOnTVarMultipleFields(t *testing.T) {
+	code := `
+type Person = { name : String, age : Int }
+
+updateName n p = { p | name = n }
+
+test "update" =
+    let p = Person { name = "Alice", age = 30 }
+    let p2 = updateName "Bob" p
+    assert p2.name == "Bob"
+`
+	if err := typecheck(code); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+}
+
+func TestRecordUpdateOnTVarAmbiguous(t *testing.T) {
+	// If two record types share a field name, update should report ambiguity
+	code := `
+type A = { shared : Int, a : Int }
+type B = { shared : Int, b : Int }
+
+setShared n r = { r | shared = n }
+`
+	err := typecheck(code)
+	if err == nil {
+		t.Fatal("expected ambiguity error, got nil")
+	}
+	if !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("expected ambiguous error, got: %v", err)
+	}
+}
+
 func resetModuleCache() {
 	moduleCacheMu.Lock()
 	moduleCache = map[string]*ModuleResult{}

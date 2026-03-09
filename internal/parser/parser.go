@@ -1037,6 +1037,18 @@ func (p *parser) parseMatch() (ast.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
+		// Check for stray expressions: if the next token is indented past 'when'
+		// but isn't 'when' itself, the user likely wrote multiple expressions in
+		// an arm body (which is a single expression).
+		next := p.peek()
+		if next.Kind != lexer.TokEOF && next.Kind != lexer.TokWhen &&
+			next.Line > bodyTok.Line && next.Col > firstWhenCol {
+			return nil, &ParseError{
+				Msg:  fmt.Sprintf("each match arm must be a single expression; found extra expression at line %d, col %d — use 'let ... in' to combine multiple expressions", next.Line, next.Col+1),
+				Line: next.Line,
+				Col:  next.Col,
+			}
+		}
 		arms = append(arms, ast.MatchArm{Pat: pat, Body: body, Line: whenTok.Line, Col: whenTok.Col, BodyLine: bodyTok.Line, BodyCol: bodyTok.Col})
 	}
 

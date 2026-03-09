@@ -674,14 +674,49 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 			return nil, nil, err
 		}
 		resolved := types.ApplySubst(s1, recTy)
-		con, ok := resolved.(types.TCon)
-		if !ok {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("record update requires a record type, got %s", types.TypeToString(resolved))}
-		}
 		recordFields, _ := env["__record_fields__"]
 		rfMap, _ := recordFields.(map[string]types.RecordInfo)
 		if rfMap == nil {
 			return nil, nil, &types.TypeError{Msg: "no record types defined"}
+		}
+		// If the type is a TVar, resolve it by looking up the first update field
+		if _, isTVar := resolved.(types.TVar); isTVar && len(e.Updates) > 0 {
+			firstField := e.Updates[0].Path[0]
+			var matches []string
+			for typeName, ri := range rfMap {
+				for _, fi := range ri.Fields {
+					if fi.Name == firstField {
+						matches = append(matches, typeName)
+						break
+					}
+				}
+			}
+			if len(matches) == 0 {
+				return nil, nil, &types.TypeError{Msg: fmt.Sprintf("no record type has field '%s'", firstField)}
+			}
+			if len(matches) > 1 {
+				return nil, nil, &types.TypeError{Msg: fmt.Sprintf("ambiguous field '%s': multiple record types have this field", firstField)}
+			}
+			ri := rfMap[matches[0]]
+			paramSubst := make(types.Subst, len(ri.Params))
+			for _, p := range ri.Params {
+				paramSubst[p] = tc.fresh()
+			}
+			paramArgs := make([]types.Type, len(ri.Params))
+			for i, p := range ri.Params {
+				paramArgs[i] = paramSubst[p]
+			}
+			expectedRecTy := types.TCon{Name: matches[0], Args: paramArgs}
+			s2, err := types.Unify(resolved, expectedRecTy)
+			if err != nil {
+				return nil, nil, err
+			}
+			s1 = types.ComposeSubst(s2, s1)
+			resolved = types.ApplySubst(s1, resolved)
+		}
+		con, ok := resolved.(types.TCon)
+		if !ok {
+			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("record update requires a record type, got %s", types.TypeToString(resolved))}
 		}
 		ri, ok := rfMap[con.Name]
 		if !ok {
