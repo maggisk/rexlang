@@ -16,10 +16,11 @@ import (
 
 // wasm value types
 const (
-	wtI32 = "i32"
-	wtI64 = "i64"
-	wtF64 = "f64"
-	wtRef = "(ref null $closure)" // closure reference (nullable for locals)
+	wtI32    = "i32"
+	wtI64    = "i64"
+	wtF64    = "f64"
+	wtRef    = "(ref null $closure)" // closure reference (nullable for locals)
+	wtAdtRef = "(ref null $adt)"     // ADT value reference (nullable for locals)
 )
 
 // EmitWAT converts an IR program to WAT text.
@@ -31,8 +32,23 @@ func EmitWAT(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		typeEnv:      typeEnv,
 		funcRefs:     make(map[string]bool),
 		funcWrappers: make(map[string]string),
+		adts:         make(map[string]*adtInfo),
+		ctorToAdt:    make(map[string]*ctorInfo),
 	}
 	return g.emit(prog)
+}
+
+// adtInfo describes an ADT for codegen.
+type adtInfo struct {
+	name  string
+	ctors []ctorInfo
+}
+
+type ctorInfo struct {
+	name      string
+	tag       int
+	typeName  string   // parent ADT name
+	fieldTypes []string // wasm types of constructor fields
 }
 
 // funcInfo describes a top-level function for codegen.
@@ -75,6 +91,10 @@ type watGen struct {
 	pending map[string]*pendingCall
 	maxCaps int // max captures needed (determines closure types)
 
+	// ADT info
+	adts      map[string]*adtInfo  // ADT name → info
+	ctorToAdt map[string]*ctorInfo // constructor name → ctor info
+
 	// functions referenced via ref.func (need elem declare)
 	funcRefs map[string]bool
 
@@ -97,7 +117,7 @@ func (g *watGen) line(format string, args ...any) {
 // ---------------------------------------------------------------------------
 
 // wasmType converts a Rex type to a wasm value type.
-func wasmType(t types.Type) string {
+func (g *watGen) wasmType(t types.Type) string {
 	switch ty := t.(type) {
 	case types.TCon:
 		switch ty.Name {
@@ -109,6 +129,10 @@ func wasmType(t types.Type) string {
 			return wtI32
 		case "Fun":
 			return wtRef
+		default:
+			if _, ok := g.adts[ty.Name]; ok {
+				return wtAdtRef
+			}
 		}
 	}
 	return wtI64 // default for type variables and unknown types
@@ -146,6 +170,15 @@ func (g *watGen) lookupType(name string) (types.Type, bool) {
 // ---------------------------------------------------------------------------
 
 func (g *watGen) analyze(prog *ir.Program) {
+	// Pass 0: collect ADT info (before functions, since param types may be ADTs)
+	for _, d := range prog.Decls {
+		dt, ok := d.(ir.DType)
+		if !ok || len(dt.Ctors) == 0 {
+			continue
+		}
+		g.analyzeADT(dt)
+	}
+
 	// First pass: collect function info
 	for _, d := range prog.Decls {
 		dl, ok := d.(ir.DLet)
@@ -264,12 +297,12 @@ func (g *watGen) analyzeFunc(dl ir.DLet) *funcInfo {
 		paramTypes, retType := decomposeFuncType(ty)
 		for i := range fi.params {
 			if i < len(paramTypes) {
-				fi.params[i].wasmType = wasmType(paramTypes[i])
+				fi.params[i].wasmType = g.wasmType(paramTypes[i])
 			} else {
 				fi.params[i].wasmType = wtI64
 			}
 		}
-		fi.retType = wasmType(retType)
+		fi.retType = g.wasmType(retType)
 	} else {
 		// Default: all i64
 		for i := range fi.params {
@@ -279,6 +312,27 @@ func (g *watGen) analyzeFunc(dl ir.DLet) *funcInfo {
 	}
 
 	return fi
+}
+
+func (g *watGen) analyzeADT(dt ir.DType) {
+	ai := &adtInfo{name: dt.Name}
+	for i, c := range dt.Ctors {
+		ci := ctorInfo{
+			name:     c.Name,
+			tag:      i,
+			typeName: dt.Name,
+		}
+		// Determine field types from type env
+		if ty, ok := g.lookupType(c.Name); ok {
+			paramTypes, _ := decomposeFuncType(ty)
+			for _, pt := range paramTypes {
+				ci.fieldTypes = append(ci.fieldTypes, g.wasmType(pt))
+			}
+		}
+		ai.ctors = append(ai.ctors, ci)
+		g.ctorToAdt[c.Name] = &ai.ctors[len(ai.ctors)-1]
+	}
+	g.adts[dt.Name] = ai
 }
 
 // ---------------------------------------------------------------------------
@@ -304,9 +358,9 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 	g.line("(module")
 	g.indent++
 
-	// Emit GC type declarations if we have closures
-	if g.needsClosures() {
-		g.emitClosureTypes()
+	// Emit GC type declarations (closures + ADTs in one rec group)
+	if g.needsGCTypes() {
+		g.emitGCTypes()
 		g.line("")
 	}
 
@@ -377,27 +431,67 @@ func (g *watGen) needsClosures() bool {
 	return len(g.lambdas) > 0 || g.maxCaps > 0 || len(g.funcWrappers) > 0
 }
 
+func (g *watGen) needsGCTypes() bool {
+	return g.needsClosures() || len(g.adts) > 0
+}
+
 // ---------------------------------------------------------------------------
-// Closure types
+// GC type declarations (closures + ADTs)
 // ---------------------------------------------------------------------------
 
-func (g *watGen) emitClosureTypes() {
-	// Mutually recursive types need a (rec ...) group:
-	// $ft_apply references $closure, $closure references $ft_apply
-	g.line(";; Closure types")
+func (g *watGen) emitGCTypes() {
+	// All GC types go in one (rec ...) group for mutual references
+	g.line(";; GC types")
 	g.line("(rec")
 	g.indent++
-	g.line("(type $ft_apply (func (param (ref null $closure)) (param i64) (result i64)))")
-	g.line("(type $closure (sub (struct (field $fn (ref $ft_apply)))))")
 
-	// Closure subtypes with captures
-	for n := 1; n <= g.maxCaps; n++ {
-		fields := "(field $fn (ref $ft_apply))"
-		for i := 0; i < n; i++ {
-			fields += fmt.Sprintf(" (field $c%d i64)", i)
+	// Closure types
+	if g.needsClosures() {
+		g.line(";; Closure types")
+		g.line("(type $ft_apply (func (param (ref null $closure)) (param i64) (result i64)))")
+		g.line("(type $closure (sub (struct (field $fn (ref $ft_apply)))))")
+		for n := 1; n <= g.maxCaps; n++ {
+			fields := "(field $fn (ref $ft_apply))"
+			for i := 0; i < n; i++ {
+				fields += fmt.Sprintf(" (field $c%d i64)", i)
+			}
+			g.line("(type $closure_%d (sub $closure (struct %s)))", n, fields)
 		}
-		g.line("(type $closure_%d (sub $closure (struct %s)))", n, fields)
 	}
+
+	// ADT types
+	if len(g.adts) > 0 {
+		g.line(";; ADT types")
+		g.line("(type $adt (sub (struct (field $tag i32))))")
+
+		// Sort ADT names for deterministic output
+		adtNames := make([]string, 0, len(g.adts))
+		for name := range g.adts {
+			adtNames = append(adtNames, name)
+		}
+		sortStrings(adtNames)
+
+		for _, adtName := range adtNames {
+			ai := g.adts[adtName]
+			for _, ci := range ai.ctors {
+				if len(ci.fieldTypes) == 0 {
+					// Zero-arg constructor: just the base $adt type with tag is fine,
+					// but define a named subtype for clarity
+					g.line("(type $%s_%s (sub $adt (struct (field $tag i32))))",
+						adtName, ci.name)
+				} else {
+					// Constructor with fields
+					fields := "(field $tag i32)"
+					for i, ft := range ci.fieldTypes {
+						fields += fmt.Sprintf(" (field $f%d %s)", i, ft)
+					}
+					g.line("(type $%s_%s (sub $adt (struct %s)))",
+						adtName, ci.name, fields)
+				}
+			}
+		}
+	}
+
 	g.indent--
 	g.line(")")
 }
@@ -730,12 +824,35 @@ func (g *watGen) emitConvert(from, to string) {
 // ---------------------------------------------------------------------------
 
 func (g *watGen) collectLocals(expr ir.Expr) {
+	g.collectLocalsWithCtx(expr, nil)
+}
+
+// partialCtors tracks temp variables that hold partially-applied constructors.
+func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*ctorInfo) {
+	if partialCtors == nil {
+		partialCtors = make(map[string]*ctorInfo)
+	}
 	switch e := expr.(type) {
 	case ir.ELet:
 		localType := g.typeOfCExpr(e.Bind)
+		// Detect constructor application chains
+		if app, ok := e.Bind.(ir.CApp); ok {
+			if fvar, ok := app.Func.(ir.AVar); ok {
+				// If applying a constructor with arity > 1, the temp holds a partial app
+				if ci, ok := g.ctorToAdt[fvar.Name]; ok && len(ci.fieldTypes) > 1 {
+					partialCtors[e.Name] = ci
+					localType = wtAdtRef // partial app temp, but saturated ctor will make it an adt ref
+				}
+				// If applying a variable that was a partial ctor app
+				if ci, ok := partialCtors[fvar.Name]; ok {
+					partialCtors[e.Name] = ci
+					localType = wtAdtRef
+				}
+			}
+		}
 		g.locals[e.Name] = localType
 		g.collectLocalsCExpr(e.Bind)
-		g.collectLocals(e.Body)
+		g.collectLocalsWithCtx(e.Body, partialCtors)
 	case ir.EComplex:
 		g.collectLocalsCExpr(e.C)
 	}
@@ -748,7 +865,36 @@ func (g *watGen) collectLocalsCExpr(c ir.CExpr) {
 		g.collectLocals(e.Else)
 	case ir.CMatch:
 		for _, arm := range e.Arms {
+			g.collectPatternLocals(arm.Pat)
 			g.collectLocals(arm.Body)
+		}
+	}
+}
+
+func (g *watGen) collectPatternLocals(pat ir.Pattern) {
+	switch p := pat.(type) {
+	case ir.PVar:
+		if _, ok := g.locals[p.Name]; !ok {
+			// Default to i64 for pattern variables; override for ADT fields
+			g.locals[p.Name] = wtI64
+		}
+	case ir.PCtor:
+		ci, ok := g.ctorToAdt[p.Name]
+		if ok {
+			for i, sub := range p.Args {
+				if pv, ok := sub.(ir.PVar); ok {
+					ft := wtI64
+					if i < len(ci.fieldTypes) {
+						ft = ci.fieldTypes[i]
+					}
+					g.locals[pv.Name] = ft
+				}
+				g.collectPatternLocals(sub)
+			}
+		} else {
+			for _, sub := range p.Args {
+				g.collectPatternLocals(sub)
+			}
 		}
 	}
 }
@@ -781,7 +927,22 @@ func (g *watGen) collectLocalOrderCExpr(c ir.CExpr, names *[]string, seen map[st
 		g.collectLocalOrder(e.Else, names, seen)
 	case ir.CMatch:
 		for _, arm := range e.Arms {
+			g.collectPatternLocalOrder(arm.Pat, names, seen)
 			g.collectLocalOrder(arm.Body, names, seen)
+		}
+	}
+}
+
+func (g *watGen) collectPatternLocalOrder(pat ir.Pattern, names *[]string, seen map[string]bool) {
+	switch p := pat.(type) {
+	case ir.PVar:
+		if !seen[p.Name] {
+			seen[p.Name] = true
+			*names = append(*names, p.Name)
+		}
+	case ir.PCtor:
+		for _, sub := range p.Args {
+			g.collectPatternLocalOrder(sub, names, seen)
 		}
 	}
 }
@@ -799,6 +960,10 @@ func (g *watGen) typeOfAtom(a ir.Atom) string {
 	case ir.ABool:
 		return wtI32
 	case ir.AVar:
+		// Zero-arg constructor
+		if ci, ok := g.ctorToAdt[v.Name]; ok && len(ci.fieldTypes) == 0 {
+			return wtAdtRef
+		}
 		if t, ok := g.funcParams[v.Name]; ok {
 			return t
 		}
@@ -814,8 +979,11 @@ func (g *watGen) typeOfAtom(a ir.Atom) string {
 func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 	switch e := c.(type) {
 	case ir.CApp:
-		// Check if calling a known function
+		// Check if calling a constructor
 		if v, ok := e.Func.(ir.AVar); ok {
+			if _, ok := g.ctorToAdt[v.Name]; ok {
+				return wtAdtRef
+			}
 			if fi, ok := g.funcs[v.Name]; ok {
 				if fi.arity == 1 {
 					return fi.retType
@@ -836,6 +1004,10 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 		return g.typeOfAtom(e.Expr)
 	case ir.CIf:
 		return g.typeOfExpr(e.Then)
+	case ir.CMatch:
+		if len(e.Arms) > 0 {
+			return g.typeOfExpr(e.Arms[0].Body)
+		}
 	case ir.CLambda:
 		return wtRef
 	}
@@ -880,6 +1052,15 @@ func (g *watGen) emitAtom(a ir.Atom) error {
 		g.line("f64.const %g", v.Value)
 		return nil
 	case ir.AVar:
+		// Check if this is a zero-arg constructor
+		if ci, ok := g.ctorToAdt[v.Name]; ok && len(ci.fieldTypes) == 0 {
+			_, isParam := g.funcParams[v.Name]
+			_, isLocal := g.locals[v.Name]
+			if !isParam && !isLocal {
+				g.line("(struct.new $%s_%s (i32.const %d))", ci.typeName, ci.name, ci.tag)
+				return nil
+			}
+		}
 		// Check if this is a top-level function used as a value
 		if fi, ok := g.funcs[v.Name]; ok {
 			// Only wrap as closure if it's not a param or local (shadowing)
@@ -933,6 +1114,8 @@ func (g *watGen) emitCExpr(c ir.CExpr) error {
 		return g.emitIf(e)
 	case ir.CLambda:
 		return g.emitClosureCreate(e)
+	case ir.CMatch:
+		return g.emitMatch(e)
 	default:
 		return fmt.Errorf("unsupported cexpr: %T", c)
 	}
@@ -946,6 +1129,24 @@ func (g *watGen) emitApp(e ir.CApp) error {
 	v, isVar := e.Func.(ir.AVar)
 	if !isVar {
 		return fmt.Errorf("codegen: non-variable function application not supported")
+	}
+
+	// Constructor application (single-arg constructors)
+	if ci, ok := g.ctorToAdt[v.Name]; ok {
+		if len(ci.fieldTypes) == 1 {
+			// Single-arg constructor: struct.new with tag + field
+			g.line("(struct.new $%s_%s", ci.typeName, ci.name)
+			g.indent++
+			g.line("(i32.const %d)", ci.tag)
+			if err := g.emitAtom(e.Arg); err != nil {
+				return err
+			}
+			g.indent--
+			g.line(")")
+			return nil
+		}
+		// Multi-arg constructor: handled via saturated call detection in emitLet
+		return fmt.Errorf("codegen: multi-arg constructor %s applied with single arg — use saturated application", ci.name)
 	}
 
 	// Direct call to known function
@@ -994,6 +1195,12 @@ func (g *watGen) emitLet(e ir.ELet) error {
 			if fi, ok := g.funcs[fvar.Name]; ok && fi.arity > 1 {
 				// Check if the body immediately uses _t in another application
 				if result, ok := g.trySaturatedCall(fi, []ir.Atom{app.Arg}, e.Name, e.Body); ok {
+					return result
+				}
+			}
+			// Detect saturated multi-arg constructor applications
+			if ci, ok := g.ctorToAdt[fvar.Name]; ok && len(ci.fieldTypes) > 1 {
+				if result, ok := g.trySaturatedCtor(ci, []ir.Atom{app.Arg}, e.Name, e.Body); ok {
 					return result
 				}
 			}
@@ -1053,9 +1260,265 @@ func (g *watGen) trySaturatedCall(fi *funcInfo, args []ir.Atom, tempName string,
 				return g.trySaturatedCall(fi, newArgs, let.Name, let.Body)
 			}
 		}
+		// Unrelated let binding — emit it and continue looking for the
+		// application chain in the body.
+		if !g.letBindUsesVar(let.Bind, tempName) {
+			if err := g.emitCExpr(let.Bind); err != nil {
+				return err, true
+			}
+			g.line("local.set $%s", let.Name)
+			return g.trySaturatedCall(fi, args, tempName, let.Body)
+		}
 	}
 
 	return nil, false
+}
+
+// letBindUsesVar checks if a CExpr references a variable name.
+func (g *watGen) letBindUsesVar(c ir.CExpr, name string) bool {
+	switch e := c.(type) {
+	case ir.CApp:
+		return g.atomIsVar(e.Func, name) || g.atomIsVar(e.Arg, name)
+	case ir.CBinop:
+		return g.atomIsVar(e.Left, name) || g.atomIsVar(e.Right, name)
+	case ir.CUnaryMinus:
+		return g.atomIsVar(e.Expr, name)
+	}
+	return false
+}
+
+func (g *watGen) atomIsVar(a ir.Atom, name string) bool {
+	if v, ok := a.(ir.AVar); ok {
+		return v.Name == name
+	}
+	return false
+}
+
+// trySaturatedCtor detects chains of let-bound partial constructor applications.
+func (g *watGen) trySaturatedCtor(ci *ctorInfo, args []ir.Atom, tempName string, body ir.Expr) (error, bool) {
+	nFields := len(ci.fieldTypes)
+	if len(args) == nFields {
+		// Saturated! Emit struct.new
+		g.line("(struct.new $%s_%s", ci.typeName, ci.name)
+		g.indent++
+		g.line("(i32.const %d)", ci.tag)
+		for _, arg := range args {
+			if err := g.emitAtom(arg); err != nil {
+				return err, true
+			}
+		}
+		g.indent--
+		g.line(")")
+		return nil, true
+	}
+
+	// Check if body is: EComplex{CApp{tempName, nextArg}}
+	if ec, ok := body.(ir.EComplex); ok {
+		if app, ok := ec.C.(ir.CApp); ok {
+			if v, ok := app.Func.(ir.AVar); ok && v.Name == tempName {
+				return g.trySaturatedCtor(ci, append(args, app.Arg), tempName, nil)
+			}
+		}
+	}
+
+	// Check if body is: ELet{newTemp, CApp{tempName, nextArg}, restBody}
+	if let, ok := body.(ir.ELet); ok {
+		if app, ok := let.Bind.(ir.CApp); ok {
+			if v, ok := app.Func.(ir.AVar); ok && v.Name == tempName {
+				newArgs := append(args, app.Arg)
+				if len(newArgs) == nFields {
+					// Saturated! Emit struct.new, then set local and continue
+					g.line("(struct.new $%s_%s", ci.typeName, ci.name)
+					g.indent++
+					g.line("(i32.const %d)", ci.tag)
+					for _, arg := range newArgs {
+						if err := g.emitAtom(arg); err != nil {
+							return err, true
+						}
+					}
+					g.indent--
+					g.line(")")
+					// Override local type — collectLocals may have guessed wrong
+					g.locals[let.Name] = wtAdtRef
+					g.line("local.set $%s", let.Name)
+					err := g.emitExpr(let.Body)
+					return err, true
+				}
+				return g.trySaturatedCtor(ci, newArgs, let.Name, let.Body)
+			}
+		}
+	}
+
+	return nil, false
+}
+
+// ---------------------------------------------------------------------------
+// Pattern matching
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emitMatch(e ir.CMatch) error {
+	resultType := g.typeOfCExpr(e)
+
+	// For now, handle constructor patterns and literal patterns
+	// using a chain of if/else blocks based on the tag field
+
+	// Get the tag of the scrutinee
+	scrut := e.Scrutinee
+	scrutName := ""
+	if v, ok := scrut.(ir.AVar); ok {
+		scrutName = v.Name
+	}
+
+	// Determine the number of arms
+	numArms := len(e.Arms)
+	if numArms == 0 {
+		return fmt.Errorf("codegen: empty match")
+	}
+
+	// Emit a block-based pattern match:
+	// Get tag, then use nested if/else
+	for i, arm := range e.Arms {
+		isLast := i == numArms-1
+		switch pat := arm.Pat.(type) {
+		case ir.PCtor:
+			ci, ok := g.ctorToAdt[pat.Name]
+			if !ok {
+				return fmt.Errorf("codegen: unknown constructor %s in pattern", pat.Name)
+			}
+
+			if !isLast {
+				// Emit: if (tag == ci.tag) then ... else ...
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				g.line("(struct.get $adt $tag (ref.cast (ref $adt)))")
+				g.line("(i32.const %d)", ci.tag)
+				g.line("i32.eq")
+				g.line("(if (result %s)", resultType)
+				g.indent++
+				g.line("(then")
+				g.indent++
+
+				// Bind pattern variables by extracting fields
+				if err := g.emitPatternBindings(scrutName, ci, pat.Args); err != nil {
+					return err
+				}
+				if err := g.emitExpr(arm.Body); err != nil {
+					return err
+				}
+
+				g.indent--
+				g.line(")")
+				g.line("(else")
+				g.indent++
+			} else {
+				// Last arm: no condition check (catch-all or final branch)
+				if err := g.emitPatternBindings(scrutName, ci, pat.Args); err != nil {
+					return err
+				}
+				if err := g.emitExpr(arm.Body); err != nil {
+					return err
+				}
+			}
+
+		case ir.PWild, ir.PVar:
+			// Wildcard or variable pattern — always matches
+			if pv, ok := pat.(ir.PVar); ok && scrutName != "" {
+				// Bind the variable to the scrutinee value
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				g.line("local.set $%s", pv.Name)
+			}
+			if err := g.emitExpr(arm.Body); err != nil {
+				return err
+			}
+
+		case ir.PInt:
+			if !isLast {
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				g.line("i64.const %d", pat.Value)
+				g.line("i64.eq")
+				g.line("(if (result %s)", resultType)
+				g.indent++
+				g.line("(then")
+				g.indent++
+				if err := g.emitExpr(arm.Body); err != nil {
+					return err
+				}
+				g.indent--
+				g.line(")")
+				g.line("(else")
+				g.indent++
+			} else {
+				if err := g.emitExpr(arm.Body); err != nil {
+					return err
+				}
+			}
+
+		case ir.PBool:
+			if !isLast {
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				if pat.Value {
+					g.line("i32.const 1")
+				} else {
+					g.line("i32.const 0")
+				}
+				g.line("i32.eq")
+				g.line("(if (result %s)", resultType)
+				g.indent++
+				g.line("(then")
+				g.indent++
+				if err := g.emitExpr(arm.Body); err != nil {
+					return err
+				}
+				g.indent--
+				g.line(")")
+				g.line("(else")
+				g.indent++
+			} else {
+				if err := g.emitExpr(arm.Body); err != nil {
+					return err
+				}
+			}
+
+		default:
+			return fmt.Errorf("codegen: unsupported pattern type %T", pat)
+		}
+	}
+
+	// Close all the if/else blocks (one for each non-last arm)
+	for i := 0; i < numArms-1; i++ {
+		g.indent--
+		g.line(")")
+		g.indent--
+		g.line(")")
+	}
+
+	return nil
+}
+
+// emitPatternBindings extracts fields from an ADT struct and binds them
+// to the pattern variables.
+func (g *watGen) emitPatternBindings(scrutName string, ci *ctorInfo, pats []ir.Pattern) error {
+	for i, pat := range pats {
+		switch p := pat.(type) {
+		case ir.PVar:
+			// Extract field i from the constructor struct
+			ctorType := fmt.Sprintf("$%s_%s", ci.typeName, ci.name)
+			g.line("(local.set $%s (struct.get %s $f%d (ref.cast (ref %s) (local.get $%s))))",
+				p.Name, ctorType, i, ctorType, scrutName)
+		case ir.PWild:
+			// Skip
+		default:
+			return fmt.Errorf("codegen: nested pattern in constructor not yet supported: %T", pat)
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------

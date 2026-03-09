@@ -258,8 +258,8 @@ Ordered by dependency — each step builds on the previous:
 1. [x] **IR (A-normal form)** — lower typechecked AST to ANF where every subexpression is named; carry type annotations for codegen; pattern match compilation to decision trees
 2. [x] **Toolchain bootstrap** — `--compile` flag emits WAT, assembles with `wasm-tools`; end-to-end tests with Wasmtime; `main _ = <int-expr>` works with arithmetic, if/else, let bindings
 3. [x] **Primitives + arithmetic** — Int (`i64`), Float (`f64`), Bool (`i32`); arithmetic, comparison, logical operators; type-driven instruction selection in codegen
-4. [ ] **Functions + closures** — calling convention, closure structs (funcref + captured env), currying via partial application
-5. [ ] **ADTs + pattern matching** — `struct` subtypes with tag field, branch on tag + downcast; exhaustiveness already checked
+4. [x] **Functions + closures** — calling convention, closure structs (funcref + captured env), currying via partial application
+5. [x] **ADTs + pattern matching** — `struct` subtypes with tag field, branch on tag + downcast; exhaustiveness already checked
 6. [ ] **Strings** — UTF-8 byte arrays or host-backed; string operations as host imports initially
 7. [ ] **Lists, tuples, records** — struct-based representations
 8. [ ] **Tail calls** — `return_call` for TCO

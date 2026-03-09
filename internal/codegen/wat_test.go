@@ -391,6 +391,76 @@ main _ = apply double 21
 	}
 }
 
+func TestE2EADTEnum(t *testing.T) {
+	code := `
+type Color = Red | Green | Blue
+colorToInt c =
+    match c
+        when Red -> 1
+        when Green -> 2
+        when Blue -> 3
+main _ = colorToInt Green
+`
+	if got := runWasm(t, code); got != 2 {
+		t.Fatalf("expected exit 2, got %d", got)
+	}
+}
+
+func TestE2EADTWithFields(t *testing.T) {
+	code := `
+type Shape = Circle Int | Square Int
+area s =
+    match s
+        when Circle r -> r * r * 3
+        when Square side -> side * side
+main _ = area (Circle 4)
+`
+	if got := runWasm(t, code); got != 48 {
+		t.Fatalf("expected exit 48, got %d", got)
+	}
+}
+
+func TestE2EADTMaybe(t *testing.T) {
+	code := `
+type Maybe = Nothing | Just Int
+fromMaybe d m =
+    match m
+        when Nothing -> d
+        when Just x -> x
+main _ = fromMaybe 0 (Just 42)
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EADTMultiField(t *testing.T) {
+	code := `
+type Pair = MkPair Int Int
+fst p =
+    match p
+        when MkPair a _ -> a
+main _ = fst (MkPair 42 99)
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EADTWildcardArm(t *testing.T) {
+	code := `
+type Color = Red | Green | Blue
+isRed c =
+    match c
+        when Red -> 1
+        when _ -> 0
+main _ = isRed Green
+`
+	if got := runWasm(t, code); got != 0 {
+		t.Fatalf("expected exit 0, got %d", got)
+	}
+}
+
 func TestE2EMutualFunctions(t *testing.T) {
 	code := `
 isEven n =
