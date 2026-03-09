@@ -103,7 +103,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 				exprParts = append(exprParts, expr)
 			}
 		}
-		return ast.StringInterp{Parts: exprParts}, nil
+		return ast.StringInterp{Parts: exprParts, Line: tok.Line}, nil
 	case lexer.TokBool:
 		p.advance()
 		return ast.BoolLit{Value: tok.Value.(bool)}, nil
@@ -134,7 +134,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 			if err := p.expect(lexer.TokRBrace); err != nil {
 				return nil, err
 			}
-			return ast.RecordCreate{TypeName: name, Fields: fields}, nil
+			return ast.RecordCreate{TypeName: name, Fields: fields, Line: tok.Line}, nil
 		}
 		if p.peek().Kind == lexer.TokDot {
 			if isUppercase(name) {
@@ -154,7 +154,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 				if err != nil {
 					return nil, err
 				}
-				result = ast.FieldAccess{Record: result, Field: field}
+				result = ast.FieldAccess{Record: result, Field: field, Line: tok.Line}
 			}
 			return result, nil
 		}
@@ -205,7 +205,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 		if err := p.expect(lexer.TokRBrace); err != nil {
 			return nil, err
 		}
-		return ast.RecordUpdate{Record: recExpr, Updates: updates}, nil
+		return ast.RecordUpdate{Record: recExpr, Updates: updates, Line: tok.Line}, nil
 
 	case lexer.TokLParen:
 		p.advance()
@@ -230,7 +230,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 			if err := p.expect(lexer.TokRParen); err != nil {
 				return nil, err
 			}
-			return ast.TupleLit{Items: items}, nil
+			return ast.TupleLit{Items: items, Line: tok.Line}, nil
 		}
 		if err := p.expect(lexer.TokRParen); err != nil {
 			return nil, err
@@ -240,7 +240,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 		p.advance()
 		if p.peek().Kind == lexer.TokRBrack {
 			p.advance()
-			return ast.ListLit{Items: nil}, nil
+			return ast.ListLit{Items: nil, Line: tok.Line}, nil
 		}
 		items := []ast.Expr{}
 		item, err := p.parseExpr()
@@ -259,7 +259,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 		if err := p.expect(lexer.TokRBrack); err != nil {
 			return nil, err
 		}
-		return ast.ListLit{Items: items}, nil
+		return ast.ListLit{Items: items, Line: tok.Line}, nil
 	default:
 		return nil, &ParseError{
 			Msg:  fmt.Sprintf("unexpected token: '%s' at line %d, col %d", tok, tok.Line, tok.Col+1),
@@ -291,24 +291,26 @@ func (p *parser) parseApp() (ast.Expr, error) {
 		if p.caseArmCol >= 0 && p.peek().Col <= p.caseArmCol {
 			break
 		}
+		argLine := p.peek().Line
 		arg, err := p.parseAtom()
 		if err != nil {
 			return nil, err
 		}
-		f = ast.App{Func: f, Arg: arg}
+		f = ast.App{Func: f, Arg: arg, Line: argLine}
 	}
 	// Trailing lambda: unparenthesized \ as last argument
 	if p.peek().Kind == lexer.TokBackslash {
 		if p.caseArmCol >= 0 && p.peek().Col <= p.caseArmCol {
 			return f, nil
 		}
+		lamLine := p.peek().Line
 		p.trailingLambda = true
 		lambda, err := p.parseFun()
 		p.trailingLambda = false
 		if err != nil {
 			return nil, err
 		}
-		f = ast.App{Func: f, Arg: lambda}
+		f = ast.App{Func: f, Arg: lambda, Line: lamLine}
 	}
 	return f, nil
 }
@@ -319,12 +321,13 @@ func (p *parser) parseApp() (ast.Expr, error) {
 
 func (p *parser) parseUnary() (ast.Expr, error) {
 	if p.peek().Kind == lexer.TokMinus {
+		line := p.peek().Line
 		p.advance()
 		e, err := p.parseUnary()
 		if err != nil {
 			return nil, err
 		}
-		return ast.UnaryMinus{Expr: e}, nil
+		return ast.UnaryMinus{Expr: e, Line: line}, nil
 	}
 	return p.parseApp()
 }
@@ -339,7 +342,8 @@ func (p *parser) parseMult() (ast.Expr, error) {
 		return nil, err
 	}
 	for {
-		k := p.peek().Kind
+		opTok := p.peek()
+		k := opTok.Kind
 		if k == lexer.TokStar || k == lexer.TokSlash || k == lexer.TokPercent {
 			p.advance()
 			rhs, err := p.parseUnary()
@@ -351,7 +355,7 @@ func (p *parser) parseMult() (ast.Expr, error) {
 				lexer.TokSlash:   "Div",
 				lexer.TokPercent: "Mod",
 			}[k]
-			lhs = ast.Binop{Op: op, Left: lhs, Right: rhs}
+			lhs = ast.Binop{Op: op, Left: lhs, Right: rhs, Line: opTok.Line}
 		} else {
 			break
 		}
@@ -369,7 +373,8 @@ func (p *parser) parseAdd() (ast.Expr, error) {
 		return nil, err
 	}
 	for {
-		k := p.peek().Kind
+		opTok := p.peek()
+		k := opTok.Kind
 		if k == lexer.TokPlusPlus || k == lexer.TokPlus || k == lexer.TokMinus {
 			p.advance()
 			rhs, err := p.parseMult()
@@ -381,7 +386,7 @@ func (p *parser) parseAdd() (ast.Expr, error) {
 				lexer.TokPlus:     "Add",
 				lexer.TokMinus:    "Sub",
 			}[k]
-			lhs = ast.Binop{Op: op, Left: lhs, Right: rhs}
+			lhs = ast.Binop{Op: op, Left: lhs, Right: rhs, Line: opTok.Line}
 		} else {
 			break
 		}
@@ -399,12 +404,13 @@ func (p *parser) parseCons() (ast.Expr, error) {
 		return nil, err
 	}
 	if p.peek().Kind == lexer.TokColonColon {
+		line := p.peek().Line
 		p.advance()
 		rhs, err := p.parseCons()
 		if err != nil {
 			return nil, err
 		}
-		return ast.Binop{Op: "Cons", Left: lhs, Right: rhs}, nil
+		return ast.Binop{Op: "Cons", Left: lhs, Right: rhs, Line: line}, nil
 	}
 	return lhs, nil
 }
@@ -426,14 +432,15 @@ func (p *parser) parseCompare() (ast.Expr, error) {
 		lexer.TokEqEq:   "Eq",
 		lexer.TokBangEq: "Neq",
 	}
-	k := p.peek().Kind
+	opTok := p.peek()
+	k := opTok.Kind
 	if op, ok := opMap[k]; ok {
 		p.advance()
 		rhs, err := p.parsePipe()
 		if err != nil {
 			return nil, err
 		}
-		return ast.Binop{Op: op, Left: lhs, Right: rhs}, nil
+		return ast.Binop{Op: op, Left: lhs, Right: rhs, Line: opTok.Line}, nil
 	}
 	return lhs, nil
 }
@@ -448,12 +455,13 @@ func (p *parser) parseLogicAnd() (ast.Expr, error) {
 		return nil, err
 	}
 	for p.peek().Kind == lexer.TokAmpAmp {
+		line := p.peek().Line
 		p.advance()
 		rhs, err := p.parseCompare()
 		if err != nil {
 			return nil, err
 		}
-		lhs = ast.Binop{Op: "And", Left: lhs, Right: rhs}
+		lhs = ast.Binop{Op: "And", Left: lhs, Right: rhs, Line: line}
 	}
 	return lhs, nil
 }
@@ -468,12 +476,13 @@ func (p *parser) parseLogicOr() (ast.Expr, error) {
 		return nil, err
 	}
 	for p.peek().Kind == lexer.TokPipePipe {
+		line := p.peek().Line
 		p.advance()
 		rhs, err := p.parseLogicAnd()
 		if err != nil {
 			return nil, err
 		}
-		lhs = ast.Binop{Op: "Or", Left: lhs, Right: rhs}
+		lhs = ast.Binop{Op: "Or", Left: lhs, Right: rhs, Line: line}
 	}
 	return lhs, nil
 }
@@ -488,12 +497,13 @@ func (p *parser) parsePipe() (ast.Expr, error) {
 		return nil, err
 	}
 	for p.peek().Kind == lexer.TokPipeGt {
+		line := p.peek().Line
 		p.advance()
 		rhs, err := p.parseCons()
 		if err != nil {
 			return nil, err
 		}
-		lhs = ast.App{Func: rhs, Arg: lhs}
+		lhs = ast.App{Func: rhs, Arg: lhs, Line: line}
 	}
 	return lhs, nil
 }
@@ -563,7 +573,7 @@ func (p *parser) parseLet() (ast.Expr, error) {
 	}
 	// Desugar parameters: let f x y = body => let f = fn x -> fn y -> body
 	for i := len(params) - 1; i >= 0; i-- {
-		body = ast.Fun{Param: params[i], Body: body}
+		body = ast.Fun{Param: params[i], Body: body, Line: letTok.Line}
 	}
 
 	// Mutual recursion: let rec f = ... and g = ...
@@ -591,7 +601,7 @@ func (p *parser) parseLet() (ast.Expr, error) {
 				return nil, err
 			}
 			for i := len(params2) - 1; i >= 0; i-- {
-				body2 = ast.Fun{Param: params2[i], Body: body2}
+				body2 = ast.Fun{Param: params2[i], Body: body2, Line: letTok.Line}
 			}
 			bindings = append(bindings, ast.LetRecBinding{Name: name2, Body: body2})
 		}
@@ -687,6 +697,7 @@ func (p *parser) parseLetBlock() (ast.Expr, error) {
 			bindings = append(bindings, letBinding{pat: pat, body: body})
 		} else {
 			// Named binding: name [params] = body
+			bindLine := p.peek().Line
 			name, err := p.expectIdent()
 			if err != nil {
 				p.caseArmCol = savedCAC
@@ -711,7 +722,7 @@ func (p *parser) parseLetBlock() (ast.Expr, error) {
 				return nil, err
 			}
 			for i := len(params) - 1; i >= 0; i-- {
-				body = ast.Fun{Param: params[i], Body: body}
+				body = ast.Fun{Param: params[i], Body: body, Line: bindLine}
 			}
 			bindings = append(bindings, letBinding{name: name, body: body})
 		}
@@ -781,6 +792,7 @@ func (p *parser) parseIf() (ast.Expr, error) {
 // ---------------------------------------------------------------------------
 
 func (p *parser) parseFun() (ast.Expr, error) {
+	funLine := p.peek().Line
 	p.advance() // consume '\'
 	var params []string
 	for p.peek().Kind != lexer.TokArrow {
@@ -823,7 +835,7 @@ func (p *parser) parseFun() (ast.Expr, error) {
 		return nil, err
 	}
 	for i := len(params) - 1; i >= 0; i-- {
-		body = ast.Fun{Param: params[i], Body: body}
+		body = ast.Fun{Param: params[i], Body: body, Line: funLine}
 	}
 	return body, nil
 }
@@ -1621,6 +1633,7 @@ func (p *parser) parseImpl() (ast.Expr, error) {
 	saved := p.caseArmCol
 	p.caseArmCol = methodCol
 	for p.peek().Kind == lexer.TokIdent && p.peek().Col >= methodCol {
+		mLine := p.peek().Line
 		mname, err := p.expectIdent()
 		if err != nil {
 			return nil, err
@@ -1641,7 +1654,7 @@ func (p *parser) parseImpl() (ast.Expr, error) {
 			return nil, err
 		}
 		for i := len(params) - 1; i >= 0; i-- {
-			body = ast.Fun{Param: params[i], Body: body}
+			body = ast.Fun{Param: params[i], Body: body, Line: mLine}
 		}
 		methods = append(methods, ast.ImplMethod{Name: mname, Body: body})
 	}
@@ -1795,6 +1808,7 @@ func (p *parser) isToplevelBinding() bool {
 // parseToplevelBinding parses "name params = body" at the top level.
 // Returns ast.Let with Recursive: true and InExpr: nil.
 func (p *parser) parseToplevelBinding() (ast.Expr, error) {
+	bindLine := p.peek().Line
 	name, err := p.expectIdent()
 	if err != nil {
 		return nil, err
@@ -1815,9 +1829,9 @@ func (p *parser) parseToplevelBinding() (ast.Expr, error) {
 		return nil, err
 	}
 	for i := len(params) - 1; i >= 0; i-- {
-		body = ast.Fun{Param: params[i], Body: body}
+		body = ast.Fun{Param: params[i], Body: body, Line: bindLine}
 	}
-	return ast.Let{Name: name, Body: body, InExpr: nil, Recursive: true}, nil
+	return ast.Let{Name: name, Body: body, InExpr: nil, Recursive: true, Line: bindLine}, nil
 }
 
 // ParseTokens parses a token list into a list of top-level expressions.

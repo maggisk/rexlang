@@ -83,6 +83,49 @@ func NewTypeChecker() *TypeChecker {
 	return &TypeChecker{}
 }
 
+// exprLine extracts the source line from an AST expression, if available.
+func exprLine(expr ast.Expr) int {
+	switch e := expr.(type) {
+	case ast.Var:
+		return e.Line
+	case ast.If:
+		return e.Line
+	case ast.Let:
+		return e.Line
+	case ast.LetPat:
+		return e.Line
+	case ast.LetRec:
+		return e.Line
+	case ast.Match:
+		return e.Line
+	case ast.App:
+		return e.Line
+	case ast.Binop:
+		return e.Line
+	case ast.Fun:
+		return e.Line
+	case ast.UnaryMinus:
+		return e.Line
+	case ast.ListLit:
+		return e.Line
+	case ast.TupleLit:
+		return e.Line
+	case ast.RecordCreate:
+		return e.Line
+	case ast.FieldAccess:
+		return e.Line
+	case ast.RecordUpdate:
+		return e.Line
+	case ast.StringInterp:
+		return e.Line
+	case ast.TestDecl:
+		return e.Line
+	case ast.Assert:
+		return e.Line
+	}
+	return 0
+}
+
 func (tc *TypeChecker) fresh() types.Type {
 	tc.counter++
 	return types.TVar{Name: fmt.Sprintf("t%d", tc.counter)}
@@ -339,7 +382,16 @@ func mergeBind(a, b map[string]types.Scheme) map[string]types.Scheme {
 // Expression inference
 // ---------------------------------------------------------------------------
 
-func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst types.Subst, expr ast.Expr) (types.Subst, types.Type, error) {
+func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst types.Subst, expr ast.Expr) (_ types.Subst, _ types.Type, retErr error) {
+	defer func() {
+		if retErr != nil {
+			if te, ok := retErr.(*types.TypeError); ok && te.Line == 0 {
+				if line := exprLine(expr); line > 0 {
+					te.Line = line
+				}
+			}
+		}
+	}()
 	switch e := expr.(type) {
 	case ast.IntLit:
 		return subst, types.TInt, nil

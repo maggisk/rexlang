@@ -90,12 +90,16 @@ type Var struct {
 	Line int
 }
 
-type UnaryMinus struct{ Expr Expr }
+type UnaryMinus struct {
+	Expr Expr
+	Line int
+}
 
 type Binop struct {
 	Op    string
 	Left  Expr
 	Right Expr
+	Line  int
 }
 
 type If struct {
@@ -119,11 +123,13 @@ type Let struct {
 type Fun struct {
 	Param string
 	Body  Expr
+	Line  int
 }
 
 type App struct {
 	Func Expr
 	Arg  Expr
+	Line int
 }
 
 type Match struct {
@@ -160,6 +166,7 @@ type RecordFieldDef struct {
 type RecordCreate struct {
 	TypeName string
 	Fields   []RecordFieldExpr
+	Line     int
 }
 
 type RecordFieldExpr struct {
@@ -170,11 +177,13 @@ type RecordFieldExpr struct {
 type FieldAccess struct {
 	Record Expr
 	Field  string
+	Line   int
 }
 
 type RecordUpdate struct {
 	Record  Expr
 	Updates []RecordFieldUpdate
+	Line    int
 }
 
 type RecordFieldUpdate struct {
@@ -187,10 +196,19 @@ type CtorDef struct {
 	ArgTypes []TySyntax
 }
 
-type StringInterp struct{ Parts []Expr }
+type StringInterp struct {
+	Parts []Expr
+	Line  int
+}
 
-type ListLit struct{ Items []Expr }
-type TupleLit struct{ Items []Expr }
+type ListLit struct {
+	Items []Expr
+	Line  int
+}
+type TupleLit struct {
+	Items []Expr
+	Line  int
+}
 
 type LetPat struct {
 	Exported bool

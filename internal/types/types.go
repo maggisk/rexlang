@@ -13,10 +13,16 @@ import (
 
 // TypeError is raised during HM inference.
 type TypeError struct {
-	Msg string
+	Msg  string
+	Line int // source line (0 = unknown)
 }
 
-func (e *TypeError) Error() string { return e.Msg }
+func (e *TypeError) Error() string {
+	if e.Line > 0 {
+		return fmt.Sprintf("line %d: %s", e.Line, e.Msg)
+	}
+	return e.Msg
+}
 
 func typeErr(format string, args ...interface{}) *TypeError {
 	return &TypeError{Msg: fmt.Sprintf(format, args...)}
