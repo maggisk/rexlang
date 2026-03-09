@@ -862,3 +862,160 @@ main _ = apply strLen "hello"
 		t.Fatalf("expected exit 5, got %d", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Trait dispatch tests
+// ---------------------------------------------------------------------------
+
+func TestE2ETraitCompiles(t *testing.T) {
+	// Trait + impl compiles without crash (no trait call)
+	code := `
+trait Show a where
+    show : a -> Int
+
+impl Show Int where
+    show n = n
+
+main _ = 0
+`
+	if got := runWasm(t, code); got != 0 {
+		t.Fatalf("expected exit 0, got %d", got)
+	}
+}
+
+func TestE2ETraitShowInt(t *testing.T) {
+	// Arity-1 trait method dispatch: show Int
+	code := `
+trait ToInt a where
+    toInt : a -> Int
+
+impl ToInt Int where
+    toInt n = n
+
+main _ = toInt 42
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2ETraitEqInt(t *testing.T) {
+	// Arity-2 trait method dispatch: eq Int
+	code := `
+trait Eq a where
+    eq : a -> a -> Bool
+
+impl Eq Int where
+    eq x y = x == y
+
+main _ =
+    if eq 42 42 then
+        1
+    else
+        0
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
+
+func TestE2ETraitEqIntFalse(t *testing.T) {
+	// Arity-2 trait method dispatch: eq Int (not equal)
+	code := `
+trait Eq a where
+    eq : a -> a -> Bool
+
+impl Eq Int where
+    eq x y = x == y
+
+main _ =
+    if eq 42 99 then
+        1
+    else
+        0
+`
+	if got := runWasm(t, code); got != 0 {
+		t.Fatalf("expected exit 0, got %d", got)
+	}
+}
+
+func TestE2ETraitOrdInt(t *testing.T) {
+	// Trait method returning an ADT
+	code := `
+type Ordering = LT | EQ | GT
+
+trait Ord a where
+    compare : a -> a -> Ordering
+
+impl Ord Int where
+    compare x y =
+        if x < y then
+            LT
+        else if x == y then
+            EQ
+        else
+            GT
+
+toInt o =
+    match o
+        when LT ->
+            0
+        when EQ ->
+            1
+        when GT ->
+            2
+
+main _ = toInt (compare 3 5)
+`
+	if got := runWasm(t, code); got != 0 {
+		t.Fatalf("expected exit 0 (LT), got %d", got)
+	}
+}
+
+func TestE2ETraitMultipleImpls(t *testing.T) {
+	// Two impls for the same trait, different types
+	code := `
+trait ToInt a where
+    toInt : a -> Int
+
+impl ToInt Int where
+    toInt n = n
+
+impl ToInt Bool where
+    toInt b =
+        if b then
+            1
+        else
+            0
+
+main _ = toInt true + toInt 10
+`
+	if got := runWasm(t, code); got != 11 {
+		t.Fatalf("expected exit 11, got %d", got)
+	}
+}
+
+func TestE2ETraitWithADT(t *testing.T) {
+	// Trait impl for a custom ADT
+	code := `
+type Color = Red | Green | Blue
+
+trait ToInt a where
+    toInt : a -> Int
+
+impl ToInt Color where
+    toInt c =
+        match c
+            when Red ->
+                1
+            when Green ->
+                2
+            when Blue ->
+                3
+
+main _ = toInt Green
+`
+	if got := runWasm(t, code); got != 2 {
+		t.Fatalf("expected exit 2, got %d", got)
+	}
+}

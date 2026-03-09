@@ -91,7 +91,11 @@ func (l *Lowerer) lowerToplevel(expr ast.Expr) (Decl, error) {
 			}
 			methods = append(methods, ImplMethodDef{Name: m.Name, Body: body})
 		}
-		return DImpl{TraitName: e.TraitName, Methods: methods}, nil
+		return DImpl{
+			TraitName:      e.TraitName,
+			TargetTypeName: implTargetName(e.TargetType),
+			Methods:        methods,
+		}, nil
 
 	case ast.Import:
 		return DImport{Module: e.Module, Names: e.Names, Alias: e.Alias}, nil
@@ -550,4 +554,21 @@ func lowerPattern(pat ast.Pattern) Pattern {
 	default:
 		return PWild{}
 	}
+}
+
+// implTargetName extracts the type name from an impl target type syntax.
+func implTargetName(ty ast.TySyntax) string {
+	switch t := ty.(type) {
+	case ast.TyName:
+		return t.Name
+	case ast.TyApp:
+		return t.Name
+	case ast.TyList:
+		return "List"
+	case ast.TyTuple:
+		return fmt.Sprintf("Tuple%d", len(t.Elems))
+	case ast.TyUnit:
+		return "Unit"
+	}
+	return fmt.Sprintf("%T", ty)
 }

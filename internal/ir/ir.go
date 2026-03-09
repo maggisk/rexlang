@@ -205,10 +205,10 @@ type RecBinding struct {
 	Bind CExpr // typically CLambda
 }
 
-func (EAtom) exprNode()   {}
+func (EAtom) exprNode()    {}
 func (EComplex) exprNode() {}
-func (ELet) exprNode()    {}
-func (ELetRec) exprNode() {}
+func (ELet) exprNode()     {}
+func (ELetRec) exprNode()  {}
 
 // ---------------------------------------------------------------------------
 // Patterns (mirrored from AST but part of the IR package)
@@ -247,18 +247,18 @@ type PRecordField struct {
 	Pat  Pattern
 }
 
-func (PWild) patternNode()    {}
-func (PVar) patternNode()     {}
-func (PInt) patternNode()     {}
-func (PFloat) patternNode()   {}
-func (PString) patternNode()  {}
-func (PBool) patternNode()    {}
-func (PUnit) patternNode()    {}
-func (PNil) patternNode()     {}
-func (PCons) patternNode()    {}
-func (PTuple) patternNode()   {}
-func (PCtor) patternNode()    {}
-func (PRecord) patternNode()  {}
+func (PWild) patternNode()   {}
+func (PVar) patternNode()    {}
+func (PInt) patternNode()    {}
+func (PFloat) patternNode()  {}
+func (PString) patternNode() {}
+func (PBool) patternNode()   {}
+func (PUnit) patternNode()   {}
+func (PNil) patternNode()    {}
+func (PCons) patternNode()   {}
+func (PTuple) patternNode()  {}
+func (PCtor) patternNode()   {}
+func (PRecord) patternNode() {}
 
 // ---------------------------------------------------------------------------
 // Top-level declarations
@@ -268,10 +268,10 @@ type Decl interface{ declNode() }
 
 // DLet is a top-level value binding.
 type DLet struct {
-	Name      string
-	Exported  bool
-	Ty        types.Type
-	Body      Expr
+	Name     string
+	Exported bool
+	Ty       types.Type
+	Body     Expr
 }
 
 // DLetRec is a group of mutually recursive top-level bindings.
@@ -316,9 +316,10 @@ type TraitMethodDef struct {
 
 // DImpl is a trait implementation.
 type DImpl struct {
-	TraitName  string
-	TargetType types.Type
-	Methods    []ImplMethodDef
+	TraitName      string
+	TargetTypeName string     // e.g. "Int", "List", "Maybe"
+	TargetType     types.Type // resolved type (for future use)
+	Methods        []ImplMethodDef
 }
 
 type ImplMethodDef struct {

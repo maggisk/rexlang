@@ -39,6 +39,9 @@ func EmitWAT(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		ctorToAdt:     make(map[string]*ctorInfo),
 		stringDataIdx: make(map[string]int),
 		usesTuples:    make(map[int]bool),
+		traitMethods:  make(map[string]traitMethodInfo),
+		implFuncs:     make(map[string]*funcInfo),
+		implBodies:    make(map[string]ir.Expr),
 	}
 	return g.emit(prog)
 }
@@ -50,9 +53,9 @@ type adtInfo struct {
 }
 
 type ctorInfo struct {
-	name      string
-	tag       int
-	typeName  string   // parent ADT name
+	name       string
+	tag        int
+	typeName   string   // parent ADT name
 	fieldTypes []string // wasm types of constructor fields
 }
 
@@ -76,7 +79,7 @@ type lambdaFunc struct {
 	captures  []string // names of captured variables
 	capTypes  []string // wasm types of captures
 	param     string
-	paramType string   // concrete wasm type of the parameter
+	paramType string // concrete wasm type of the parameter
 	retType   string
 	body      ir.Expr
 }
@@ -85,6 +88,12 @@ type lambdaFunc struct {
 type pendingCall struct {
 	funcName string
 	args     []ir.Atom
+}
+
+// traitMethodInfo maps a method name back to its trait.
+type traitMethodInfo struct {
+	traitName  string
+	methodName string
 }
 
 type watGen struct {
@@ -114,6 +123,11 @@ type watGen struct {
 	// list/tuple usage tracking
 	usesLists  bool
 	usesTuples map[int]bool // tuple arity → true
+
+	// trait dispatch
+	traitMethods map[string]traitMethodInfo // method name → trait info ("show" → Show)
+	implFuncs    map[string]*funcInfo       // "Show_Int_show" → generated func info
+	implBodies   map[string]ir.Expr         // "Show_Int_show" → impl method body
 
 	// current function context
 	currentFunc *funcInfo
@@ -304,6 +318,9 @@ func (g *watGen) analyze(prog *ir.Program) {
 		}
 	}
 
+	// Trait pass: collect trait methods and impl functions
+	g.analyzeTraits(prog)
+
 	// Second pass: detect function names used as values
 	for _, d := range prog.Decls {
 		dl, ok := d.(ir.DLet)
@@ -317,7 +334,7 @@ func (g *watGen) analyze(prog *ir.Program) {
 		g.scanFuncAsValue(fi.body)
 	}
 
-	// Third pass: collect string literals
+	// Third pass: collect string literals (including impl bodies)
 	for _, d := range prog.Decls {
 		dl, ok := d.(ir.DLet)
 		if !ok {
@@ -328,6 +345,9 @@ func (g *watGen) analyze(prog *ir.Program) {
 			continue
 		}
 		g.scanStrings(fi.body)
+	}
+	for _, body := range g.implBodies {
+		g.scanStrings(body)
 	}
 }
 
@@ -561,6 +581,167 @@ func (g *watGen) analyzeADT(dt ir.DType) {
 	g.adts[dt.Name] = ai
 }
 
+// analyzeTraits collects trait method info and generates impl function entries.
+func (g *watGen) analyzeTraits(prog *ir.Program) {
+	// Collect trait methods from typeEnv (DTrait.Methods may be empty in IR)
+	if t, ok := g.typeEnv["__traits__"]; ok {
+		if tm, ok := t.(map[string]typechecker.TraitInfo); ok {
+			for traitName, ti := range tm {
+				for methodName := range ti.Methods {
+					g.traitMethods[methodName] = traitMethodInfo{
+						traitName:  traitName,
+						methodName: methodName,
+					}
+				}
+			}
+		}
+	}
+
+	// Process impls — generate impl function entries
+	for _, d := range prog.Decls {
+		di, ok := d.(ir.DImpl)
+		if !ok {
+			continue
+		}
+		for _, m := range di.Methods {
+			implName := di.TraitName + "_" + di.TargetTypeName + "_" + m.Name
+			// Look up the trait method's scheme to determine the impl function's type
+			fi := g.analyzeImplMethod(implName, di.TraitName, di.TargetTypeName, m)
+			if fi != nil {
+				g.implFuncs[implName] = fi
+				g.funcs[implName] = fi
+				g.implBodies[implName] = fi.body
+				if fi.arity > 1 && fi.arity-1 > g.maxCaps {
+					g.maxCaps = fi.arity - 1
+				}
+			}
+		}
+	}
+}
+
+// analyzeImplMethod creates a funcInfo for an impl method by looking up
+// the trait method's type scheme and substituting the concrete target type.
+func (g *watGen) analyzeImplMethod(implName, traitName, targetTypeName string, m ir.ImplMethodDef) *funcInfo {
+	// Look up trait info from typeEnv
+	var traitInfo *typechecker.TraitInfo
+	if t, ok := g.typeEnv["__traits__"]; ok {
+		if tm, ok := t.(map[string]typechecker.TraitInfo); ok {
+			if ti, ok := tm[traitName]; ok {
+				traitInfo = &ti
+			}
+		}
+	}
+	if traitInfo == nil {
+		return nil
+	}
+
+	methodScheme, ok := traitInfo.Methods[m.Name]
+	if !ok {
+		return nil
+	}
+
+	// Substitute the trait param with the target concrete type
+	targetType := g.rexNameToType(targetTypeName)
+	paramSubst := types.Subst{traitInfo.Param: targetType}
+	concreteType := types.ApplySubst(paramSubst, methodScheme.Ty)
+
+	// Unwrap lambda chain from the body to get params
+	body := m.Body
+	var params []paramInfo
+	for {
+		ec, ok := body.(ir.EComplex)
+		if !ok {
+			break
+		}
+		lam, ok := ec.C.(ir.CLambda)
+		if !ok {
+			break
+		}
+		params = append(params, paramInfo{name: lam.Param})
+		body = lam.Body
+	}
+
+	if len(params) == 0 {
+		return nil
+	}
+
+	fi := &funcInfo{
+		name:   implName,
+		arity:  len(params),
+		params: params,
+		body:   body,
+	}
+
+	// Use the concrete type to determine param and return types
+	paramTypes, retType := decomposeFuncType(concreteType)
+	for i := range fi.params {
+		if i < len(paramTypes) {
+			fi.params[i].wasmType = g.wasmType(paramTypes[i])
+		} else {
+			fi.params[i].wasmType = wtAnyRef
+		}
+	}
+	fi.retType = g.wasmType(retType)
+
+	return fi
+}
+
+// rexNameToType converts a Rex type name (e.g. "Int", "String") to a types.Type.
+func (g *watGen) rexNameToType(name string) types.Type {
+	return types.TCon{Name: name}
+}
+
+// isLocalOrParam returns true if the name is a local variable or function parameter
+// (i.e. it shadows a global name like a trait method or top-level function).
+func (g *watGen) isLocalOrParam(name string) bool {
+	_, isParam := g.funcParams[name]
+	_, isLocal := g.locals[name]
+	return isParam || isLocal
+}
+
+// rexTypeName determines the Rex type name of an atom for trait dispatch.
+// Returns "" if the type cannot be statically determined.
+func (g *watGen) rexTypeName(a ir.Atom) string {
+	switch a.(type) {
+	case ir.AInt:
+		return "Int"
+	case ir.AFloat:
+		return "Float"
+	case ir.AString:
+		return "String"
+	case ir.ABool:
+		return "Bool"
+	case ir.AUnit:
+		return "Unit"
+	}
+	if v, ok := a.(ir.AVar); ok {
+		wt := g.typeOfAtom(a)
+		switch wt {
+		case wtI64:
+			return "Int"
+		case wtF64:
+			return "Float"
+		case wtI32:
+			return "Bool"
+		case wtStringRef:
+			return "String"
+		}
+		// Check if it's a zero-arg constructor
+		if ci, ok := g.ctorToAdt[v.Name]; ok && len(ci.fieldTypes) == 0 {
+			return ci.typeName
+		}
+		// For ADT refs, try to look up the type from the type env
+		if wt == wtAdtRef {
+			if ty, ok := g.lookupType(v.Name); ok {
+				if tc, ok := ty.(types.TCon); ok {
+					return tc.Name
+				}
+			}
+		}
+	}
+	return ""
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2: Emit — generate WAT output
 // ---------------------------------------------------------------------------
@@ -616,6 +797,20 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 		if !ok {
 			continue
 		}
+		if err := g.emitFunc(fi); err != nil {
+			return "", err
+		}
+		g.line("")
+	}
+
+	// Emit trait impl functions
+	implNames := make([]string, 0, len(g.implFuncs))
+	for name := range g.implFuncs {
+		implNames = append(implNames, name)
+	}
+	sortStrings(implNames)
+	for _, name := range implNames {
+		fi := g.implFuncs[name]
 		if err := g.emitFunc(fi); err != nil {
 			return "", err
 		}
@@ -1157,13 +1352,17 @@ func (g *watGen) emitConvert(from, to string) {
 // ---------------------------------------------------------------------------
 
 func (g *watGen) collectLocals(expr ir.Expr) {
-	g.collectLocalsWithCtx(expr, nil)
+	g.collectLocalsWithCtx(expr, nil, nil)
 }
 
-// partialCtors tracks temp variables that hold partially-applied constructors.
-func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*ctorInfo) {
+// collectLocalsWithCtx collects local variable types, tracking partial constructor
+// and trait method application chains to determine final result types.
+func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*ctorInfo, partialTraits map[string]*funcInfo) {
 	if partialCtors == nil {
 		partialCtors = make(map[string]*ctorInfo)
+	}
+	if partialTraits == nil {
+		partialTraits = make(map[string]*funcInfo)
 	}
 	switch e := expr.(type) {
 	case ir.ELet:
@@ -1181,11 +1380,27 @@ func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*cto
 					partialCtors[e.Name] = ci
 					localType = wtAdtRef
 				}
+				// Detect trait method partial application chains
+				if tmInfo, ok := g.traitMethods[fvar.Name]; ok && !g.isLocalOrParam(fvar.Name) {
+					argType := g.rexTypeName(app.Arg)
+					if argType != "" {
+						implName := tmInfo.traitName + "_" + argType + "_" + tmInfo.methodName
+						if fi, ok := g.funcs[implName]; ok && fi.arity > 1 {
+							partialTraits[e.Name] = fi
+							localType = fi.retType // saturated call result type
+						}
+					}
+				}
+				// If applying a temp that was a partial trait method app
+				if fi, ok := partialTraits[fvar.Name]; ok {
+					partialTraits[e.Name] = fi
+					localType = fi.retType
+				}
 			}
 		}
 		g.locals[e.Name] = localType
 		g.collectLocalsCExpr(e.Bind)
-		g.collectLocalsWithCtx(e.Body, partialCtors)
+		g.collectLocalsWithCtx(e.Body, partialCtors, partialTraits)
 	case ir.EComplex:
 		g.collectLocalsCExpr(e.C)
 	}
@@ -1347,6 +1562,19 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 		if v, ok := e.Func.(ir.AVar); ok {
 			if _, ok := g.ctorToAdt[v.Name]; ok {
 				return wtAdtRef
+			}
+			// Trait method dispatch: infer return type from impl function
+			if tmInfo, ok := g.traitMethods[v.Name]; ok && !g.isLocalOrParam(v.Name) {
+				argType := g.rexTypeName(e.Arg)
+				if argType != "" {
+					implName := tmInfo.traitName + "_" + argType + "_" + tmInfo.methodName
+					if fi, ok := g.funcs[implName]; ok {
+						if fi.arity == 1 {
+							return fi.retType
+						}
+						return wtRef
+					}
+				}
 			}
 			if fi, ok := g.funcs[v.Name]; ok {
 				if fi.arity == 1 {
@@ -1550,6 +1778,30 @@ func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 		return fmt.Errorf("codegen: non-variable function application not supported")
 	}
 
+	// Trait method dispatch (arity 1): redirect to impl function
+	if tmInfo, ok := g.traitMethods[v.Name]; ok && !g.isLocalOrParam(v.Name) {
+		argType := g.rexTypeName(e.Arg)
+		if argType != "" {
+			implName := tmInfo.traitName + "_" + argType + "_" + tmInfo.methodName
+			if fi, ok := g.funcs[implName]; ok && fi.arity == 1 {
+				if err := g.emitAtom(e.Arg); err != nil {
+					return err
+				}
+				at := g.typeOfAtom(e.Arg)
+				if at != fi.params[0].wasmType {
+					g.emitConvert(at, fi.params[0].wasmType)
+				}
+				canTailCall := tail && g.currentFunc != nil && fi.retType == g.currentFunc.retType
+				if canTailCall {
+					g.line("return_call $%s", fi.name)
+				} else {
+					g.line("call $%s", fi.name)
+				}
+				return nil
+			}
+		}
+	}
+
 	// Constructor application (single-arg constructors)
 	if ci, ok := g.ctorToAdt[v.Name]; ok {
 		if len(ci.fieldTypes) == 1 {
@@ -1633,6 +1885,19 @@ func (g *watGen) emitLetTail(e ir.ELet, tail bool) error {
 	// let _t = f arg1 in _t arg2  (where f has arity 2)
 	if app, ok := e.Bind.(ir.CApp); ok {
 		if fvar, ok := app.Func.(ir.AVar); ok {
+			// Trait method dispatch (arity > 1): redirect to impl function
+			// e.g. let _t = eq x in _t y → call $Eq_Int_eq x y
+			if tmInfo, ok := g.traitMethods[fvar.Name]; ok && !g.isLocalOrParam(fvar.Name) {
+				argType := g.rexTypeName(app.Arg)
+				if argType != "" {
+					implName := tmInfo.traitName + "_" + argType + "_" + tmInfo.methodName
+					if fi, ok := g.funcs[implName]; ok && fi.arity > 1 {
+						if result, ok := g.trySaturatedCallTail(fi, []ir.Atom{app.Arg}, e.Name, e.Body, tail); ok {
+							return result
+						}
+					}
+				}
+			}
 			if fi, ok := g.funcs[fvar.Name]; ok && fi.arity > 1 {
 				// Check if the body immediately uses _t in another application
 				if result, ok := g.trySaturatedCallTail(fi, []ir.Atom{app.Arg}, e.Name, e.Body, tail); ok {
@@ -1708,6 +1973,10 @@ func (g *watGen) trySaturatedCallTail(fi *funcInfo, args []ir.Atom, tempName str
 						}
 					}
 					g.line("call $%s", fi.name)
+					// Convert result to match local type if needed
+					if localType, ok := g.locals[let.Name]; ok && fi.retType != localType {
+						g.emitConvert(fi.retType, localType)
+					}
 					// The call result replaces the let binding
 					g.line("local.set $%s", let.Name)
 					err := g.emitExprTail(let.Body, tail)
