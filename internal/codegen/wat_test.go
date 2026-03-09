@@ -706,3 +706,159 @@ main _ = add (MkPair 20 22)
 		t.Fatalf("expected exit 42, got %d", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Polymorphic boxing tests
+// ---------------------------------------------------------------------------
+
+func TestE2EListOfStrings(t *testing.T) {
+	code := `
+length lst =
+    match lst
+        when [] ->
+            0
+        when [_|t] ->
+            1 + length t
+main _ = length ["hello", "world", "!"]
+`
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected exit 3, got %d", got)
+	}
+}
+
+func TestE2EStringFromList(t *testing.T) {
+	// Extract a string from a list and compare it
+	code := `
+head lst =
+    match lst
+        when [] ->
+            ""
+        when [h|_] ->
+            h
+check s =
+    if s == "hello" then
+        42
+    else
+        0
+main _ = check (head ["hello", "world"])
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EMixedTuple(t *testing.T) {
+	// Tuple with mixed types: (Int, String)
+	// Extract the Int from the first position
+	code := `
+fst p =
+    match p
+        when (a, _) ->
+            a
+main _ = fst (42, "hello")
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EMixedTupleSnd(t *testing.T) {
+	// Extract string from second position and check it
+	code := `
+snd p =
+    match p
+        when (_, b) ->
+            b
+check s =
+    if s == "world" then
+        42
+    else
+        0
+main _ =
+    let s = snd (99, "world")
+    in check s
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EClosureCaptureString(t *testing.T) {
+	// Closure captures a string variable and uses it
+	code := `
+checkStr : String -> String -> Int
+checkStr s x =
+    if x == s then
+        1
+    else
+        0
+makeChecker : String -> (String -> Int)
+makeChecker s = \x -> checkStr s x
+main _ =
+    let check = makeChecker "hello"
+    in check "hello"
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
+
+func TestE2EPolymorphicADT(t *testing.T) {
+	// Just with a string value
+	code := `
+type Maybe a = Nothing | Just a
+
+fromJust d m =
+    match m
+        when Nothing ->
+            d
+        when Just x ->
+            x
+
+check s =
+    if s == "hello" then
+        42
+    else
+        0
+
+main _ = check (fromJust "" (Just "hello"))
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EPolymorphicADTInt(t *testing.T) {
+	// Just with an int value
+	code := `
+type Maybe a = Nothing | Just a
+
+fromJust d m =
+    match m
+        when Nothing ->
+            d
+        when Just x ->
+            x
+
+main _ = fromJust 0 (Just 42)
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EHigherOrderWithStrings(t *testing.T) {
+	// Apply a String -> Int function via closure
+	code := `
+apply f x = f x
+strLen s =
+    if s == "hello" then
+        5
+    else
+        0
+main _ = apply strLen "hello"
+`
+	if got := runWasm(t, code); got != 5 {
+		t.Fatalf("expected exit 5, got %d", got)
+	}
+}

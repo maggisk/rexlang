@@ -21,8 +21,9 @@ const (
 	wtF64       = "f64"
 	wtRef       = "(ref null $closure)" // closure reference (nullable for locals)
 	wtAdtRef    = "(ref null $adt)"     // ADT value reference (nullable for locals)
-	wtStringRef = "(ref null $string)" // string reference (nullable for locals)
-	wtListRef   = "(ref null $list)"   // list reference (nullable for locals)
+	wtStringRef = "(ref null $string)"  // string reference (nullable for locals)
+	wtListRef   = "(ref null $list)"    // list reference (nullable for locals)
+	wtAnyRef    = "(ref null any)"      // universal boxed type for polymorphic storage
 )
 
 // EmitWAT converts an IR program to WAT text.
@@ -71,12 +72,13 @@ type paramInfo struct {
 
 // lambdaFunc is a lifted lambda that becomes a wasm function.
 type lambdaFunc struct {
-	name     string   // generated func name
-	captures []string // names of captured variables
-	capTypes []string // wasm types of captures
-	param    string
-	retType  string
-	body     ir.Expr
+	name      string   // generated func name
+	captures  []string // names of captured variables
+	capTypes  []string // wasm types of captures
+	param     string
+	paramType string   // concrete wasm type of the parameter
+	retType   string
+	body      ir.Expr
 }
 
 // pendingCall tracks partial application chains for multi-arg call detection.
@@ -185,7 +187,64 @@ func (g *watGen) wasmType(t types.Type) string {
 			}
 		}
 	}
-	return wtI64 // default for type variables and unknown types
+	return wtAnyRef // type variables and unknown types use boxed representation
+}
+
+// isRefType returns true for all wasm reference types (already subtypes of any).
+func isRefType(wt string) bool {
+	switch wt {
+	case wtRef, wtAdtRef, wtStringRef, wtListRef, wtAnyRef:
+		return true
+	}
+	// Also handle tuple refs like "(ref null $tuple2)"
+	if len(wt) > 4 && wt[:4] == "(ref" {
+		return true
+	}
+	return false
+}
+
+// emitBox boxes a concrete wasm value (on stack) to anyref.
+// For ref types this is a no-op (implicit upcast to any).
+func (g *watGen) emitBox(fromType string) {
+	switch fromType {
+	case wtI64:
+		g.line("(struct.new $box_i64)")
+	case wtF64:
+		g.line("(struct.new $box_f64)")
+	case wtI32:
+		g.line("(ref.i31)")
+	case wtAnyRef:
+		// already anyref, no-op
+	default:
+		if isRefType(fromType) {
+			// ref types are subtypes of any — no-op
+		} else {
+			// Unknown type, treat as i64
+			g.line("(struct.new $box_i64)")
+		}
+	}
+}
+
+// emitUnbox unboxes anyref (on stack) to a concrete wasm type.
+func (g *watGen) emitUnbox(toType string) {
+	switch toType {
+	case wtI64:
+		g.line("(ref.cast (ref $box_i64))")
+		g.line("(struct.get $box_i64 $val)")
+	case wtF64:
+		g.line("(ref.cast (ref $box_f64))")
+		g.line("(struct.get $box_f64 $val)")
+	case wtI32:
+		g.line("(ref.cast (ref i31))")
+		g.line("(i31.get_s)")
+	case wtAnyRef:
+		// no-op
+	default:
+		if isRefType(toType) {
+			g.line("(ref.cast %s)", toType)
+		}
+		// else no-op
+	}
 }
 
 // decomposeFuncType breaks a function type into parameter types and return type.
@@ -466,16 +525,16 @@ func (g *watGen) analyzeFunc(dl ir.DLet) *funcInfo {
 			if i < len(paramTypes) {
 				fi.params[i].wasmType = g.wasmType(paramTypes[i])
 			} else {
-				fi.params[i].wasmType = wtI64
+				fi.params[i].wasmType = wtAnyRef
 			}
 		}
 		fi.retType = g.wasmType(retType)
 	} else {
-		// Default: all i64
+		// Default: all anyref for unknown types
 		for i := range fi.params {
-			fi.params[i].wasmType = wtI64
+			fi.params[i].wasmType = wtAnyRef
 		}
-		fi.retType = wtI64
+		fi.retType = wtAnyRef
 	}
 
 	return fi
@@ -584,10 +643,26 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 		g.line("")
 	}
 
-	// _start function — pass dummy arg (0) for main's ignored parameter
+	// _start function — pass dummy arg for main's ignored parameter
 	g.line("(func (export \"_start\")")
 	g.indent++
-	g.line("(call $proc_exit (i32.and (i32.wrap_i64 (call $main (i64.const 0))) (i32.const 255)))")
+	mainParamType := mainFI.params[0].wasmType
+	var mainArgStr string
+	switch mainParamType {
+	case wtI64:
+		mainArgStr = "(i64.const 0)"
+	case wtListRef:
+		if g.usesLists {
+			mainArgStr = "(struct.new $list (i32.const 0))"
+		} else {
+			mainArgStr = "(ref.null $list)"
+		}
+	case wtAnyRef:
+		mainArgStr = "(ref.null any)"
+	default:
+		mainArgStr = "(ref.null any)"
+	}
+	g.line("(call $proc_exit (i32.and (i32.wrap_i64 (call $main %s)) (i32.const 255)))", mainArgStr)
 	g.indent--
 	g.line(")")
 
@@ -626,20 +701,25 @@ func (g *watGen) emitGCTypes() {
 	g.line("(rec")
 	g.indent++
 
+	// Box types for primitives (always emitted, cheap)
+	g.line(";; Box types")
+	g.line("(type $box_i64 (struct (field $val i64)))")
+	g.line("(type $box_f64 (struct (field $val f64)))")
+
 	// String type
 	if len(g.stringData) > 0 {
 		g.line("(type $string (array (mut i8)))")
 	}
 
-	// Closure types
+	// Closure types — use (ref null any) for param/result/captures
 	if g.needsClosures() {
 		g.line(";; Closure types")
-		g.line("(type $ft_apply (func (param (ref null $closure)) (param i64) (result i64)))")
+		g.line("(type $ft_apply (func (param (ref null $closure)) (param (ref null any)) (result (ref null any))))")
 		g.line("(type $closure (sub (struct (field $fn (ref $ft_apply)))))")
 		for n := 1; n <= g.maxCaps; n++ {
 			fields := "(field $fn (ref $ft_apply))"
 			for i := 0; i < n; i++ {
-				fields += fmt.Sprintf(" (field $c%d i64)", i)
+				fields += fmt.Sprintf(" (field $c%d (ref null any))", i)
 			}
 			g.line("(type $closure_%d (sub $closure (struct %s)))", n, fields)
 		}
@@ -678,14 +758,14 @@ func (g *watGen) emitGCTypes() {
 		}
 	}
 
-	// List types
+	// List types — head is (ref null any) for polymorphism
 	if g.usesLists {
 		g.line(";; List types")
 		g.line("(type $list (sub (struct (field $tag i32))))")
-		g.line("(type $list_cons (sub $list (struct (field $tag i32) (field $head i64) (field $tail (ref null $list)))))")
+		g.line("(type $list_cons (sub $list (struct (field $tag i32) (field $head (ref null any)) (field $tail (ref null $list)))))")
 	}
 
-	// Tuple types
+	// Tuple types — all fields are (ref null any) for polymorphism
 	if len(g.usesTuples) > 0 {
 		g.line(";; Tuple types")
 		arities := make([]int, 0, len(g.usesTuples))
@@ -699,7 +779,7 @@ func (g *watGen) emitGCTypes() {
 				if fields != "" {
 					fields += " "
 				}
-				fields += fmt.Sprintf("(field $f%d i64)", i)
+				fields += fmt.Sprintf("(field $f%d (ref null any))", i)
 			}
 			g.line("(type $tuple%d (struct %s))", arity, fields)
 		}
@@ -745,19 +825,36 @@ func (g *watGen) scanCExprForLambdas(owner string, c ir.CExpr, scope map[string]
 		if len(captures) > g.maxCaps {
 			g.maxCaps = len(captures)
 		}
-		// Also need at least 1 for partial application
 		lambdaName := fmt.Sprintf("$%s__lambda_%d", owner, len(g.lambdas))
 		capTypes := make([]string, len(captures))
-		for i := range captures {
-			capTypes[i] = wtI64 // default
+		for i, capName := range captures {
+			// Determine capture type from locals/params
+			if t, ok := g.funcParams[capName]; ok {
+				capTypes[i] = t
+			} else if t, ok := g.locals[capName]; ok {
+				capTypes[i] = t
+			} else {
+				capTypes[i] = wtAnyRef
+			}
+		}
+		// Determine parameter and return types from the lambda's type annotation
+		paramType := wtAnyRef
+		retType := wtAnyRef
+		if e.Ty != nil {
+			paramTypes, rt := decomposeFuncType(e.Ty)
+			if len(paramTypes) > 0 {
+				paramType = g.wasmType(paramTypes[0])
+			}
+			retType = g.wasmType(rt)
 		}
 		g.lambdas = append(g.lambdas, lambdaFunc{
-			name:     lambdaName,
-			captures: captures,
-			capTypes: capTypes,
-			param:    e.Param,
-			retType:  wtI64,
-			body:     e.Body,
+			name:      lambdaName,
+			captures:  captures,
+			capTypes:  capTypes,
+			param:     e.Param,
+			paramType: paramType,
+			retType:   retType,
+			body:      e.Body,
 		})
 	case ir.CIf:
 		g.scanExprForLambdas(owner, e.Then, scope, letBindings)
@@ -894,7 +991,7 @@ func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
 	g.funcParams = make(map[string]string)
 	g.locals = make(map[string]string)
 
-	// Lambda function signature: (self: ref $closure, param: i64) -> i64
+	// Lambda function signature: (self: ref $closure, param: anyref) -> anyref
 	closureType := "$closure"
 	if len(lf.captures) > 0 {
 		closureType = fmt.Sprintf("$closure_%d", len(lf.captures))
@@ -904,24 +1001,38 @@ func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
 	for i, cap := range lf.captures {
 		g.locals[cap] = lf.capTypes[i]
 	}
-	g.funcParams[lf.param] = wtI64
+	// The raw param from $ft_apply is anyref; we unbox it into a concrete local
+	g.funcParams[lf.param] = lf.paramType
 
 	// Collect locals from body
 	g.collectLocals(lf.body)
 
-	g.line("(func %s (type $ft_apply) (param $self (ref null $closure)) (param $%s i64) (result i64)", lf.name, lf.param)
+	g.line("(func %s (type $ft_apply) (param $self (ref null $closure)) (param $%s__raw (ref null any)) (result (ref null any))", lf.name, lf.param)
 	g.indent++
 
-	// Extract captures from closure struct
+	// Declare the concrete-typed param local and unbox from the raw anyref param
+	g.line("(local $%s %s)", lf.param, lf.paramType)
+	g.line("(local.set $%s", lf.param)
+	g.indent++
+	g.line("(local.get $%s__raw)", lf.param)
+	g.emitUnbox(lf.paramType)
+	g.indent--
+	g.line(")")
+
+	// Extract captures from closure struct — unbox from anyref to concrete type
 	for i, cap := range lf.captures {
-		g.line("(local $%s i64)", cap)
-		g.line("(local.set $%s (struct.get %s $c%d (ref.cast (ref %s) (local.get $self))))",
-			cap, closureType, i, closureType)
+		g.line("(local $%s %s)", cap, lf.capTypes[i])
+		g.line("(local.set $%s", cap)
+		g.indent++
+		g.line("(struct.get %s $c%d (ref.cast (ref %s) (local.get $self)))", closureType, i, closureType)
+		g.emitUnbox(lf.capTypes[i])
+		g.indent--
+		g.line(")")
 	}
 
 	// Declare other locals
 	for _, name := range g.localOrder(lf.body) {
-		if !containsStr(lf.captures, name) {
+		if !containsStr(lf.captures, name) && name != lf.param {
 			g.line("(local $%s %s)", name, g.locals[name])
 		}
 	}
@@ -930,11 +1041,9 @@ func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
 		return fmt.Errorf("codegen lambda %s: %w", lf.name, err)
 	}
 
-	// Convert to i64 if needed
+	// Box result to anyref
 	bodyType := g.typeOfExpr(lf.body)
-	if bodyType != wtI64 {
-		g.emitConvert(bodyType, wtI64)
-	}
+	g.emitBox(bodyType)
 
 	g.indent--
 	g.line(")")
@@ -1023,6 +1132,16 @@ func (g *watGen) emitConvert(from, to string) {
 	if from == to {
 		return
 	}
+	// Boxing: concrete type → anyref
+	if to == wtAnyRef {
+		g.emitBox(from)
+		return
+	}
+	// Unboxing: anyref → concrete type
+	if from == wtAnyRef {
+		g.emitUnbox(to)
+		return
+	}
 	switch {
 	case from == wtI32 && to == wtI64:
 		g.line("i64.extend_i32_u")
@@ -1089,8 +1208,8 @@ func (g *watGen) collectPatternLocals(pat ir.Pattern) {
 	switch p := pat.(type) {
 	case ir.PVar:
 		if _, ok := g.locals[p.Name]; !ok {
-			// Default to i64 for pattern variables; override for ADT fields
-			g.locals[p.Name] = wtI64
+			// Default to anyref for pattern variables; override for ADT fields
+			g.locals[p.Name] = wtAnyRef
 		}
 	case ir.PCtor:
 		ci, ok := g.ctorToAdt[p.Name]
@@ -1111,9 +1230,11 @@ func (g *watGen) collectPatternLocals(pat ir.Pattern) {
 			}
 		}
 	case ir.PCons:
-		// head is i64 (for List Int), tail is list ref
+		// head is anyref (from polymorphic list storage) — unboxing happens at use
 		if pv, ok := p.Head.(ir.PVar); ok {
-			g.locals[pv.Name] = wtI64
+			if _, exists := g.locals[pv.Name]; !exists {
+				g.locals[pv.Name] = wtAnyRef
+			}
 		}
 		if pv, ok := p.Tail.(ir.PVar); ok {
 			g.locals[pv.Name] = wtListRef
@@ -1121,10 +1242,12 @@ func (g *watGen) collectPatternLocals(pat ir.Pattern) {
 		g.collectPatternLocals(p.Head)
 		g.collectPatternLocals(p.Tail)
 	case ir.PTuple:
-		// All tuple fields are i64 for now
+		// Tuple fields are anyref (from polymorphic tuple storage) — unboxing happens at use
 		for _, sub := range p.Pats {
 			if pv, ok := sub.(ir.PVar); ok {
-				g.locals[pv.Name] = wtI64
+				if _, exists := g.locals[pv.Name]; !exists {
+					g.locals[pv.Name] = wtAnyRef
+				}
 			}
 			g.collectPatternLocals(sub)
 		}
@@ -1211,9 +1334,9 @@ func (g *watGen) typeOfAtom(a ir.Atom) string {
 		if t, ok := g.locals[v.Name]; ok {
 			return t
 		}
-		return wtI64
+		return wtAnyRef
 	default:
-		return wtI64
+		return wtAnyRef
 	}
 }
 
@@ -1233,11 +1356,21 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 				return wtRef
 			}
 		}
-		return wtI64
+		// call_ref returns anyref (from $ft_apply)
+		return wtAnyRef
 	case ir.CBinop:
 		switch e.Op {
 		case "Add", "Sub", "Mul", "Div", "Mod":
-			return g.typeOfAtom(e.Left)
+			// After unboxing, arithmetic result is concrete
+			leftType := g.typeOfAtom(e.Left)
+			rightType := g.typeOfAtom(e.Right)
+			if leftType == wtAnyRef {
+				if rightType == wtAnyRef {
+					return wtI64 // default arithmetic type
+				}
+				return rightType
+			}
+			return leftType
 		case "Eq", "Neq", "Lt", "Gt", "Leq", "Geq", "And", "Or":
 			return wtI32
 		}
@@ -1247,7 +1380,28 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 		return g.typeOfExpr(e.Then)
 	case ir.CMatch:
 		if len(e.Arms) > 0 {
-			return g.typeOfExpr(e.Arms[0].Body)
+			// Use widest type across all arms
+			resultType := g.typeOfExpr(e.Arms[0].Body)
+			for _, arm := range e.Arms[1:] {
+				armType := g.typeOfExpr(arm.Body)
+				if armType != resultType {
+					// Types differ: for ref types use anyref, else prefer concrete
+					if isRefType(resultType) && isRefType(armType) {
+						return wtAnyRef
+					} else if isRefType(armType) {
+						// resultType is concrete (e.g., i64), armType is ref (e.g., anyref from tail call)
+						// Keep concrete type — the ref arm likely uses return_call
+						continue
+					} else if isRefType(resultType) {
+						// armType is concrete
+						resultType = armType
+					} else {
+						// Both concrete but different — unexpected
+						return wtAnyRef
+					}
+				}
+			}
+			return resultType
 		}
 	case ir.CLambda:
 		return wtRef
@@ -1256,7 +1410,7 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 	case ir.CTuple:
 		return wtTupleRef(len(e.Items))
 	}
-	return wtI64
+	return wtAnyRef
 }
 
 func (g *watGen) typeOfExpr(expr ir.Expr) string {
@@ -1268,7 +1422,7 @@ func (g *watGen) typeOfExpr(expr ir.Expr) string {
 	case ir.ELet:
 		return g.typeOfExpr(e.Body)
 	}
-	return wtI64
+	return wtAnyRef
 }
 
 // ---------------------------------------------------------------------------
@@ -1406,6 +1560,10 @@ func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 			if err := g.emitAtom(e.Arg); err != nil {
 				return err
 			}
+			// Box field if the struct expects anyref
+			if ci.fieldTypes[0] == wtAnyRef {
+				g.emitBox(g.typeOfAtom(e.Arg))
+			}
 			g.indent--
 			g.line(")")
 			return nil
@@ -1421,7 +1579,14 @@ func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 			if err := g.emitAtom(e.Arg); err != nil {
 				return err
 			}
-			if tail {
+			// Convert arg type to match param type
+			argType := g.typeOfAtom(e.Arg)
+			if argType != fi.params[0].wasmType {
+				g.emitConvert(argType, fi.params[0].wasmType)
+			}
+			// Only use return_call if callee's return type matches caller's
+			canTailCall := tail && g.currentFunc != nil && fi.retType == g.currentFunc.retType
+			if canTailCall {
 				g.line("return_call $%s", fi.name)
 			} else {
 				g.line("call $%s", fi.name)
@@ -1447,8 +1612,11 @@ func (g *watGen) emitCallRef(closureVar string, arg ir.Atom) error {
 	if err := g.emitAtom(arg); err != nil {
 		return err
 	}
+	// Box argument to anyref for $ft_apply convention
+	g.emitBox(g.typeOfAtom(arg))
 	g.line("(struct.get $closure $fn (local.get $%s))", closureVar) // funcref
 	g.line("(call_ref $ft_apply)")
+	// Result is anyref — will be unboxed by the caller if needed
 	return nil
 }
 
@@ -1493,12 +1661,19 @@ func (g *watGen) emitLetTail(e ir.ELet, tail bool) error {
 func (g *watGen) trySaturatedCallTail(fi *funcInfo, args []ir.Atom, tempName string, body ir.Expr, tail bool) (error, bool) {
 	if len(args) == fi.arity {
 		// Saturated! Emit direct call
-		for _, arg := range args {
+		for i, arg := range args {
 			if err := g.emitAtom(arg); err != nil {
 				return err, true
 			}
+			// Convert arg type to match the function's param type
+			argType := g.typeOfAtom(arg)
+			paramType := fi.params[i].wasmType
+			if argType != paramType {
+				g.emitConvert(argType, paramType)
+			}
 		}
-		if tail {
+		canTailCall := tail && g.currentFunc != nil && fi.retType == g.currentFunc.retType
+		if canTailCall {
 			g.line("return_call $%s", fi.name)
 		} else {
 			g.line("call $%s", fi.name)
@@ -1522,9 +1697,14 @@ func (g *watGen) trySaturatedCallTail(fi *funcInfo, args []ir.Atom, tempName str
 				newArgs := append(args, app.Arg)
 				if len(newArgs) == fi.arity {
 					// Saturated! Emit call, then set temp and continue
-					for _, arg := range newArgs {
+					for i, arg := range newArgs {
 						if err := g.emitAtom(arg); err != nil {
 							return err, true
+						}
+						argType := g.typeOfAtom(arg)
+						paramType := fi.params[i].wasmType
+						if argType != paramType {
+							g.emitConvert(argType, paramType)
 						}
 					}
 					g.line("call $%s", fi.name)
@@ -1579,9 +1759,13 @@ func (g *watGen) trySaturatedCtor(ci *ctorInfo, args []ir.Atom, tempName string,
 		g.line("(struct.new $%s_%s", ci.typeName, ci.name)
 		g.indent++
 		g.line("(i32.const %d)", ci.tag)
-		for _, arg := range args {
+		for i, arg := range args {
 			if err := g.emitAtom(arg); err != nil {
 				return err, true
+			}
+			// Box field if the struct expects anyref
+			if i < len(ci.fieldTypes) && ci.fieldTypes[i] == wtAnyRef {
+				g.emitBox(g.typeOfAtom(arg))
 			}
 		}
 		g.indent--
@@ -1608,9 +1792,13 @@ func (g *watGen) trySaturatedCtor(ci *ctorInfo, args []ir.Atom, tempName string,
 					g.line("(struct.new $%s_%s", ci.typeName, ci.name)
 					g.indent++
 					g.line("(i32.const %d)", ci.tag)
-					for _, arg := range newArgs {
+					for i, arg := range newArgs {
 						if err := g.emitAtom(arg); err != nil {
 							return err, true
+						}
+						// Box field if the struct expects anyref
+						if i < len(ci.fieldTypes) && ci.fieldTypes[i] == wtAnyRef {
+							g.emitBox(g.typeOfAtom(arg))
 						}
 					}
 					g.indent--
@@ -1831,12 +2019,14 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.line("(then")
 				g.indent++
 			}
-			// Bind head if PVar
+			// Bind head if PVar — unbox from anyref to concrete type
 			if pv, ok := pat.Head.(ir.PVar); ok {
 				if err := g.emitAtom(scrut); err != nil {
 					return err
 				}
 				g.line("(struct.get $list_cons $head (ref.cast (ref $list_cons)))")
+				headType := g.locals[pv.Name]
+				g.emitUnbox(headType)
 				g.line("local.set $%s", pv.Name)
 			}
 			// Bind tail if PVar
@@ -1858,7 +2048,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 			}
 
 		case ir.PTuple:
-			// Tuple pattern: extract each field
+			// Tuple pattern: extract each field — unbox from anyref
 			for fi, subPat := range pat.Pats {
 				if pv, ok := subPat.(ir.PVar); ok {
 					arity := len(pat.Pats)
@@ -1866,6 +2056,8 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 						return err
 					}
 					g.line("(struct.get $tuple%d $f%d)", arity, fi)
+					fieldType := g.locals[pv.Name]
+					g.emitUnbox(fieldType)
 					g.line("local.set $%s", pv.Name)
 				}
 			}
@@ -1897,8 +2089,18 @@ func (g *watGen) emitPatternBindings(scrutName string, ci *ctorInfo, pats []ir.P
 		case ir.PVar:
 			// Extract field i from the constructor struct
 			ctorType := fmt.Sprintf("$%s_%s", ci.typeName, ci.name)
-			g.line("(local.set $%s (struct.get %s $f%d (ref.cast (ref %s) (local.get $%s))))",
-				p.Name, ctorType, i, ctorType, scrutName)
+			g.line("(struct.get %s $f%d (ref.cast (ref %s) (local.get $%s)))",
+				ctorType, i, ctorType, scrutName)
+			// Unbox from anyref if needed
+			fieldType := wtAnyRef
+			if i < len(ci.fieldTypes) {
+				fieldType = ci.fieldTypes[i]
+			}
+			localType := g.locals[p.Name]
+			if fieldType == wtAnyRef && localType != wtAnyRef {
+				g.emitUnbox(localType)
+			}
+			g.line("local.set $%s", p.Name)
 		case ir.PWild:
 			// Skip
 		default:
@@ -1928,6 +2130,8 @@ func (g *watGen) emitList(e ir.CList) error {
 		if err := g.emitAtom(e.Items[i]); err != nil {
 			return err
 		}
+		// Box the element to anyref for polymorphic storage
+		g.emitBox(g.typeOfAtom(e.Items[i]))
 	}
 	// Innermost tail is nil
 	g.line("(struct.new $list (i32.const 0))")
@@ -1948,6 +2152,8 @@ func (g *watGen) emitTuple(e ir.CTuple) error {
 		if err := g.emitAtom(item); err != nil {
 			return err
 		}
+		// Box the element to anyref for polymorphic storage
+		g.emitBox(g.typeOfAtom(item))
 	}
 	g.indent--
 	g.line(")")
@@ -1974,8 +2180,10 @@ func (g *watGen) emitClosureCreate(lam ir.CLambda) error {
 			g.indent++
 			g.funcRefs[lf.name] = true
 			g.line("(ref.func %s)", lf.name)
-			for _, cap := range lf.captures {
+			for j, cap := range lf.captures {
 				g.line("(local.get $%s)", cap)
+				// Box capture to anyref for polymorphic closure storage
+				g.emitBox(lf.capTypes[j])
 			}
 			g.indent--
 			g.line(")")
@@ -1989,20 +2197,16 @@ func (g *watGen) emitClosureCreate(lam ir.CLambda) error {
 // emitFuncWrapper generates a wrapper function that allows a top-level function
 // to be called through the closure calling convention ($ft_apply).
 func (g *watGen) emitFuncWrapper(fi *funcInfo, wrapperName string) {
-	// Wrapper must match $ft_apply exactly (same type index from rec group)
-	g.line("(func %s (type $ft_apply) (param $self (ref null $closure)) (param $arg i64) (result i64)",
+	// Wrapper must match $ft_apply exactly: (ref null $closure, anyref) -> anyref
+	g.line("(func %s (type $ft_apply) (param $self (ref null $closure)) (param $arg (ref null any)) (result (ref null any))",
 		wrapperName)
 	g.indent++
-	// Convert arg from i64 to the function's expected param type if needed
+	// Unbox arg from anyref to the function's expected param type
 	g.line("local.get $arg")
-	if fi.params[0].wasmType != wtI64 {
-		g.emitConvert(wtI64, fi.params[0].wasmType)
-	}
+	g.emitUnbox(fi.params[0].wasmType)
 	g.line("call $%s", fi.name)
-	// Convert return to i64 if needed
-	if fi.retType != wtI64 {
-		g.emitConvert(fi.retType, wtI64)
-	}
+	// Box return to anyref
+	g.emitBox(fi.retType)
 	g.indent--
 	g.line(")")
 }
@@ -2012,13 +2216,41 @@ func (g *watGen) emitFuncWrapper(fi *funcInfo, wrapperName string) {
 // ---------------------------------------------------------------------------
 
 func (g *watGen) emitBinop(e ir.CBinop) error {
-	opType := g.typeOfAtom(e.Left)
+	leftType := g.typeOfAtom(e.Left)
+	rightType := g.typeOfAtom(e.Right)
 
+	// Resolve anyref operands: try to determine the concrete type from the other operand
+	// or from the operation context (arithmetic → i64, string ops → string)
+	opType := leftType
+	if opType == wtAnyRef {
+		opType = rightType
+	}
+	// If both are anyref, try to determine from the binop kind
+	if opType == wtAnyRef {
+		switch e.Op {
+		case "Add", "Sub", "Mul", "Div", "Mod", "Lt", "Gt", "Leq", "Geq":
+			opType = wtI64 // default arithmetic type
+		case "And", "Or":
+			opType = wtI32
+		case "Eq", "Neq":
+			opType = wtI64 // default equality type
+		}
+	}
+
+	// Emit left operand, unboxing from anyref if needed
 	if err := g.emitAtom(e.Left); err != nil {
 		return err
 	}
+	if leftType == wtAnyRef && opType != wtAnyRef {
+		g.emitUnbox(opType)
+	}
+
+	// Emit right operand, unboxing from anyref if needed
 	if err := g.emitAtom(e.Right); err != nil {
 		return err
+	}
+	if rightType == wtAnyRef && opType != wtAnyRef {
+		g.emitUnbox(opType)
 	}
 
 	switch e.Op {
@@ -2105,7 +2337,25 @@ func (g *watGen) emitIf(e ir.CIf) error {
 }
 
 func (g *watGen) emitIfTail(e ir.CIf, tail bool) error {
-	resultType := g.typeOfExpr(e.Then)
+	thenType := g.typeOfExpr(e.Then)
+	elseType := g.typeOfExpr(e.Else)
+	resultType := thenType
+	if thenType != elseType {
+		// Use function return type when in tail position and types disagree
+		if g.currentFunc != nil {
+			resultType = g.currentFunc.retType
+		} else {
+			// For ref types, anyref is the common supertype
+			// For non-ref types that differ, pick the concrete one
+			if isRefType(thenType) && isRefType(elseType) {
+				resultType = wtAnyRef
+			} else if isRefType(thenType) {
+				resultType = elseType
+			} else {
+				resultType = thenType
+			}
+		}
+	}
 	if err := g.emitAtom(e.Cond); err != nil {
 		return err
 	}
