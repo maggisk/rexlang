@@ -154,7 +154,7 @@ rngActor = spawn \_ ->
 -- | Random int in [lo, hi] inclusive (uses actor).
 export
 randomInt : Int -> Int -> Int
-randomInt lo hi = call rngActor (\me -> ReqInt lo hi me)
+randomInt lo hi = call rngActor (ReqInt lo hi)
 
 test "randomInt works" =
     let n = randomInt 1 100
@@ -165,7 +165,7 @@ test "randomInt works" =
 -- | Random float in [0.0, 1.0) (uses actor).
 export
 randomFloat : () -> Float
-randomFloat _ = call rngActor (\me -> ReqFloat me)
+randomFloat _ = call rngActor ReqFloat
 
 test "randomFloat works" =
     let f = randomFloat ()
@@ -176,7 +176,7 @@ test "randomFloat works" =
 -- | Random bool (uses actor).
 export
 randomBool : () -> Bool
-randomBool _ = call rngActor (\me -> ReqBool me)
+randomBool _ = call rngActor ReqBool
 
 test "randomBool works" =
     let val = randomBool ()
