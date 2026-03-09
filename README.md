@@ -442,6 +442,7 @@ Non-exhaustive patterns are caught at compile time — `match` expressions on AD
 | `Std:Net` | TCP networking: `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener` — opaque `Listener`/`Conn` types; all operations return `Result` |
 | `Std:Random` | Pure seed-based RNG (`rngMake`, `rngInt`, `rngFloat`, `rngBool`, `rngList`) and actor facade (`randomInt`, `randomFloat`, `randomBool`, `shuffle`) — xorshift32; opaque `Rng` type |
 | `Std:Bitwise` | `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shiftLeft`, `shiftRight` — bitwise operations on `Int` |
+| `Std:DateTime` | `now`, `fromMillis`, `fromParts`, `fromLocalParts`, `parse`, `toMillis`, `toParts`, `toLocalParts`, `format`, `formatLocal`, `weekday`, `add`, `sub`, `diff`; duration constructors `milliseconds`, `seconds`, `minutes`, `hours`, `days`; opaque `Instant`/`Duration` types, `DateTimeParts` record, `Weekday` ADT |
 
 ## Examples
 
@@ -512,14 +513,14 @@ go test ./...
 - [x] JSON decoder combinators — `Std:Json.Decode` with Elm-style `field`, `map2`, `oneOf`, `andThen`, `list`, `dict`, `maybe`
 - [x] TCP networking — `Std:Net` with `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener`
 - [x] Random numbers — `Std:Random` with pure seed-based API and actor facade; `randomInt`, `randomFloat`, `randomBool`, `shuffle`
-- [ ] Date/Time
+- [x] Date/Time — `Std:DateTime` with `Instant`/`Duration` opaque types, Temporal-inspired API, pure Rex calendar math
 
 ### Tooling
 
 - [x] `--types` — type query for files and stdlib modules
 - [ ] Installable `rex` CLI (`go install`)
-- [ ] REPL history (`readline`)
-- [ ] Better error messages with source locations
+- [x] REPL history — readline with `~/.rexlang_history`, arrow keys, Ctrl-R search
+- [x] Better error messages — type errors now include source line numbers
 
 ### Compilation
 

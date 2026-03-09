@@ -33,7 +33,7 @@ internal/
     builtins_core.go  All builtins: core, math, string, IO, env, JSON
   stdlib/
     embed.go       //go:embed all:rexfiles; Source(name) string (dots → subdirs)
-    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Json/Decode, Process, Parallel, Stream, Convert, Net, Random, Bitwise)
+    rexfiles/      .rex stdlib files (Prelude, List, Map, String, Math, IO, Env, Result, Json, Json/Decode, Process, Parallel, Stream, Convert, Net, Random, Bitwise, DateTime)
 ```
 
 ## Development commands
@@ -226,7 +226,7 @@ export opaque type Rng = | Rng Int
 - [x] Net — TCP networking: `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener`; opaque `Listener` and `Conn` types; all operations return `Result`; `tcpListen` returns `(Listener, Int)` tuple for port-0 usage
 - [x] Random — `Std:Random` with pure seed-based API (`rngMake`, `rngInt`, `rngFloat`, `rngBool`, `rngList`) and actor facade (`randomInt`, `randomFloat`, `randomBool`, `shuffle`); xorshift32 algorithm; opaque `Rng` type; one Go builtin (`systemSeed`)
 - [x] Bitwise — `Std:Bitwise` with `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shiftLeft`, `shiftRight`; all operate on `Int`; Go builtins
-- Date/Time (even basic)
+- [x] DateTime — `Std:DateTime` with `Instant`/`Duration` opaque types, `DateTimeParts` record, `Weekday` ADT; pure Rex calendar math (Hinnant algorithm), formatting/parsing; 2 Go builtins (`dateTimeNow`, `dateTimeUtcOffset`)
 
 ### Language ergonomics
 
@@ -241,7 +241,8 @@ export opaque type Rng = | Rng Int
 
 ### Error experience
 
-- Better error messages — source locations, span info
+- [x] Type error line numbers — `TypeError` carries `Line`; AST nodes (`App`, `Binop`, `Fun`, `ListLit`, `TupleLit`, `RecordCreate`, `FieldAccess`, `RecordUpdate`, `StringInterp`, `UnaryMinus`) now track source line; `infer()` defer-wraps errors with line info from expression context
+- Better error messages — span info, column info, source snippets (follow-up)
 - Stack traces on runtime errors (maybe)
 
 ### Compilation
@@ -253,7 +254,7 @@ export opaque type Rng = | Rng Int
 
 - `go install` support for the `rex` CLI
 - Polish README (installation instructions, more examples)
-- REPL history (`readline` + `~/.rexlang_history`)
+- [x] REPL history — `github.com/chzyer/readline` with `~/.rexlang_history`, arrow keys, Ctrl-R search, Ctrl-C to cancel input
 
 ## Key decisions already made
 
@@ -290,3 +291,4 @@ export opaque type Rng = | Rng Int
 - **Std:Bitwise**: Six Go builtins: `bitAnd`, `bitOr`, `bitXor` (`Int -> Int -> Int`), `bitNot` (`Int -> Int`), `shiftLeft`, `shiftRight` (`Int -> Int -> Int`). Named functions instead of operators — avoids `|` conflict with ADT syntax and keeps rarely-used operations out of operator space.
 - **Std:Random**: Pure seed-based RNG with actor facade. One Go builtin (`systemSeed` — uses `math/rand/v2` for crypto-seeded entropy). Algorithm: xorshift32 (three XOR-shifts, masked to 32 bits), period ~2^32. Opaque `Rng` type hides internal state. Pure API: `rngMake` (seed → Rng), `rngInt` (range), `rngFloat` ([0,1)), `rngBool`, `rngList` (generate n values) — each returns `(value, newRng)` for deterministic threading. Actor facade: module-level actor holds Rng state; `randomInt`/`randomFloat`/`randomBool`/`shuffle` use `call` for convenient stateful API. `shuffle` uses Fisher-Yates selection. Imports `Std:Math (toFloat)` for float conversion and `Std:Process` for actor primitives. For concurrent programs, use the pure seed-based API (give each goroutine its own `Rng`).
 - **Opaque types**: `export opaque type Email = Email String` — exports the type name (for annotations via `TypeDefs`) but hides constructors from importers. Consumers can't construct, pattern match, or access fields of opaque types directly — they must use exported smart constructors and accessor functions. `opaque` is a keyword; only valid as `export opaque type`. Works with both ADTs and records. In `CheckModule`/`loadModule`, opaque constructors are excluded from the exports set, and opaque record fields are excluded from propagated `__record_fields__`. `__ctor_families__` entries for opaque constructors are also filtered out to prevent pattern matching. `TypeDefs` still propagates the type name so annotations like `Email -> String` work. Trait instances on opaque types propagate normally (e.g., `impl Show Email` works for callers). Tests in `internal/typechecker/opaque_test.go` and `examples/user_modules/src/Email.rex`.
+- **Std:DateTime**: Inspired by JS Temporal API. Two Go builtins: `dateTimeNow` (returns Unix millis as Int) and `dateTimeUtcOffset` (returns local UTC offset in minutes). Everything else is pure Rex — calendar math uses Howard Hinnant's civil time algorithm (public domain, with yoe clamp fix for era boundaries). Opaque types: `Instant` (millis since epoch) and `Duration` (millis). `DateTimeParts` record: `{ year, month, day, hour, minute, second, millisecond : Int }`. `Weekday` ADT: `Monday | Tuesday | ... | Sunday`. Public API: `now`, `fromMillis`, `fromParts`, `fromLocalParts`, `parse` (format string), `toMillis`, `toParts`, `toLocalParts`, `format`, `formatLocal`, `weekday`, duration constructors (`milliseconds`/`seconds`/`minutes`/`hours`/`days`), `toMilliseconds`/`toSeconds`, `add`/`sub`/`diff`. Format tokens: `YYYY`, `MM`, `DD`, `HH`, `mm`, `ss`, `SSS`. Trait instances: `Show`/`Eq`/`Ord` for `Instant`, `Duration`, `Weekday`. Pipe-friendly: last argument is always "self". Designed to map naturally to JS Temporal for future Wasm browser backend (host imports instead of pure Rex).
