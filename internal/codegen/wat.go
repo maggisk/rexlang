@@ -42,6 +42,7 @@ func EmitWAT(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		traitMethods:  make(map[string]traitMethodInfo),
 		implFuncs:     make(map[string]*funcInfo),
 		implBodies:    make(map[string]ir.Expr),
+		dispatchFuncs: make(map[string]*dispatchFuncDef),
 	}
 	return g.emit(prog)
 }
@@ -96,6 +97,20 @@ type traitMethodInfo struct {
 	methodName string
 }
 
+// dispatchFuncDef defines runtime dispatch for a trait method.
+// Generated as: resolve function (br_on_cast → funcref) + dispatch function (resolve + call_ref).
+type dispatchFuncDef struct {
+	name       string // e.g. "dispatch_show"
+	methodName string // e.g. "show"
+	arity      int    // number of args the trait method takes
+	implCases  []dispatchCase
+}
+
+type dispatchCase struct {
+	typeName string // Rex type name ("Int", "Float", "List", etc.)
+	implName string // impl function name ("Show_Int_show")
+}
+
 type watGen struct {
 	buf     *strings.Builder
 	indent  int
@@ -125,9 +140,10 @@ type watGen struct {
 	usesTuples map[int]bool // tuple arity → true
 
 	// trait dispatch
-	traitMethods map[string]traitMethodInfo // method name → trait info ("show" → Show)
-	implFuncs    map[string]*funcInfo       // "Show_Int_show" → generated func info
-	implBodies   map[string]ir.Expr         // "Show_Int_show" → impl method body
+	traitMethods  map[string]traitMethodInfo  // method name → trait info ("show" → Show)
+	implFuncs     map[string]*funcInfo        // "Show_Int_show" → generated func info
+	implBodies    map[string]ir.Expr          // "Show_Int_show" → impl method body
+	dispatchFuncs map[string]*dispatchFuncDef // "dispatch_show" → dispatch function def
 
 	// current function context
 	currentFunc *funcInfo
@@ -598,6 +614,10 @@ func (g *watGen) analyzeTraits(prog *ir.Program) {
 	}
 
 	// Process impls — generate impl function entries
+	// Also track which impls exist per (traitName, methodName) for dispatch
+	type methodKey struct{ trait, method string }
+	implsByMethod := map[methodKey][]dispatchCase{}
+
 	for _, d := range prog.Decls {
 		di, ok := d.(ir.DImpl)
 		if !ok {
@@ -605,7 +625,6 @@ func (g *watGen) analyzeTraits(prog *ir.Program) {
 		}
 		for _, m := range di.Methods {
 			implName := di.TraitName + "_" + di.TargetTypeName + "_" + m.Name
-			// Look up the trait method's scheme to determine the impl function's type
 			fi := g.analyzeImplMethod(implName, di.TraitName, di.TargetTypeName, m)
 			if fi != nil {
 				g.implFuncs[implName] = fi
@@ -614,7 +633,41 @@ func (g *watGen) analyzeTraits(prog *ir.Program) {
 				if fi.arity > 1 && fi.arity-1 > g.maxCaps {
 					g.maxCaps = fi.arity - 1
 				}
+				key := methodKey{di.TraitName, m.Name}
+				implsByMethod[key] = append(implsByMethod[key], dispatchCase{
+					typeName: di.TargetTypeName,
+					implName: implName,
+				})
 			}
+		}
+	}
+
+	// Build dispatch functions for each trait method
+	for methodName, tmInfo := range g.traitMethods {
+		key := methodKey{tmInfo.traitName, tmInfo.methodName}
+		cases := implsByMethod[key]
+		if len(cases) == 0 {
+			continue
+		}
+		// Use the first impl's funcInfo to determine arity and return type
+		firstImpl := g.implFuncs[cases[0].implName]
+		dispName := "dispatch_" + methodName
+		g.dispatchFuncs[dispName] = &dispatchFuncDef{
+			name:       dispName,
+			methodName: methodName,
+			arity:      firstImpl.arity,
+			implCases:  cases,
+		}
+		// Register a funcInfo so trySaturatedCallTail can use it
+		dispParams := make([]paramInfo, firstImpl.arity)
+		for i := range dispParams {
+			dispParams[i] = paramInfo{name: fmt.Sprintf("a%d", i), wasmType: wtAnyRef}
+		}
+		g.funcs[dispName] = &funcInfo{
+			name:    dispName,
+			arity:   firstImpl.arity,
+			params:  dispParams,
+			retType: wtAnyRef,
 		}
 	}
 }
@@ -686,6 +739,184 @@ func (g *watGen) analyzeImplMethod(implName, traitName, targetTypeName string, m
 	return fi
 }
 
+// castRefType returns the WAT ref type for br_on_cast targeting a Rex type name.
+// Returns "" if the type cannot be tested at runtime.
+func (g *watGen) castRefType(typeName string) string {
+	switch typeName {
+	case "Int":
+		return "(ref $box_i64)"
+	case "Float":
+		return "(ref $box_f64)"
+	case "Bool":
+		return "(ref i31)"
+	case "String":
+		return "(ref $string)"
+	case "List":
+		return "(ref $list)"
+	case "Unit":
+		// Unit is encoded as i31ref with value 0 — same as Bool false
+		// Can't distinguish at runtime from Bool, skip for now
+		return ""
+	default:
+		// Check if it's an ADT with a supertype
+		if _, ok := g.adts[typeName]; ok {
+			return fmt.Sprintf("(ref $%s)", typeName)
+		}
+		return ""
+	}
+}
+
+type dispatchImplCase struct {
+	dc dispatchCase
+	fi *funcInfo
+}
+
+// emitDispatchFuncs emits resolve, dispatch, and wrapper functions for trait methods.
+//
+// For each trait method (e.g. "show") with impls, we generate:
+//   - $Show_Int_show__wrap: wrapper that takes/returns anyref, unboxes, calls real impl, boxes
+//   - $resolve_show: uses br_on_cast to return the right wrapper funcref
+//   - $dispatch_show: calls resolve then call_ref (thin wrapper)
+func (g *watGen) emitDispatchFuncs() error {
+	dispNames := make([]string, 0, len(g.dispatchFuncs))
+	for name := range g.dispatchFuncs {
+		dispNames = append(dispNames, name)
+	}
+	sortStrings(dispNames)
+
+	for _, name := range dispNames {
+		df := g.dispatchFuncs[name]
+		cases := g.filterDispatchCases(df)
+		if len(cases) == 0 {
+			continue
+		}
+
+		// Emit wrapper functions for each impl
+		for _, c := range cases {
+			g.emitImplWrapper(c, df)
+			g.line("")
+		}
+
+		// Emit resolve function (br_on_cast → funcref)
+		g.emitResolveFunc(df, cases)
+		g.line("")
+
+		// Emit dispatch function (resolve + call_ref)
+		g.emitDispatchFunc(df)
+		g.line("")
+	}
+	return nil
+}
+
+func (g *watGen) filterDispatchCases(df *dispatchFuncDef) []dispatchImplCase {
+	var cases []dispatchImplCase
+	for _, dc := range df.implCases {
+		castType := g.castRefType(dc.typeName)
+		if castType == "" {
+			continue
+		}
+		fi := g.implFuncs[dc.implName]
+		if fi == nil {
+			continue
+		}
+		cases = append(cases, dispatchImplCase{dc, fi})
+	}
+	return cases
+}
+
+// emitImplWrapper emits a wrapper function that takes/returns anyref,
+// unboxes args, calls the real impl, and boxes the result.
+func (g *watGen) emitImplWrapper(c dispatchImplCase, df *dispatchFuncDef) {
+	wrapName := c.dc.implName + "__wrap"
+	ftName := fmt.Sprintf("$ft_trait_%s", df.methodName)
+	g.line("(func $%s (type %s)", wrapName, ftName)
+	g.indent++
+
+	// Unbox each param and call the real impl
+	for j := 0; j < c.fi.arity; j++ {
+		g.line("(local.get %d)", j)
+		g.emitUnbox(c.fi.params[j].wasmType)
+	}
+	g.line("(call $%s)", c.fi.name)
+	g.emitBox(c.fi.retType)
+
+	g.indent--
+	g.line(")")
+
+	// Register funcref for elem declare (with $ prefix)
+	g.funcRefs["$"+wrapName] = true
+}
+
+// emitResolveFunc emits a function that uses br_on_cast to determine the
+// concrete type and returns the corresponding wrapper funcref.
+func (g *watGen) emitResolveFunc(df *dispatchFuncDef, cases []dispatchImplCase) {
+	ftName := fmt.Sprintf("$ft_trait_%s", df.methodName)
+	g.line("(func $resolve_%s (param $obj (ref null any)) (result (ref %s))", df.methodName, ftName)
+	g.indent++
+
+	// Outer block catches the funcref from inner handlers
+	g.line("(block $done (result (ref %s))", ftName)
+	g.indent++
+
+	// Emit nested blocks: one per case (outermost = last case)
+	// The innermost block contains the br_on_cast instructions
+	for i := len(cases) - 1; i >= 0; i-- {
+		castType := g.castRefType(cases[i].dc.typeName)
+		g.line("(block $case_%d (result %s)", i, castType)
+		g.indent++
+	}
+
+	// The innermost code: load obj and try each cast
+	g.line("(local.get $obj)")
+	for i := range cases {
+		castType := g.castRefType(cases[i].dc.typeName)
+		g.line("(br_on_cast $case_%d anyref %s)", i, castType)
+	}
+	g.line("(unreachable)")
+
+	// Close blocks and emit handlers (innermost first)
+	for i := range cases {
+		g.indent--
+		g.line(") ;; end $case_%d", i)
+		// The casted value is on the stack — drop it, push funcref
+		g.line("(drop)")
+		wrapName := cases[i].dc.implName + "__wrap"
+		g.line("(ref.func $%s)", wrapName)
+		g.line("(br $done)")
+	}
+
+	g.indent--
+	g.line(") ;; end $done")
+
+	g.indent--
+	g.line(")")
+}
+
+// emitDispatchFunc emits a thin dispatch function that calls resolve then call_ref.
+func (g *watGen) emitDispatchFunc(df *dispatchFuncDef) error {
+	params := ""
+	for i := 0; i < df.arity; i++ {
+		params += fmt.Sprintf(" (param $a%d (ref null any))", i)
+	}
+	ftName := fmt.Sprintf("$ft_trait_%s", df.methodName)
+	g.line("(func $%s%s (result (ref null any))", df.name, params)
+	g.indent++
+
+	// Push args for call_ref
+	for i := 0; i < df.arity; i++ {
+		g.line("(local.get $a%d)", i)
+	}
+	// Resolve funcref based on first arg's type
+	g.line("(local.get $a0)")
+	g.line("(call $resolve_%s)", df.methodName)
+	// Call the resolved funcref
+	g.line("(call_ref %s)", ftName)
+
+	g.indent--
+	g.line(")")
+	return nil
+}
+
 // rexNameToType converts a Rex type name (e.g. "Int", "String") to a types.Type.
 func (g *watGen) rexNameToType(name string) types.Type {
 	return types.TCon{Name: name}
@@ -725,6 +956,12 @@ func (g *watGen) rexTypeName(a ir.Atom) string {
 			return "Bool"
 		case wtStringRef:
 			return "String"
+		case wtListRef:
+			return "List"
+		}
+		// Check tuple refs
+		if len(wt) > 15 && wt[:15] == "(ref null $tupl" {
+			return "Tuple" // TODO: extract arity for TupleN
 		}
 		// Check if it's a zero-arg constructor
 		if ci, ok := g.ctorToAdt[v.Name]; ok && len(ci.fieldTypes) == 0 {
@@ -817,6 +1054,11 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 		g.line("")
 	}
 
+	// Emit runtime dispatch functions
+	if err := g.emitDispatchFuncs(); err != nil {
+		return "", err
+	}
+
 	// Emit lifted lambdas
 	for _, lf := range g.lambdas {
 		if err := g.emitLambdaFunc(&lf); err != nil {
@@ -883,7 +1125,7 @@ func (g *watGen) needsClosures() bool {
 }
 
 func (g *watGen) needsGCTypes() bool {
-	return g.needsClosures() || len(g.adts) > 0 || len(g.stringData) > 0 || g.usesLists || len(g.usesTuples) > 0
+	return g.needsClosures() || len(g.adts) > 0 || len(g.stringData) > 0 || g.usesLists || len(g.usesTuples) > 0 || len(g.dispatchFuncs) > 0
 }
 
 // ---------------------------------------------------------------------------
@@ -900,6 +1142,24 @@ func (g *watGen) emitGCTypes() {
 	g.line(";; Box types")
 	g.line("(type $box_i64 (struct (field $val i64)))")
 	g.line("(type $box_f64 (struct (field $val f64)))")
+
+	// Trait dispatch functypes
+	if len(g.dispatchFuncs) > 0 {
+		g.line(";; Trait dispatch functypes")
+		dispNames := make([]string, 0, len(g.dispatchFuncs))
+		for name := range g.dispatchFuncs {
+			dispNames = append(dispNames, name)
+		}
+		sortStrings(dispNames)
+		for _, name := range dispNames {
+			df := g.dispatchFuncs[name]
+			params := ""
+			for i := 0; i < df.arity; i++ {
+				params += " (param (ref null any))"
+			}
+			g.line("(type $ft_trait_%s (func%s (result (ref null any))))", df.methodName, params)
+		}
+	}
 
 	// String type
 	if len(g.stringData) > 0 {
@@ -934,20 +1194,19 @@ func (g *watGen) emitGCTypes() {
 
 		for _, adtName := range adtNames {
 			ai := g.adts[adtName]
+			// Per-ADT supertype: allows ref.test to match any constructor of this ADT
+			g.line("(type $%s (sub $adt (struct (field $tag i32))))", adtName)
 			for _, ci := range ai.ctors {
 				if len(ci.fieldTypes) == 0 {
-					// Zero-arg constructor: just the base $adt type with tag is fine,
-					// but define a named subtype for clarity
-					g.line("(type $%s_%s (sub $adt (struct (field $tag i32))))",
-						adtName, ci.name)
+					g.line("(type $%s_%s (sub $%s (struct (field $tag i32))))",
+						adtName, ci.name, adtName)
 				} else {
-					// Constructor with fields
 					fields := "(field $tag i32)"
 					for i, ft := range ci.fieldTypes {
 						fields += fmt.Sprintf(" (field $f%d %s)", i, ft)
 					}
-					g.line("(type $%s_%s (sub $adt (struct %s)))",
-						adtName, ci.name, fields)
+					g.line("(type $%s_%s (sub $%s (struct %s)))",
+						adtName, ci.name, adtName, fields)
 				}
 			}
 		}
@@ -1389,6 +1648,13 @@ func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*cto
 							partialTraits[e.Name] = fi
 							localType = fi.retType // saturated call result type
 						}
+					} else {
+						// Fallback: dispatch function
+						dispName := "dispatch_" + tmInfo.methodName
+						if fi, ok := g.funcs[dispName]; ok && fi.arity > 1 {
+							partialTraits[e.Name] = fi
+							localType = wtAnyRef // dispatch returns anyref
+						}
 					}
 				}
 				// If applying a temp that was a partial trait method app
@@ -1574,6 +1840,14 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 						}
 						return wtRef
 					}
+				}
+				// Fallback: dispatch function returns anyref
+				dispName := "dispatch_" + tmInfo.methodName
+				if df, ok := g.dispatchFuncs[dispName]; ok {
+					if df.arity == 1 {
+						return wtAnyRef
+					}
+					return wtRef // partial application returns closure
 				}
 			}
 			if fi, ok := g.funcs[v.Name]; ok {
@@ -1800,6 +2074,17 @@ func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 				return nil
 			}
 		}
+		// Fallback: runtime dispatch when type is unknown
+		dispName := "dispatch_" + tmInfo.methodName
+		if df, ok := g.dispatchFuncs[dispName]; ok && df.arity == 1 {
+			if err := g.emitAtom(e.Arg); err != nil {
+				return err
+			}
+			at := g.typeOfAtom(e.Arg)
+			g.emitConvert(at, wtAnyRef)
+			g.line("call $%s", dispName)
+			return nil
+		}
 	}
 
 	// Constructor application (single-arg constructors)
@@ -1895,6 +2180,13 @@ func (g *watGen) emitLetTail(e ir.ELet, tail bool) error {
 						if result, ok := g.trySaturatedCallTail(fi, []ir.Atom{app.Arg}, e.Name, e.Body, tail); ok {
 							return result
 						}
+					}
+				}
+				// Fallback: runtime dispatch when type is unknown
+				dispName := "dispatch_" + tmInfo.methodName
+				if fi, ok := g.funcs[dispName]; ok && fi.arity > 1 {
+					if result, ok := g.trySaturatedCallTail(fi, []ir.Atom{app.Arg}, e.Name, e.Body, tail); ok {
+						return result
 					}
 				}
 			}

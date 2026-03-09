@@ -1019,3 +1019,85 @@ main _ = toInt Green
 		t.Fatalf("expected exit 2, got %d", got)
 	}
 }
+
+func TestE2ETraitRuntimeDispatch(t *testing.T) {
+	// Polymorphic function calls trait method — type only known at runtime
+	code := `
+trait ToInt a where
+    toInt : a -> Int
+
+impl ToInt Int where
+    toInt n = n
+
+impl ToInt Bool where
+    toInt b =
+        if b then
+            1
+        else
+            0
+
+applyToInt x = toInt x
+
+main _ = applyToInt 42
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2ETraitRuntimeDispatchBool(t *testing.T) {
+	// Runtime dispatch selects Bool impl
+	code := `
+trait ToInt a where
+    toInt : a -> Int
+
+impl ToInt Int where
+    toInt n = n
+
+impl ToInt Bool where
+    toInt b =
+        if b then
+            1
+        else
+            0
+
+applyToInt x = toInt x
+
+main _ = applyToInt true
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
+
+func TestE2ETraitRuntimeDispatchArity2(t *testing.T) {
+	// Runtime dispatch for arity-2 trait method (eq)
+	code := `
+trait Eq a where
+    eq : a -> a -> Bool
+
+impl Eq Int where
+    eq x y = x == y
+
+impl Eq Bool where
+    eq x y =
+        if x then
+            y
+        else
+            if y then
+                false
+            else
+                true
+
+areEqual x y = eq x y
+
+main _ =
+    if areEqual 10 10 then
+        1
+    else
+        0
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
