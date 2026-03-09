@@ -279,13 +279,12 @@ func (l *Lowerer) normalize(expr ast.Expr, k func(Atom) (Expr, error)) (Expr, er
 	case EAtom:
 		return k(e.A)
 	case EComplex:
-		a, err := k(AVar{Name: l.fresh("t")})
+		tmp := l.fresh("t")
+		a, err := k(AVar{Name: tmp})
 		if err != nil {
 			return nil, err
 		}
-		// Extract the temp name from the AVar we passed to k
-		name := l.extractTempName(a)
-		return ELet{Name: name, Bind: e.C, Body: a}, nil
+		return ELet{Name: tmp, Bind: e.C, Body: a}, nil
 	default:
 		// General case: bind to a temp
 		tmp := l.fresh("t")
@@ -295,14 +294,6 @@ func (l *Lowerer) normalize(expr ast.Expr, k func(Atom) (Expr, error)) (Expr, er
 		}
 		return l.wrapExpr(ir, tmp, rest), nil
 	}
-}
-
-// extractTempName looks at the first AVar reference in an expression to find
-// the temp name used. This is a helper for the normalize continuation pattern.
-func (l *Lowerer) extractTempName(expr Expr) string {
-	// The temp name was the last fresh name generated before k was called.
-	// We can recover it from the counter.
-	return fmt.Sprintf("_t%d", l.counter)
 }
 
 // wrapExpr wraps an IR expression in let bindings to make it produce a named atom.
