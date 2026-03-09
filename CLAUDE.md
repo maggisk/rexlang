@@ -261,7 +261,7 @@ Ordered by dependency — each step builds on the previous:
 4. [x] **Functions + closures** — calling convention, closure structs (funcref + captured env), currying via partial application
 5. [x] **ADTs + pattern matching** — `struct` subtypes with tag field, branch on tag + downcast; exhaustiveness already checked
 6. [x] **Strings** — WasmGC `(array (mut i8))` for UTF-8 bytes; data segments for literals; `$string_eq` byte-by-byte comparison; string patterns in match
-7. [ ] **Lists, tuples, records** — struct-based representations
+7. [x] **Lists, tuples** — cons-cell lists (`$list`/`$list_cons` subtypes with tag+head+tail); tuple structs by arity; `PNil`/`PCons`/`PTuple` pattern matching; element type `i64` for now (polymorphic boxing is future work)
 8. [x] **Tail calls** — `return_call` for TCO
 9. [ ] **Stdlib** — recompile pure Rex stdlib; WASI host imports for IO/Net/Env; JS host imports for browser (Temporal API for DateTime)
 10. [ ] **Traits** — runtime dispatch via `funcref` tables or indirect calls

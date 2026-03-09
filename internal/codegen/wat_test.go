@@ -601,3 +601,74 @@ main _ = getLen (Hello "world")
 		t.Fatalf("expected exit 1, got %d", got)
 	}
 }
+
+func TestE2EListLiteral(t *testing.T) {
+	code := `
+length lst =
+    match lst
+        when [] ->
+            0
+        when [_|t] ->
+            1 + length t
+main _ = length [10, 20, 30]
+`
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected exit 3, got %d", got)
+	}
+}
+
+func TestE2EListSum(t *testing.T) {
+	code := `
+sum lst =
+    match lst
+        when [] ->
+            0
+        when [h|t] ->
+            h + sum t
+main _ = sum [10, 20, 12]
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EEmptyList(t *testing.T) {
+	code := `
+isEmpty lst =
+    match lst
+        when [] ->
+            1
+        when _ ->
+            0
+main _ = isEmpty []
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
+
+func TestE2ETuple(t *testing.T) {
+	code := `
+fst p =
+    match p
+        when (a, _) ->
+            a
+main _ = fst (42, 7)
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2ETupleSnd(t *testing.T) {
+	code := `
+snd p =
+    match p
+        when (_, b) ->
+            b
+main _ = snd (10, 32)
+`
+	if got := runWasm(t, code); got != 32 {
+		t.Fatalf("expected exit 32, got %d", got)
+	}
+}

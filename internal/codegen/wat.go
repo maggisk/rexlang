@@ -21,7 +21,8 @@ const (
 	wtF64       = "f64"
 	wtRef       = "(ref null $closure)" // closure reference (nullable for locals)
 	wtAdtRef    = "(ref null $adt)"     // ADT value reference (nullable for locals)
-	wtStringRef = "(ref null $string)"  // string reference (nullable for locals)
+	wtStringRef = "(ref null $string)" // string reference (nullable for locals)
+	wtListRef   = "(ref null $list)"   // list reference (nullable for locals)
 )
 
 // EmitWAT converts an IR program to WAT text.
@@ -36,6 +37,7 @@ func EmitWAT(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		adts:          make(map[string]*adtInfo),
 		ctorToAdt:     make(map[string]*ctorInfo),
 		stringDataIdx: make(map[string]int),
+		usesTuples:    make(map[int]bool),
 	}
 	return g.emit(prog)
 }
@@ -104,8 +106,12 @@ type watGen struct {
 	funcWrappers map[string]string // func name → wrapper name
 
 	// string literal data segments
-	stringData    []string          // ordered unique string values
-	stringDataIdx map[string]int    // string value → index in stringData
+	stringData    []string       // ordered unique string values
+	stringDataIdx map[string]int // string value → index in stringData
+
+	// list/tuple usage tracking
+	usesLists  bool
+	usesTuples map[int]bool // tuple arity → true
 
 	// current function context
 	currentFunc *funcInfo
@@ -133,6 +139,10 @@ func watStringLiteral(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+func wtTupleRef(arity int) string {
+	return fmt.Sprintf("(ref null $tuple%d)", arity)
 }
 
 // internString adds a string literal to the data segment pool and returns its index.
@@ -163,6 +173,10 @@ func (g *watGen) wasmType(t types.Type) string {
 			return wtI32
 		case "String":
 			return wtStringRef
+		case "List":
+			return wtListRef
+		case "Tuple":
+			return wtTupleRef(len(ty.Args))
 		case "Fun":
 			return wtRef
 		default:
@@ -302,12 +316,27 @@ func (g *watGen) scanCExprStrings(c ir.CExpr) {
 		for _, arg := range e.Args {
 			g.scanAtomString(arg)
 		}
+	case ir.CList:
+		g.usesLists = true
+		for _, item := range e.Items {
+			g.scanAtomString(item)
+		}
+	case ir.CTuple:
+		g.usesTuples[len(e.Items)] = true
+		for _, item := range e.Items {
+			g.scanAtomString(item)
+		}
 	}
 }
 
 func (g *watGen) scanPatternStrings(pat ir.Pattern) {
-	if p, ok := pat.(ir.PString); ok {
+	switch p := pat.(type) {
+	case ir.PString:
 		g.internString(p.Value)
+	case ir.PNil, ir.PCons:
+		g.usesLists = true
+	case ir.PTuple:
+		g.usesTuples[len(p.Pats)] = true
 	}
 }
 
@@ -584,7 +613,7 @@ func (g *watGen) needsClosures() bool {
 }
 
 func (g *watGen) needsGCTypes() bool {
-	return g.needsClosures() || len(g.adts) > 0 || len(g.stringData) > 0
+	return g.needsClosures() || len(g.adts) > 0 || len(g.stringData) > 0 || g.usesLists || len(g.usesTuples) > 0
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +675,33 @@ func (g *watGen) emitGCTypes() {
 						adtName, ci.name, fields)
 				}
 			}
+		}
+	}
+
+	// List types
+	if g.usesLists {
+		g.line(";; List types")
+		g.line("(type $list (sub (struct (field $tag i32))))")
+		g.line("(type $list_cons (sub $list (struct (field $tag i32) (field $head i64) (field $tail (ref null $list)))))")
+	}
+
+	// Tuple types
+	if len(g.usesTuples) > 0 {
+		g.line(";; Tuple types")
+		arities := make([]int, 0, len(g.usesTuples))
+		for a := range g.usesTuples {
+			arities = append(arities, a)
+		}
+		sortInts(arities)
+		for _, arity := range arities {
+			fields := ""
+			for i := 0; i < arity; i++ {
+				if fields != "" {
+					fields += " "
+				}
+				fields += fmt.Sprintf("(field $f%d i64)", i)
+			}
+			g.line("(type $tuple%d (struct %s))", arity, fields)
 		}
 	}
 
@@ -1054,6 +1110,24 @@ func (g *watGen) collectPatternLocals(pat ir.Pattern) {
 				g.collectPatternLocals(sub)
 			}
 		}
+	case ir.PCons:
+		// head is i64 (for List Int), tail is list ref
+		if pv, ok := p.Head.(ir.PVar); ok {
+			g.locals[pv.Name] = wtI64
+		}
+		if pv, ok := p.Tail.(ir.PVar); ok {
+			g.locals[pv.Name] = wtListRef
+		}
+		g.collectPatternLocals(p.Head)
+		g.collectPatternLocals(p.Tail)
+	case ir.PTuple:
+		// All tuple fields are i64 for now
+		for _, sub := range p.Pats {
+			if pv, ok := sub.(ir.PVar); ok {
+				g.locals[pv.Name] = wtI64
+			}
+			g.collectPatternLocals(sub)
+		}
 	}
 }
 
@@ -1100,6 +1174,13 @@ func (g *watGen) collectPatternLocalOrder(pat ir.Pattern, names *[]string, seen 
 		}
 	case ir.PCtor:
 		for _, sub := range p.Args {
+			g.collectPatternLocalOrder(sub, names, seen)
+		}
+	case ir.PCons:
+		g.collectPatternLocalOrder(p.Head, names, seen)
+		g.collectPatternLocalOrder(p.Tail, names, seen)
+	case ir.PTuple:
+		for _, sub := range p.Pats {
 			g.collectPatternLocalOrder(sub, names, seen)
 		}
 	}
@@ -1170,6 +1251,10 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 		}
 	case ir.CLambda:
 		return wtRef
+	case ir.CList:
+		return wtListRef
+	case ir.CTuple:
+		return wtTupleRef(len(e.Items))
 	}
 	return wtI64
 }
@@ -1288,6 +1373,10 @@ func (g *watGen) emitCExprTail(c ir.CExpr, tail bool) error {
 		return g.emitClosureCreate(e)
 	case ir.CMatch:
 		return g.emitMatchTail(e, tail)
+	case ir.CList:
+		return g.emitList(e)
+	case ir.CTuple:
+		return g.emitTuple(e)
 	default:
 		return fmt.Errorf("unsupported cexpr: %T", c)
 	}
@@ -1703,6 +1792,87 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				}
 			}
 
+		case ir.PNil:
+			// Empty list: tag == 0
+			if !isLast {
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				g.line("(struct.get $list $tag)")
+				g.line("i32.eqz")
+				g.line("(if (result %s)", resultType)
+				g.indent++
+				g.line("(then")
+				g.indent++
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
+					return err
+				}
+				g.indent--
+				g.line(")")
+				g.line("(else")
+				g.indent++
+			} else {
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
+					return err
+				}
+			}
+
+		case ir.PCons:
+			// Cons cell: tag == 1, bind head and tail
+			if !isLast {
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				g.line("(struct.get $list $tag)")
+				g.line("(i32.const 1)")
+				g.line("i32.eq")
+				g.line("(if (result %s)", resultType)
+				g.indent++
+				g.line("(then")
+				g.indent++
+			}
+			// Bind head if PVar
+			if pv, ok := pat.Head.(ir.PVar); ok {
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				g.line("(struct.get $list_cons $head (ref.cast (ref $list_cons)))")
+				g.line("local.set $%s", pv.Name)
+			}
+			// Bind tail if PVar
+			if pv, ok := pat.Tail.(ir.PVar); ok {
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				g.line("(struct.get $list_cons $tail (ref.cast (ref $list_cons)))")
+				g.line("local.set $%s", pv.Name)
+			}
+			if err := g.emitExprTail(arm.Body, tail); err != nil {
+				return err
+			}
+			if !isLast {
+				g.indent--
+				g.line(")")
+				g.line("(else")
+				g.indent++
+			}
+
+		case ir.PTuple:
+			// Tuple pattern: extract each field
+			for fi, subPat := range pat.Pats {
+				if pv, ok := subPat.(ir.PVar); ok {
+					arity := len(pat.Pats)
+					if err := g.emitAtom(scrut); err != nil {
+						return err
+					}
+					g.line("(struct.get $tuple%d $f%d)", arity, fi)
+					g.line("local.set $%s", pv.Name)
+				}
+			}
+			if err := g.emitExprTail(arm.Body, tail); err != nil {
+				return err
+			}
+
 		default:
 			return fmt.Errorf("codegen: unsupported pattern type %T", pat)
 		}
@@ -1735,6 +1905,52 @@ func (g *watGen) emitPatternBindings(scrutName string, ci *ctorInfo, pats []ir.P
 			return fmt.Errorf("codegen: nested pattern in constructor not yet supported: %T", pat)
 		}
 	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Lists and tuples
+// ---------------------------------------------------------------------------
+
+// emitList creates a cons-cell chain from a CList literal.
+// [1, 2, 3] → cons(1, cons(2, cons(3, nil)))
+func (g *watGen) emitList(e ir.CList) error {
+	if len(e.Items) == 0 {
+		g.line("(struct.new $list (i32.const 0))")
+		return nil
+	}
+
+	// Build nested s-expressions from left to right.
+	// Each cons cell wraps the tail which is the next cons (or nil).
+	for i := 0; i < len(e.Items); i++ {
+		g.line("(struct.new $list_cons (i32.const 1)")
+		g.indent++
+		if err := g.emitAtom(e.Items[i]); err != nil {
+			return err
+		}
+	}
+	// Innermost tail is nil
+	g.line("(struct.new $list (i32.const 0))")
+	// Close all the struct.new parens
+	for i := 0; i < len(e.Items); i++ {
+		g.indent--
+		g.line(")")
+	}
+	return nil
+}
+
+// emitTuple creates a tuple struct.
+func (g *watGen) emitTuple(e ir.CTuple) error {
+	arity := len(e.Items)
+	g.line("(struct.new $tuple%d", arity)
+	g.indent++
+	for _, item := range e.Items {
+		if err := g.emitAtom(item); err != nil {
+			return err
+		}
+	}
+	g.indent--
+	g.line(")")
 	return nil
 }
 
@@ -1936,6 +2152,14 @@ func containsStr(ss []string, s string) bool {
 }
 
 func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
+}
+
+func sortInts(s []int) {
 	for i := 1; i < len(s); i++ {
 		for j := i; j > 0 && s[j] < s[j-1]; j-- {
 			s[j], s[j-1] = s[j-1], s[j]
