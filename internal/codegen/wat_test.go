@@ -672,3 +672,37 @@ main _ = snd (10, 32)
 		t.Fatalf("expected exit 32, got %d", got)
 	}
 }
+
+func TestE2EListTailRecSum(t *testing.T) {
+	// Combine lists, pattern matching, and tail calls
+	code := `
+sumAcc lst acc =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            sumAcc t (acc + h)
+
+main _ = sumAcc [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] 0
+`
+	// 1+2+...+10 = 55
+	if got := runWasm(t, code); got != 55 {
+		t.Fatalf("expected exit 55, got %d", got)
+	}
+}
+
+func TestE2EADTWithListField(t *testing.T) {
+	code := `
+type Pair = MkPair Int Int
+
+add p =
+    match p
+        when MkPair a b ->
+            a + b
+
+main _ = add (MkPair 20 22)
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
