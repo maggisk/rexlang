@@ -65,7 +65,7 @@ func runWasm(t *testing.T, code string) int {
 		t.Fatalf("wasm-tools parse: %v\n%s\nWAT:\n%s", err, out, wat)
 	}
 
-	cmd := exec.Command("wasmtime", "--wasm", "gc", "--wasm", "function-references", wasmFile)
+	cmd := exec.Command("wasmtime", "--wasm", "gc", "--wasm", "function-references", "--wasm", "tail-call", wasmFile)
 	out, err = cmd.CombinedOutput()
 	exitCode := 0
 	if err != nil {
@@ -458,6 +458,64 @@ main _ = isRed Green
 `
 	if got := runWasm(t, code); got != 0 {
 		t.Fatalf("expected exit 0, got %d", got)
+	}
+}
+
+func TestE2EMatchInt(t *testing.T) {
+	code := `
+f x =
+    match x
+        when 0 -> 10
+        when 1 -> 20
+        when _ -> 30
+main _ = f 1
+`
+	if got := runWasm(t, code); got != 20 {
+		t.Fatalf("expected exit 20, got %d", got)
+	}
+}
+
+func TestE2EMatchBool(t *testing.T) {
+	code := `
+boolToInt b =
+    match b
+        when true -> 1
+        when false -> 0
+main _ = boolToInt true
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
+
+func TestE2ETailCall(t *testing.T) {
+	// This would stack overflow without TCO (1 million iterations)
+	code := `
+countdown n acc =
+    if n == 0 then
+        acc
+    else
+        countdown (n - 1) (acc + 1)
+main _ = countdown 1000000 0
+`
+	// 1000000 % 256 = 64 (exit codes are 8-bit)
+	if got := runWasm(t, code); got != 64 {
+		t.Fatalf("expected exit 64, got %d", got)
+	}
+}
+
+func TestE2ETailCallRecursion(t *testing.T) {
+	code := `
+fact n acc =
+    if n == 0 then
+        acc
+    else
+        fact (n - 1) (n * acc)
+main _ = fact 5 1
+`
+	// 5! = 120
+	if got := runWasm(t, code); got != 120 {
+		t.Fatalf("expected exit 120, got %d", got)
 	}
 }
 

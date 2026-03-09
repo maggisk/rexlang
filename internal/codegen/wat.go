@@ -406,7 +406,7 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 	// _start function — pass dummy arg (0) for main's ignored parameter
 	g.line("(func (export \"_start\")")
 	g.indent++
-	g.line("(call $proc_exit (i32.wrap_i64 (call $main (i64.const 0))))")
+	g.line("(call $proc_exit (i32.and (i32.wrap_i64 (call $main (i64.const 0))) (i32.const 255)))")
 	g.indent--
 	g.line(")")
 
@@ -659,7 +659,8 @@ func (g *watGen) emitFunc(fi *funcInfo) error {
 	}
 
 	// Emit body
-	if err := g.emitExpr(fi.body); err != nil {
+	// Function body is in tail position
+	if err := g.emitExprTail(fi.body, true); err != nil {
 		return fmt.Errorf("codegen %s: %w", fi.name, err)
 	}
 
@@ -1031,13 +1032,17 @@ func (g *watGen) typeOfExpr(expr ir.Expr) string {
 // ---------------------------------------------------------------------------
 
 func (g *watGen) emitExpr(expr ir.Expr) error {
+	return g.emitExprTail(expr, false)
+}
+
+func (g *watGen) emitExprTail(expr ir.Expr, tail bool) error {
 	switch e := expr.(type) {
 	case ir.EAtom:
 		return g.emitAtom(e.A)
 	case ir.EComplex:
-		return g.emitCExpr(e.C)
+		return g.emitCExprTail(e.C, tail)
 	case ir.ELet:
-		return g.emitLet(e)
+		return g.emitLetTail(e, tail)
 	default:
 		return fmt.Errorf("unsupported expr: %T", expr)
 	}
@@ -1103,19 +1108,23 @@ func (g *watGen) emitFuncAsValue(fi *funcInfo) error {
 }
 
 func (g *watGen) emitCExpr(c ir.CExpr) error {
+	return g.emitCExprTail(c, false)
+}
+
+func (g *watGen) emitCExprTail(c ir.CExpr, tail bool) error {
 	switch e := c.(type) {
 	case ir.CApp:
-		return g.emitApp(e)
+		return g.emitAppTail(e, tail)
 	case ir.CBinop:
 		return g.emitBinop(e)
 	case ir.CUnaryMinus:
 		return g.emitUnaryMinus(e)
 	case ir.CIf:
-		return g.emitIf(e)
+		return g.emitIfTail(e, tail)
 	case ir.CLambda:
 		return g.emitClosureCreate(e)
 	case ir.CMatch:
-		return g.emitMatch(e)
+		return g.emitMatchTail(e, tail)
 	default:
 		return fmt.Errorf("unsupported cexpr: %T", c)
 	}
@@ -1126,6 +1135,10 @@ func (g *watGen) emitCExpr(c ir.CExpr) error {
 // ---------------------------------------------------------------------------
 
 func (g *watGen) emitApp(e ir.CApp) error {
+	return g.emitAppTail(e, false)
+}
+
+func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 	v, isVar := e.Func.(ir.AVar)
 	if !isVar {
 		return fmt.Errorf("codegen: non-variable function application not supported")
@@ -1156,7 +1169,11 @@ func (g *watGen) emitApp(e ir.CApp) error {
 			if err := g.emitAtom(e.Arg); err != nil {
 				return err
 			}
-			g.line("call $%s", fi.name)
+			if tail {
+				g.line("return_call $%s", fi.name)
+			} else {
+				g.line("call $%s", fi.name)
+			}
 			return nil
 		}
 		// Partial application of multi-arg function — the saturated call
@@ -1188,13 +1205,17 @@ func (g *watGen) emitCallRef(closureVar string, arg ir.Atom) error {
 // ---------------------------------------------------------------------------
 
 func (g *watGen) emitLet(e ir.ELet) error {
+	return g.emitLetTail(e, false)
+}
+
+func (g *watGen) emitLetTail(e ir.ELet, tail bool) error {
 	// Detect saturated multi-arg calls:
 	// let _t = f arg1 in _t arg2  (where f has arity 2)
 	if app, ok := e.Bind.(ir.CApp); ok {
 		if fvar, ok := app.Func.(ir.AVar); ok {
 			if fi, ok := g.funcs[fvar.Name]; ok && fi.arity > 1 {
 				// Check if the body immediately uses _t in another application
-				if result, ok := g.trySaturatedCall(fi, []ir.Atom{app.Arg}, e.Name, e.Body); ok {
+				if result, ok := g.trySaturatedCallTail(fi, []ir.Atom{app.Arg}, e.Name, e.Body, tail); ok {
 					return result
 				}
 			}
@@ -1212,12 +1233,12 @@ func (g *watGen) emitLet(e ir.ELet) error {
 		return err
 	}
 	g.line("local.set $%s", e.Name)
-	return g.emitExpr(e.Body)
+	return g.emitExprTail(e.Body, tail)
 }
 
-// trySaturatedCall detects chains of let-bound partial applications that
-// resolve to a saturated direct call.
-func (g *watGen) trySaturatedCall(fi *funcInfo, args []ir.Atom, tempName string, body ir.Expr) (error, bool) {
+// trySaturatedCallTail detects chains of let-bound partial applications that
+// resolve to a saturated direct call. Uses return_call in tail position.
+func (g *watGen) trySaturatedCallTail(fi *funcInfo, args []ir.Atom, tempName string, body ir.Expr, tail bool) (error, bool) {
 	if len(args) == fi.arity {
 		// Saturated! Emit direct call
 		for _, arg := range args {
@@ -1225,7 +1246,11 @@ func (g *watGen) trySaturatedCall(fi *funcInfo, args []ir.Atom, tempName string,
 				return err, true
 			}
 		}
-		g.line("call $%s", fi.name)
+		if tail {
+			g.line("return_call $%s", fi.name)
+		} else {
+			g.line("call $%s", fi.name)
+		}
 		return nil, true
 	}
 
@@ -1233,7 +1258,7 @@ func (g *watGen) trySaturatedCall(fi *funcInfo, args []ir.Atom, tempName string,
 	if ec, ok := body.(ir.EComplex); ok {
 		if app, ok := ec.C.(ir.CApp); ok {
 			if v, ok := app.Func.(ir.AVar); ok && v.Name == tempName {
-				return g.trySaturatedCall(fi, append(args, app.Arg), tempName, nil)
+				return g.trySaturatedCallTail(fi, append(args, app.Arg), tempName, nil, tail)
 			}
 		}
 	}
@@ -1253,11 +1278,11 @@ func (g *watGen) trySaturatedCall(fi *funcInfo, args []ir.Atom, tempName string,
 					g.line("call $%s", fi.name)
 					// The call result replaces the let binding
 					g.line("local.set $%s", let.Name)
-					err := g.emitExpr(let.Body)
+					err := g.emitExprTail(let.Body, tail)
 					return err, true
 				}
 				// Continue chaining
-				return g.trySaturatedCall(fi, newArgs, let.Name, let.Body)
+				return g.trySaturatedCallTail(fi, newArgs, let.Name, let.Body, tail)
 			}
 		}
 		// Unrelated let binding — emit it and continue looking for the
@@ -1267,7 +1292,7 @@ func (g *watGen) trySaturatedCall(fi *funcInfo, args []ir.Atom, tempName string,
 				return err, true
 			}
 			g.line("local.set $%s", let.Name)
-			return g.trySaturatedCall(fi, args, tempName, let.Body)
+			return g.trySaturatedCallTail(fi, args, tempName, let.Body, tail)
 		}
 	}
 
@@ -1357,6 +1382,10 @@ func (g *watGen) trySaturatedCtor(ci *ctorInfo, args []ir.Atom, tempName string,
 // ---------------------------------------------------------------------------
 
 func (g *watGen) emitMatch(e ir.CMatch) error {
+	return g.emitMatchTail(e, false)
+}
+
+func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 	resultType := g.typeOfCExpr(e)
 
 	// For now, handle constructor patterns and literal patterns
@@ -1403,7 +1432,7 @@ func (g *watGen) emitMatch(e ir.CMatch) error {
 				if err := g.emitPatternBindings(scrutName, ci, pat.Args); err != nil {
 					return err
 				}
-				if err := g.emitExpr(arm.Body); err != nil {
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
 					return err
 				}
 
@@ -1416,7 +1445,7 @@ func (g *watGen) emitMatch(e ir.CMatch) error {
 				if err := g.emitPatternBindings(scrutName, ci, pat.Args); err != nil {
 					return err
 				}
-				if err := g.emitExpr(arm.Body); err != nil {
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
 					return err
 				}
 			}
@@ -1430,7 +1459,7 @@ func (g *watGen) emitMatch(e ir.CMatch) error {
 				}
 				g.line("local.set $%s", pv.Name)
 			}
-			if err := g.emitExpr(arm.Body); err != nil {
+			if err := g.emitExprTail(arm.Body, tail); err != nil {
 				return err
 			}
 
@@ -1445,7 +1474,7 @@ func (g *watGen) emitMatch(e ir.CMatch) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
-				if err := g.emitExpr(arm.Body); err != nil {
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
 					return err
 				}
 				g.indent--
@@ -1453,7 +1482,7 @@ func (g *watGen) emitMatch(e ir.CMatch) error {
 				g.line("(else")
 				g.indent++
 			} else {
-				if err := g.emitExpr(arm.Body); err != nil {
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
 					return err
 				}
 			}
@@ -1473,7 +1502,7 @@ func (g *watGen) emitMatch(e ir.CMatch) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
-				if err := g.emitExpr(arm.Body); err != nil {
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
 					return err
 				}
 				g.indent--
@@ -1481,7 +1510,7 @@ func (g *watGen) emitMatch(e ir.CMatch) error {
 				g.line("(else")
 				g.indent++
 			} else {
-				if err := g.emitExpr(arm.Body); err != nil {
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
 					return err
 				}
 			}
@@ -1659,6 +1688,10 @@ func (g *watGen) emitUnaryMinus(e ir.CUnaryMinus) error {
 }
 
 func (g *watGen) emitIf(e ir.CIf) error {
+	return g.emitIfTail(e, false)
+}
+
+func (g *watGen) emitIfTail(e ir.CIf, tail bool) error {
 	resultType := g.typeOfExpr(e.Then)
 	if err := g.emitAtom(e.Cond); err != nil {
 		return err
@@ -1667,14 +1700,14 @@ func (g *watGen) emitIf(e ir.CIf) error {
 	g.indent++
 	g.line("(then")
 	g.indent++
-	if err := g.emitExpr(e.Then); err != nil {
+	if err := g.emitExprTail(e.Then, tail); err != nil {
 		return err
 	}
 	g.indent--
 	g.line(")")
 	g.line("(else")
 	g.indent++
-	if err := g.emitExpr(e.Else); err != nil {
+	if err := g.emitExprTail(e.Else, tail); err != nil {
 		return err
 	}
 	g.indent--
