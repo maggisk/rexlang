@@ -245,10 +245,26 @@ export opaque type Rng = | Rng Int
 - Better error messages — span info, column info, source snippets (follow-up)
 - Stack traces on runtime errors (maybe)
 
-### Compilation
+### Compilation (WasmGC backend)
 
-- IR design (A-normal form; ADTs map to WasmGC `struct` subtypes)
-- WasmGC backend: emit WAT (WebAssembly Text) → `wasm-tools` assemble → `.wasm`
+Ordered by dependency — each step builds on the previous:
+
+1. [ ] **IR (A-normal form)** — lower typechecked AST to ANF where every subexpression is named; carry type annotations for codegen; pattern match compilation to decision trees
+2. [ ] **Toolchain bootstrap** — emit WAT for `main _ = 0`, assemble with `wasm-tools`, run with Wasmtime; prove end-to-end pipeline
+3. [ ] **Primitives + arithmetic** — Int (`i64`), Float (`f64`), Bool (`i32`), basic operators
+4. [ ] **Functions + closures** — calling convention, closure structs (funcref + captured env), currying via partial application
+5. [ ] **ADTs + pattern matching** — `struct` subtypes with tag field, branch on tag + downcast; exhaustiveness already checked
+6. [ ] **Strings** — UTF-8 byte arrays or host-backed; string operations as host imports initially
+7. [ ] **Lists, tuples, records** — struct-based representations
+8. [ ] **Tail calls** — `return_call` for TCO
+9. [ ] **Stdlib** — recompile pure Rex stdlib; WASI host imports for IO/Net/Env; JS host imports for browser (Temporal API for DateTime)
+10. [ ] **Traits** — runtime dispatch via `funcref` tables or indirect calls
+11. [ ] **Actors** — depends on WASI threads or single-threaded event loop
+
+Key design decisions:
+- **Polymorphism**: box type variables to a common `anyref` representation (simpler) vs monomorphization (faster); start with boxing
+- **Closures**: every function potentially partially applied; uncurry optimization where arity is known at call site
+- **Two deployment targets**: WASI (server/CLI via Wasmtime/Wasmer) and browser (JS host provides IO + DOM)
 
 ### Before going public
 
