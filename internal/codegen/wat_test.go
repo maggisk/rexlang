@@ -537,3 +537,67 @@ main _ = isEven 10
 		t.Fatalf("expected exit 1, got %d", got)
 	}
 }
+
+func TestE2EStringEquality(t *testing.T) {
+	code := `
+check s =
+    if s == "hello" then
+        42
+    else
+        0
+main _ = check "hello"
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EStringNotEqual(t *testing.T) {
+	code := `
+check s =
+    if s == "hello" then
+        42
+    else
+        0
+main _ = check "world"
+`
+	if got := runWasm(t, code); got != 0 {
+		t.Fatalf("expected exit 0, got %d", got)
+	}
+}
+
+func TestE2EStringMatch(t *testing.T) {
+	code := `
+grade s =
+    match s
+        when "A" ->
+            4
+        when "B" ->
+            3
+        when "C" ->
+            2
+        when _ ->
+            0
+main _ = grade "B"
+`
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected exit 3, got %d", got)
+	}
+}
+
+func TestE2EStringInADT(t *testing.T) {
+	code := `
+type Greeting = Hello String | Bye
+
+getLen g =
+    match g
+        when Hello _ ->
+            1
+        when Bye ->
+            0
+main _ = getLen (Hello "world")
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}

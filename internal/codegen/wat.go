@@ -16,24 +16,26 @@ import (
 
 // wasm value types
 const (
-	wtI32    = "i32"
-	wtI64    = "i64"
-	wtF64    = "f64"
-	wtRef    = "(ref null $closure)" // closure reference (nullable for locals)
-	wtAdtRef = "(ref null $adt)"     // ADT value reference (nullable for locals)
+	wtI32       = "i32"
+	wtI64       = "i64"
+	wtF64       = "f64"
+	wtRef       = "(ref null $closure)" // closure reference (nullable for locals)
+	wtAdtRef    = "(ref null $adt)"     // ADT value reference (nullable for locals)
+	wtStringRef = "(ref null $string)"  // string reference (nullable for locals)
 )
 
 // EmitWAT converts an IR program to WAT text.
 func EmitWAT(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 	g := &watGen{
-		buf:          &strings.Builder{},
-		locals:       make(map[string]string),
-		funcs:        make(map[string]*funcInfo),
-		typeEnv:      typeEnv,
-		funcRefs:     make(map[string]bool),
-		funcWrappers: make(map[string]string),
-		adts:         make(map[string]*adtInfo),
-		ctorToAdt:    make(map[string]*ctorInfo),
+		buf:           &strings.Builder{},
+		locals:        make(map[string]string),
+		funcs:         make(map[string]*funcInfo),
+		typeEnv:       typeEnv,
+		funcRefs:      make(map[string]bool),
+		funcWrappers:  make(map[string]string),
+		adts:          make(map[string]*adtInfo),
+		ctorToAdt:     make(map[string]*ctorInfo),
+		stringDataIdx: make(map[string]int),
 	}
 	return g.emit(prog)
 }
@@ -101,6 +103,10 @@ type watGen struct {
 	// wrapper functions for top-level funcs used as values
 	funcWrappers map[string]string // func name → wrapper name
 
+	// string literal data segments
+	stringData    []string          // ordered unique string values
+	stringDataIdx map[string]int    // string value → index in stringData
+
 	// current function context
 	currentFunc *funcInfo
 	funcParams  map[string]string // param name → wasm type for current function
@@ -110,6 +116,34 @@ func (g *watGen) line(format string, args ...any) {
 	g.buf.WriteString(strings.Repeat("  ", g.indent))
 	fmt.Fprintf(g.buf, format, args...)
 	g.buf.WriteByte('\n')
+}
+
+// watStringLiteral converts a Go string to a WAT data segment string literal.
+// WAT uses "..." with \xx hex escapes for non-printable bytes.
+func watStringLiteral(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 0x20 && c < 0x7f && c != '"' && c != '\\' {
+			b.WriteByte(c)
+		} else {
+			fmt.Fprintf(&b, "\\%02x", c)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// internString adds a string literal to the data segment pool and returns its index.
+func (g *watGen) internString(s string) int {
+	if idx, ok := g.stringDataIdx[s]; ok {
+		return idx
+	}
+	idx := len(g.stringData)
+	g.stringData = append(g.stringData, s)
+	g.stringDataIdx[s] = idx
+	return idx
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +161,8 @@ func (g *watGen) wasmType(t types.Type) string {
 			return wtF64
 		case "Bool":
 			return wtI32
+		case "String":
+			return wtStringRef
 		case "Fun":
 			return wtRef
 		default:
@@ -207,6 +243,108 @@ func (g *watGen) analyze(prog *ir.Program) {
 		}
 		g.scanFuncAsValue(fi.body)
 	}
+
+	// Third pass: collect string literals
+	for _, d := range prog.Decls {
+		dl, ok := d.(ir.DLet)
+		if !ok {
+			continue
+		}
+		fi := g.funcs[dl.Name]
+		if fi == nil {
+			continue
+		}
+		g.scanStrings(fi.body)
+	}
+}
+
+func (g *watGen) scanStrings(expr ir.Expr) {
+	switch e := expr.(type) {
+	case ir.EAtom:
+		g.scanAtomString(e.A)
+	case ir.EComplex:
+		g.scanCExprStrings(e.C)
+	case ir.ELet:
+		g.scanCExprStrings(e.Bind)
+		g.scanStrings(e.Body)
+	}
+}
+
+func (g *watGen) scanAtomString(a ir.Atom) {
+	if s, ok := a.(ir.AString); ok {
+		g.internString(s.Value)
+	}
+}
+
+func (g *watGen) scanCExprStrings(c ir.CExpr) {
+	switch e := c.(type) {
+	case ir.CApp:
+		g.scanAtomString(e.Func)
+		g.scanAtomString(e.Arg)
+	case ir.CBinop:
+		g.scanAtomString(e.Left)
+		g.scanAtomString(e.Right)
+	case ir.CUnaryMinus:
+		g.scanAtomString(e.Expr)
+	case ir.CIf:
+		g.scanAtomString(e.Cond)
+		g.scanStrings(e.Then)
+		g.scanStrings(e.Else)
+	case ir.CMatch:
+		g.scanAtomString(e.Scrutinee)
+		for _, arm := range e.Arms {
+			g.scanPatternStrings(arm.Pat)
+			g.scanStrings(arm.Body)
+		}
+	case ir.CLambda:
+		g.scanStrings(e.Body)
+	case ir.CCtor:
+		for _, arg := range e.Args {
+			g.scanAtomString(arg)
+		}
+	}
+}
+
+func (g *watGen) scanPatternStrings(pat ir.Pattern) {
+	if p, ok := pat.(ir.PString); ok {
+		g.internString(p.Value)
+	}
+}
+
+// emitStringEq emits a helper function that compares two $string arrays byte-by-byte.
+func (g *watGen) emitStringEq() {
+	g.line("(func $string_eq (param $a (ref null $string)) (param $b (ref null $string)) (result i32)")
+	g.indent++
+	g.line("(local $len i32)")
+	g.line("(local $i i32)")
+	// Check if lengths differ
+	g.line("(local.set $len (array.len (local.get $a)))")
+	g.line("(if (i32.ne (local.get $len) (array.len (local.get $b)))")
+	g.indent++
+	g.line("(then (return (i32.const 0)))")
+	g.indent--
+	g.line(")")
+	// Compare byte-by-byte
+	g.line("(local.set $i (i32.const 0))")
+	g.line("(block $done")
+	g.indent++
+	g.line("(loop $loop")
+	g.indent++
+	g.line("(br_if $done (i32.ge_u (local.get $i) (local.get $len)))")
+	g.line("(if (i32.ne (array.get_u $string (local.get $a) (local.get $i)) (array.get_u $string (local.get $b) (local.get $i)))")
+	g.indent++
+	g.line("(then (return (i32.const 0)))")
+	g.indent--
+	g.line(")")
+	g.line("(local.set $i (i32.add (local.get $i) (i32.const 1)))")
+	g.line("(br $loop)")
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	g.line("(i32.const 1)")
+	g.indent--
+	g.line(")")
 }
 
 // scanFuncAsValue finds atoms that reference top-level functions in value position.
@@ -372,6 +510,14 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 	g.line("(memory (export \"memory\") 1)")
 	g.line("")
 
+	// Data segments for string literals
+	for i, s := range g.stringData {
+		g.line("(data $d%d %s)", i, watStringLiteral(s))
+	}
+	if len(g.stringData) > 0 {
+		g.line("")
+	}
+
 	// Emit all top-level functions
 	for _, d := range prog.Decls {
 		dl, ok := d.(ir.DLet)
@@ -400,6 +546,12 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 	for funcName, wrapperName := range g.funcWrappers {
 		fi := g.funcs[funcName]
 		g.emitFuncWrapper(fi, wrapperName)
+		g.line("")
+	}
+
+	// String equality helper
+	if len(g.stringData) > 0 {
+		g.emitStringEq()
 		g.line("")
 	}
 
@@ -432,7 +584,7 @@ func (g *watGen) needsClosures() bool {
 }
 
 func (g *watGen) needsGCTypes() bool {
-	return g.needsClosures() || len(g.adts) > 0
+	return g.needsClosures() || len(g.adts) > 0 || len(g.stringData) > 0
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +596,11 @@ func (g *watGen) emitGCTypes() {
 	g.line(";; GC types")
 	g.line("(rec")
 	g.indent++
+
+	// String type
+	if len(g.stringData) > 0 {
+		g.line("(type $string (array (mut i8)))")
+	}
 
 	// Closure types
 	if g.needsClosures() {
@@ -960,6 +1117,8 @@ func (g *watGen) typeOfAtom(a ir.Atom) string {
 		return wtF64
 	case ir.ABool:
 		return wtI32
+	case ir.AString:
+		return wtStringRef
 	case ir.AVar:
 		// Zero-arg constructor
 		if ci, ok := g.ctorToAdt[v.Name]; ok && len(ci.fieldTypes) == 0 {
@@ -1083,6 +1242,10 @@ func (g *watGen) emitAtom(a ir.Atom) error {
 		} else {
 			g.line("i32.const 0")
 		}
+		return nil
+	case ir.AString:
+		idx := g.internString(v.Value)
+		g.line("(array.new_data $string $d%d (i32.const 0) (i32.const %d))", idx, len(v.Value))
 		return nil
 	default:
 		return fmt.Errorf("unsupported atom: %T", a)
@@ -1515,6 +1678,31 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				}
 			}
 
+		case ir.PString:
+			if !isLast {
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				idx := g.internString(pat.Value)
+				g.line("(array.new_data $string $d%d (i32.const 0) (i32.const %d))", idx, len(pat.Value))
+				g.line("call $string_eq")
+				g.line("(if (result %s)", resultType)
+				g.indent++
+				g.line("(then")
+				g.indent++
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
+					return err
+				}
+				g.indent--
+				g.line(")")
+				g.line("(else")
+				g.indent++
+			} else {
+				if err := g.emitExprTail(arm.Body, tail); err != nil {
+					return err
+				}
+			}
+
 		default:
 			return fmt.Errorf("codegen: unsupported pattern type %T", pat)
 		}
@@ -1633,9 +1821,18 @@ func (g *watGen) emitBinop(e ir.CBinop) error {
 	case "Mod":
 		g.line("i64.rem_s")
 	case "Eq":
-		g.line("%s.eq", opType)
+		if opType == wtStringRef {
+			g.line("call $string_eq")
+		} else {
+			g.line("%s.eq", opType)
+		}
 	case "Neq":
-		g.line("%s.ne", opType)
+		if opType == wtStringRef {
+			g.line("call $string_eq")
+			g.line("i32.eqz")
+		} else {
+			g.line("%s.ne", opType)
+		}
 	case "Lt":
 		if opType == wtF64 {
 			g.line("f64.lt")
