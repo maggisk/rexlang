@@ -234,7 +234,7 @@ func compileFile(path string) {
 		os.Exit(1)
 	}
 
-	_, warnings, err := typechecker.CheckProgram(exprs)
+	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
 	if err != nil {
 		printErr("Type error", err)
 		os.Exit(1)
@@ -250,7 +250,7 @@ func compileFile(path string) {
 	}
 
 	// Emit WAT
-	wat, err := codegen.EmitWAT(prog)
+	wat, err := codegen.EmitWAT(prog, typeEnv)
 	if err != nil {
 		printErr("Codegen error", err)
 		os.Exit(1)

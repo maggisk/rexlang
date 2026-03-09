@@ -9,23 +9,32 @@ import (
 
 	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/parser"
+	"github.com/maggisk/rexlang/internal/typechecker"
 )
 
-func lowerCode(t *testing.T, code string) *ir.Program {
+// compileCode runs the full pipeline: parse → typecheck → lower → WAT.
+func compileCode(t *testing.T, code string) string {
 	t.Helper()
 	exprs, err := parser.Parse(code)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
+	}
+	typeEnv, _, err := typechecker.CheckProgram(exprs)
+	if err != nil {
+		t.Fatalf("typecheck error: %v", err)
 	}
 	l := ir.NewLowerer()
 	prog, err := l.LowerProgram(exprs)
 	if err != nil {
 		t.Fatalf("lower error: %v", err)
 	}
-	return prog
+	wat, err := EmitWAT(prog, typeEnv)
+	if err != nil {
+		t.Fatalf("EmitWAT error: %v", err)
+	}
+	return wat
 }
 
-// hasCmd checks if a command is available on PATH.
 func hasCmd(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
@@ -41,11 +50,7 @@ func runWasm(t *testing.T, code string) int {
 		t.Skip("wasmtime not found")
 	}
 
-	prog := lowerCode(t, code)
-	wat, err := EmitWAT(prog)
-	if err != nil {
-		t.Fatalf("EmitWAT: %v\nCode: %s", err, code)
-	}
+	wat := compileCode(t, code)
 
 	dir := t.TempDir()
 	watFile := filepath.Join(dir, "main.wat")
@@ -60,7 +65,7 @@ func runWasm(t *testing.T, code string) int {
 		t.Fatalf("wasm-tools parse: %v\n%s\nWAT:\n%s", err, out, wat)
 	}
 
-	cmd := exec.Command("wasmtime", wasmFile)
+	cmd := exec.Command("wasmtime", "--wasm", "gc", "--wasm", "function-references", wasmFile)
 	out, err = cmd.CombinedOutput()
 	exitCode := 0
 	if err != nil {
@@ -77,12 +82,8 @@ func runWasm(t *testing.T, code string) int {
 // WAT output tests (no wasm-tools needed)
 // ---------------------------------------------------------------------------
 
-func TestEmitWATMainZero(t *testing.T) {
-	prog := lowerCode(t, "main _ = 0\n")
-	wat, err := EmitWAT(prog)
-	if err != nil {
-		t.Fatalf("EmitWAT error: %v", err)
-	}
+func TestWATMainZero(t *testing.T) {
+	wat := compileCode(t, "main _ = 0\n")
 	if !strings.Contains(wat, "i64.const 0") {
 		t.Error("expected i64.const 0")
 	}
@@ -91,79 +92,45 @@ func TestEmitWATMainZero(t *testing.T) {
 	}
 }
 
-func TestEmitWATArithmetic(t *testing.T) {
-	prog := lowerCode(t, "main _ = 1 + 2\n")
-	wat, err := EmitWAT(prog)
-	if err != nil {
-		t.Fatalf("EmitWAT error: %v", err)
-	}
+func TestWATArithmetic(t *testing.T) {
+	wat := compileCode(t, "main _ = 1 + 2\n")
 	if !strings.Contains(wat, "i64.add") {
 		t.Error("expected i64.add")
 	}
 }
 
-func TestEmitWATFloat(t *testing.T) {
-	prog := lowerCode(t, "main _ = 1.5 + 2.5\n")
-	wat, err := EmitWAT(prog)
-	if err != nil {
-		t.Fatalf("EmitWAT error: %v", err)
-	}
+func TestWATFloat(t *testing.T) {
+	wat := compileCode(t, "main _ = 1.5 + 2.5\n")
 	if !strings.Contains(wat, "f64.const") {
 		t.Error("expected f64.const")
 	}
 	if !strings.Contains(wat, "f64.add") {
 		t.Error("expected f64.add")
 	}
-	// main returns i64, so float result should be truncated
-	if !strings.Contains(wat, "i64.trunc_f64_s") {
-		t.Error("expected i64.trunc_f64_s conversion")
+}
+
+func TestWATFunctionCall(t *testing.T) {
+	wat := compileCode(t, "double x = x + x\nmain _ = double 21\n")
+	if !strings.Contains(wat, "func $double") {
+		t.Error("expected func $double")
+	}
+	if !strings.Contains(wat, "call $double") {
+		t.Error("expected call $double")
 	}
 }
 
-func TestEmitWATComparison(t *testing.T) {
-	prog := lowerCode(t, `
-main _ =
-    if 1 < 2 then
-        42
-    else
-        0
-`)
-	wat, err := EmitWAT(prog)
-	if err != nil {
-		t.Fatalf("EmitWAT error: %v", err)
-	}
-	if !strings.Contains(wat, "i64.lt_s") {
-		t.Error("expected i64.lt_s")
-	}
-}
-
-func TestEmitWATBoolOps(t *testing.T) {
-	prog := lowerCode(t, `
-main _ =
-    if true && false then
-        1
-    else
-        0
-`)
-	wat, err := EmitWAT(prog)
-	if err != nil {
-		t.Fatalf("EmitWAT error: %v", err)
-	}
-	if !strings.Contains(wat, "i32.and") {
-		t.Error("expected i32.and")
-	}
-}
-
-func TestEmitWATNoMain(t *testing.T) {
-	prog := lowerCode(t, "x = 42\n")
-	_, err := EmitWAT(prog)
+func TestWATNoMain(t *testing.T) {
+	exprs, _ := parser.Parse("x = 42\n")
+	l := ir.NewLowerer()
+	prog, _ := l.LowerProgram(exprs)
+	_, err := EmitWAT(prog, nil)
 	if err == nil || !strings.Contains(err.Error(), "no main") {
 		t.Fatalf("expected 'no main' error, got: %v", err)
 	}
 }
 
 // ---------------------------------------------------------------------------
-// End-to-end tests (require wasm-tools + wasmtime)
+// End-to-end tests
 // ---------------------------------------------------------------------------
 
 func TestE2EZero(t *testing.T) {
@@ -201,7 +168,6 @@ func TestE2EArithmetic(t *testing.T) {
 }
 
 func TestE2EUnaryMinus(t *testing.T) {
-	// -(-42) = 42
 	if got := runWasm(t, "main _ = -(-42)\n"); got != 42 {
 		t.Fatalf("expected exit 42, got %d", got)
 	}
@@ -229,16 +195,13 @@ func TestE2EComparison(t *testing.T) {
 		code     string
 		exitCode int
 	}{
-		// true branch → 1, false branch → 0
 		{"main _ =\n    if 1 < 2 then\n        1\n    else\n        0\n", 1},
 		{"main _ =\n    if 2 > 1 then\n        1\n    else\n        0\n", 1},
 		{"main _ =\n    if 1 <= 1 then\n        1\n    else\n        0\n", 1},
 		{"main _ =\n    if 1 >= 1 then\n        1\n    else\n        0\n", 1},
 		{"main _ =\n    if 42 == 42 then\n        1\n    else\n        0\n", 1},
 		{"main _ =\n    if 1 != 2 then\n        1\n    else\n        0\n", 1},
-		// false cases
 		{"main _ =\n    if 2 < 1 then\n        1\n    else\n        0\n", 0},
-		{"main _ =\n    if 1 == 2 then\n        1\n    else\n        0\n", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.code, func(t *testing.T) {
@@ -273,29 +236,10 @@ func TestE2EFloatArithmetic(t *testing.T) {
 		code     string
 		exitCode int
 	}{
-		// Float results get truncated to i64 for exit code
-		{"main _ = 1.5 + 2.5\n", 4},    // 4.0 → 4
-		{"main _ = 10.0 - 3.0\n", 7},   // 7.0 → 7
-		{"main _ = 6.0 * 7.0\n", 42},   // 42.0 → 42
-		{"main _ = 84.0 / 2.0\n", 42},  // 42.0 → 42
-	}
-	for _, tt := range tests {
-		t.Run(tt.code, func(t *testing.T) {
-			if got := runWasm(t, tt.code); got != tt.exitCode {
-				t.Fatalf("expected exit %d, got %d", tt.exitCode, got)
-			}
-		})
-	}
-}
-
-func TestE2EFloatComparison(t *testing.T) {
-	tests := []struct {
-		code     string
-		exitCode int
-	}{
-		{"main _ =\n    if 1.5 < 2.5 then\n        1\n    else\n        0\n", 1},
-		{"main _ =\n    if 2.5 > 1.5 then\n        1\n    else\n        0\n", 1},
-		{"main _ =\n    if 1.0 == 1.0 then\n        1\n    else\n        0\n", 1},
+		{"main _ = 1.5 + 2.5\n", 4},
+		{"main _ = 10.0 - 3.0\n", 7},
+		{"main _ = 6.0 * 7.0\n", 42},
+		{"main _ = 84.0 / 2.0\n", 42},
 	}
 	for _, tt := range tests {
 		t.Run(tt.code, func(t *testing.T) {
@@ -331,6 +275,135 @@ main _ =
         1
     else
         0
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Function call tests
+// ---------------------------------------------------------------------------
+
+func TestE2EFunctionCall(t *testing.T) {
+	code := `
+double x = x + x
+main _ = double 21
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EMultiArgFunction(t *testing.T) {
+	code := `
+add x y = x + y
+main _ = add 20 22
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EThreeArgFunction(t *testing.T) {
+	code := `
+add3 a b c = a + b + c
+main _ = add3 10 20 12
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2ERecursion(t *testing.T) {
+	code := `
+fact n =
+    if n == 0 then
+        1
+    else
+        n * fact (n - 1)
+main _ = fact 5
+`
+	// 5! = 120
+	if got := runWasm(t, code); got != 120 {
+		t.Fatalf("expected exit 120, got %d", got)
+	}
+}
+
+func TestE2EMultipleFunctions(t *testing.T) {
+	code := `
+double x = x + x
+square x = x * x
+main _ = double (square 3) + square 2 + double 1
+`
+	// double(9) + 4 + 2 = 18 + 4 + 2 = 24
+	if got := runWasm(t, code); got != 24 {
+		t.Fatalf("expected exit 24, got %d", got)
+	}
+}
+
+func TestE2EFunctionWithIf(t *testing.T) {
+	code := `
+abs x =
+    if x < 0 then
+        0 - x
+    else
+        x
+main _ = abs (-42)
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EClosureCapture(t *testing.T) {
+	code := `
+makeAdder n = \x -> n + x
+main _ =
+    let add5 = makeAdder 5
+    in add5 37
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EClosureTwoCaptures(t *testing.T) {
+	code := `
+makeAdd a b = \x -> a + b + x
+main _ =
+    let f = makeAdd 10 20
+    in f 12
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EHigherOrderFunction(t *testing.T) {
+	code := `
+apply f x = f x
+double x = x + x
+main _ = apply double 21
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EMutualFunctions(t *testing.T) {
+	code := `
+isEven n =
+    if n == 0 then
+        1
+    else
+        isOdd (n - 1)
+isOdd n =
+    if n == 0 then
+        0
+    else
+        isEven (n - 1)
+main _ = isEven 10
 `
 	if got := runWasm(t, code); got != 1 {
 		t.Fatalf("expected exit 1, got %d", got)

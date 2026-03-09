@@ -1,7 +1,8 @@
 // Package codegen emits WebAssembly Text (WAT) from the IR.
 //
-// The initial target is WasmGC via WASI — programs export _start,
-// and the exit code comes from main's return value via proc_exit.
+// The compilation target is WasmGC via WASI. Programs export _start and
+// use proc_exit for the exit code. Functions compile to wasm funcs with
+// direct calls when possible. Closures use WasmGC structs (funcref + captures).
 package codegen
 
 import (
@@ -9,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/maggisk/rexlang/internal/ir"
+	"github.com/maggisk/rexlang/internal/typechecker"
+	"github.com/maggisk/rexlang/internal/types"
 )
 
 // wasm value types
@@ -16,21 +19,71 @@ const (
 	wtI32 = "i32"
 	wtI64 = "i64"
 	wtF64 = "f64"
+	wtRef = "(ref null $closure)" // closure reference (nullable for locals)
 )
 
 // EmitWAT converts an IR program to WAT text.
-func EmitWAT(prog *ir.Program) (string, error) {
+func EmitWAT(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 	g := &watGen{
-		buf:    &strings.Builder{},
-		locals: make(map[string]string),
+		buf:          &strings.Builder{},
+		locals:       make(map[string]string),
+		funcs:        make(map[string]*funcInfo),
+		typeEnv:      typeEnv,
+		funcRefs:     make(map[string]bool),
+		funcWrappers: make(map[string]string),
 	}
 	return g.emit(prog)
 }
 
+// funcInfo describes a top-level function for codegen.
+type funcInfo struct {
+	name    string
+	arity   int
+	params  []paramInfo
+	retType string
+	body    ir.Expr // innermost body after unwrapping lambdas
+}
+
+type paramInfo struct {
+	name     string
+	wasmType string
+}
+
+// lambdaFunc is a lifted lambda that becomes a wasm function.
+type lambdaFunc struct {
+	name     string   // generated func name
+	captures []string // names of captured variables
+	capTypes []string // wasm types of captures
+	param    string
+	retType  string
+	body     ir.Expr
+}
+
+// pendingCall tracks partial application chains for multi-arg call detection.
+type pendingCall struct {
+	funcName string
+	args     []ir.Atom
+}
+
 type watGen struct {
-	buf    *strings.Builder
-	indent int
-	locals map[string]string // local name → wasm type
+	buf     *strings.Builder
+	indent  int
+	locals  map[string]string    // local name → wasm type
+	funcs   map[string]*funcInfo // top-level function info
+	typeEnv typechecker.TypeEnv
+	lambdas []lambdaFunc // lifted lambdas
+	pending map[string]*pendingCall
+	maxCaps int // max captures needed (determines closure types)
+
+	// functions referenced via ref.func (need elem declare)
+	funcRefs map[string]bool
+
+	// wrapper functions for top-level funcs used as values
+	funcWrappers map[string]string // func name → wrapper name
+
+	// current function context
+	currentFunc *funcInfo
+	funcParams  map[string]string // param name → wasm type for current function
 }
 
 func (g *watGen) line(format string, args ...any) {
@@ -39,20 +92,223 @@ func (g *watGen) line(format string, args ...any) {
 	g.buf.WriteByte('\n')
 }
 
-func (g *watGen) emit(prog *ir.Program) (string, error) {
-	var mainDecl *ir.DLet
-	for _, d := range prog.Decls {
-		if dl, ok := d.(ir.DLet); ok && dl.Name == "main" {
-			mainDecl = &dl
-			break
+// ---------------------------------------------------------------------------
+// Type helpers
+// ---------------------------------------------------------------------------
+
+// wasmType converts a Rex type to a wasm value type.
+func wasmType(t types.Type) string {
+	switch ty := t.(type) {
+	case types.TCon:
+		switch ty.Name {
+		case "Int":
+			return wtI64
+		case "Float":
+			return wtF64
+		case "Bool":
+			return wtI32
+		case "Fun":
+			return wtRef
 		}
 	}
-	if mainDecl == nil {
+	return wtI64 // default for type variables and unknown types
+}
+
+// decomposeFuncType breaks a function type into parameter types and return type.
+func decomposeFuncType(t types.Type) ([]types.Type, types.Type) {
+	var params []types.Type
+	for {
+		tc, ok := t.(types.TCon)
+		if !ok || tc.Name != "Fun" || len(tc.Args) != 2 {
+			break
+		}
+		params = append(params, tc.Args[0])
+		t = tc.Args[1]
+	}
+	return params, t
+}
+
+// lookupType gets the Rex type for a top-level name from the type environment.
+func (g *watGen) lookupType(name string) (types.Type, bool) {
+	v, ok := g.typeEnv[name]
+	if !ok {
+		return nil, false
+	}
+	scheme, ok := v.(types.Scheme)
+	if !ok {
+		return nil, false
+	}
+	return scheme.Ty, true
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1: Analyze — collect function info and lambdas
+// ---------------------------------------------------------------------------
+
+func (g *watGen) analyze(prog *ir.Program) {
+	// First pass: collect function info
+	for _, d := range prog.Decls {
+		dl, ok := d.(ir.DLet)
+		if !ok {
+			continue
+		}
+		fi := g.analyzeFunc(dl)
+		if fi != nil {
+			g.funcs[fi.name] = fi
+			// Multi-arg functions need closure types for partial application
+			if fi.arity > 1 && fi.arity-1 > g.maxCaps {
+				g.maxCaps = fi.arity - 1
+			}
+		}
+	}
+
+	// Second pass: detect function names used as values
+	for _, d := range prog.Decls {
+		dl, ok := d.(ir.DLet)
+		if !ok {
+			continue
+		}
+		fi := g.funcs[dl.Name]
+		if fi == nil {
+			continue
+		}
+		g.scanFuncAsValue(fi.body)
+	}
+}
+
+// scanFuncAsValue finds atoms that reference top-level functions in value position.
+func (g *watGen) scanFuncAsValue(expr ir.Expr) {
+	switch e := expr.(type) {
+	case ir.EAtom:
+		g.checkAtomFuncAsValue(e.A)
+	case ir.EComplex:
+		g.scanCExprFuncAsValue(e.C)
+	case ir.ELet:
+		g.scanCExprFuncAsValue(e.Bind)
+		g.scanFuncAsValue(e.Body)
+	case ir.ELetRec:
+		for _, b := range e.Bindings {
+			g.scanCExprFuncAsValue(b.Bind)
+		}
+		g.scanFuncAsValue(e.Body)
+	}
+}
+
+func (g *watGen) scanCExprFuncAsValue(c ir.CExpr) {
+	switch e := c.(type) {
+	case ir.CApp:
+		// The argument is in value position; the func position is not
+		g.checkAtomFuncAsValue(e.Arg)
+	case ir.CBinop:
+		g.checkAtomFuncAsValue(e.Left)
+		g.checkAtomFuncAsValue(e.Right)
+	case ir.CUnaryMinus:
+		g.checkAtomFuncAsValue(e.Expr)
+	case ir.CIf:
+		g.checkAtomFuncAsValue(e.Cond)
+		g.scanFuncAsValue(e.Then)
+		g.scanFuncAsValue(e.Else)
+	case ir.CLambda:
+		g.scanFuncAsValue(e.Body)
+	case ir.CMatch:
+		g.checkAtomFuncAsValue(e.Scrutinee)
+		for _, arm := range e.Arms {
+			g.scanFuncAsValue(arm.Body)
+		}
+	}
+}
+
+func (g *watGen) checkAtomFuncAsValue(a ir.Atom) {
+	v, ok := a.(ir.AVar)
+	if !ok {
+		return
+	}
+	if fi, ok := g.funcs[v.Name]; ok && fi.arity == 1 {
+		if _, exists := g.funcWrappers[v.Name]; !exists {
+			g.funcWrappers[v.Name] = fmt.Sprintf("$%s__wrap", v.Name)
+		}
+	}
+}
+
+func (g *watGen) analyzeFunc(dl ir.DLet) *funcInfo {
+	// Unwrap lambda chain to determine arity and params
+	body := dl.Body
+	var params []paramInfo
+
+	for {
+		ec, ok := body.(ir.EComplex)
+		if !ok {
+			break
+		}
+		lam, ok := ec.C.(ir.CLambda)
+		if !ok {
+			break
+		}
+		params = append(params, paramInfo{name: lam.Param})
+		body = lam.Body
+	}
+
+	if len(params) == 0 {
+		return nil // not a function, just a value binding
+	}
+
+	fi := &funcInfo{
+		name:   dl.Name,
+		arity:  len(params),
+		params: params,
+		body:   body,
+	}
+
+	// Use type env to determine param and return types
+	if ty, ok := g.lookupType(dl.Name); ok {
+		paramTypes, retType := decomposeFuncType(ty)
+		for i := range fi.params {
+			if i < len(paramTypes) {
+				fi.params[i].wasmType = wasmType(paramTypes[i])
+			} else {
+				fi.params[i].wasmType = wtI64
+			}
+		}
+		fi.retType = wasmType(retType)
+	} else {
+		// Default: all i64
+		for i := range fi.params {
+			fi.params[i].wasmType = wtI64
+		}
+		fi.retType = wtI64
+	}
+
+	return fi
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2: Emit — generate WAT output
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emit(prog *ir.Program) (string, error) {
+	g.analyze(prog)
+
+	// Find main
+	mainFI, ok := g.funcs["main"]
+	if !ok {
 		return "", fmt.Errorf("codegen: no main function found")
+	}
+	// Override main return type to i64 (exit code)
+	mainFI.retType = wtI64
+
+	// Determine max captures from lambdas in all function bodies
+	for _, fi := range g.funcs {
+		g.scanForLambdas(fi.name, fi.body, fi.params)
 	}
 
 	g.line("(module")
 	g.indent++
+
+	// Emit GC type declarations if we have closures
+	if g.needsClosures() {
+		g.emitClosureTypes()
+		g.line("")
+	}
 
 	// WASI import: proc_exit
 	g.line("(import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))")
@@ -62,17 +318,53 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 	g.line("(memory (export \"memory\") 1)")
 	g.line("")
 
-	// _start function — calls $main, wraps i64 result to i32 for proc_exit
+	// Emit all top-level functions
+	for _, d := range prog.Decls {
+		dl, ok := d.(ir.DLet)
+		if !ok {
+			continue
+		}
+		fi, ok := g.funcs[dl.Name]
+		if !ok {
+			continue
+		}
+		if err := g.emitFunc(fi); err != nil {
+			return "", err
+		}
+		g.line("")
+	}
+
+	// Emit lifted lambdas
+	for _, lf := range g.lambdas {
+		if err := g.emitLambdaFunc(&lf); err != nil {
+			return "", err
+		}
+		g.line("")
+	}
+
+	// Emit function wrappers (for functions used as values)
+	for funcName, wrapperName := range g.funcWrappers {
+		fi := g.funcs[funcName]
+		g.emitFuncWrapper(fi, wrapperName)
+		g.line("")
+	}
+
+	// _start function — pass dummy arg (0) for main's ignored parameter
 	g.line("(func (export \"_start\")")
 	g.indent++
-	g.line("(call $proc_exit (i32.wrap_i64 (call $main)))")
+	g.line("(call $proc_exit (i32.wrap_i64 (call $main (i64.const 0))))")
 	g.indent--
 	g.line(")")
-	g.line("")
 
-	// $main function — returns i64 (Rex Int)
-	if err := g.emitMain(mainDecl); err != nil {
-		return "", err
+	// Declare function references (required for ref.func)
+	if len(g.funcRefs) > 0 {
+		g.line("")
+		refs := make([]string, 0, len(g.funcRefs))
+		for r := range g.funcRefs {
+			refs = append(refs, r)
+		}
+		sortStrings(refs)
+		g.line("(elem declare func %s)", strings.Join(refs, " "))
 	}
 
 	g.indent--
@@ -81,42 +373,356 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 	return g.buf.String(), nil
 }
 
-func (g *watGen) emitMain(decl *ir.DLet) error {
-	// main is `\_ -> body` — unwrap the lambda
-	body := decl.Body
-	if ec, ok := body.(ir.EComplex); ok {
-		if lam, ok := ec.C.(ir.CLambda); ok {
-			body = lam.Body
+func (g *watGen) needsClosures() bool {
+	return len(g.lambdas) > 0 || g.maxCaps > 0 || len(g.funcWrappers) > 0
+}
+
+// ---------------------------------------------------------------------------
+// Closure types
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emitClosureTypes() {
+	// Mutually recursive types need a (rec ...) group:
+	// $ft_apply references $closure, $closure references $ft_apply
+	g.line(";; Closure types")
+	g.line("(rec")
+	g.indent++
+	g.line("(type $ft_apply (func (param (ref null $closure)) (param i64) (result i64)))")
+	g.line("(type $closure (sub (struct (field $fn (ref $ft_apply)))))")
+
+	// Closure subtypes with captures
+	for n := 1; n <= g.maxCaps; n++ {
+		fields := "(field $fn (ref $ft_apply))"
+		for i := 0; i < n; i++ {
+			fields += fmt.Sprintf(" (field $c%d i64)", i)
+		}
+		g.line("(type $closure_%d (sub $closure (struct %s)))", n, fields)
+	}
+	g.indent--
+	g.line(")")
+}
+
+// ---------------------------------------------------------------------------
+// Scan for lambdas with captures
+// ---------------------------------------------------------------------------
+
+func (g *watGen) scanForLambdas(ownerFunc string, body ir.Expr, params []paramInfo) {
+	paramSet := make(map[string]bool)
+	for _, p := range params {
+		paramSet[p.name] = true
+	}
+	g.scanExprForLambdas(ownerFunc, body, paramSet, nil)
+}
+
+func (g *watGen) scanExprForLambdas(owner string, expr ir.Expr, scope map[string]bool, letBindings map[string]bool) {
+	switch e := expr.(type) {
+	case ir.EComplex:
+		g.scanCExprForLambdas(owner, e.C, scope, letBindings)
+	case ir.ELet:
+		g.scanCExprForLambdas(owner, e.Bind, scope, letBindings)
+		// Add let-bound name to scope
+		newScope := copyScope(scope)
+		newScope[e.Name] = true
+		newLet := copyScope(letBindings)
+		newLet[e.Name] = true
+		g.scanExprForLambdas(owner, e.Body, newScope, newLet)
+	}
+}
+
+func (g *watGen) scanCExprForLambdas(owner string, c ir.CExpr, scope map[string]bool, letBindings map[string]bool) {
+	switch e := c.(type) {
+	case ir.CLambda:
+		// This is a lambda that appears as a value (not at the top of a function def)
+		// Find captures: free variables that come from the enclosing scope
+		captures := g.findCaptures(e, scope, letBindings)
+		if len(captures) > g.maxCaps {
+			g.maxCaps = len(captures)
+		}
+		// Also need at least 1 for partial application
+		lambdaName := fmt.Sprintf("$%s__lambda_%d", owner, len(g.lambdas))
+		capTypes := make([]string, len(captures))
+		for i := range captures {
+			capTypes[i] = wtI64 // default
+		}
+		g.lambdas = append(g.lambdas, lambdaFunc{
+			name:     lambdaName,
+			captures: captures,
+			capTypes: capTypes,
+			param:    e.Param,
+			retType:  wtI64,
+			body:     e.Body,
+		})
+	case ir.CIf:
+		g.scanExprForLambdas(owner, e.Then, scope, letBindings)
+		g.scanExprForLambdas(owner, e.Else, scope, letBindings)
+	case ir.CMatch:
+		for _, arm := range e.Arms {
+			g.scanExprForLambdas(owner, arm.Body, scope, letBindings)
 		}
 	}
+}
 
-	// Pre-pass: collect all locals and their types
+func (g *watGen) findCaptures(lam ir.CLambda, outerScope map[string]bool, letBindings map[string]bool) []string {
+	free := make(map[string]bool)
+	g.collectFreeVars(lam.Body, map[string]bool{lam.Param: true}, free)
+
+	var captures []string
+	for name := range free {
+		// Only capture variables from let bindings and function params
+		// (not top-level functions — those are called directly)
+		if _, isFunc := g.funcs[name]; isFunc {
+			continue
+		}
+		if outerScope[name] {
+			captures = append(captures, name)
+		}
+	}
+	// Sort for deterministic output
+	sortStrings(captures)
+	return captures
+}
+
+func (g *watGen) collectFreeVars(expr ir.Expr, bound map[string]bool, free map[string]bool) {
+	switch e := expr.(type) {
+	case ir.EAtom:
+		g.collectFreeVarsAtom(e.A, bound, free)
+	case ir.EComplex:
+		g.collectFreeVarsCExpr(e.C, bound, free)
+	case ir.ELet:
+		g.collectFreeVarsCExpr(e.Bind, bound, free)
+		newBound := copyScope(bound)
+		newBound[e.Name] = true
+		g.collectFreeVars(e.Body, newBound, free)
+	case ir.ELetRec:
+		newBound := copyScope(bound)
+		for _, b := range e.Bindings {
+			newBound[b.Name] = true
+		}
+		for _, b := range e.Bindings {
+			g.collectFreeVarsCExpr(b.Bind, newBound, free)
+		}
+		g.collectFreeVars(e.Body, newBound, free)
+	}
+}
+
+func (g *watGen) collectFreeVarsAtom(a ir.Atom, bound map[string]bool, free map[string]bool) {
+	if v, ok := a.(ir.AVar); ok && !bound[v.Name] {
+		free[v.Name] = true
+	}
+}
+
+func (g *watGen) collectFreeVarsCExpr(c ir.CExpr, bound map[string]bool, free map[string]bool) {
+	switch e := c.(type) {
+	case ir.CApp:
+		g.collectFreeVarsAtom(e.Func, bound, free)
+		g.collectFreeVarsAtom(e.Arg, bound, free)
+	case ir.CBinop:
+		g.collectFreeVarsAtom(e.Left, bound, free)
+		g.collectFreeVarsAtom(e.Right, bound, free)
+	case ir.CUnaryMinus:
+		g.collectFreeVarsAtom(e.Expr, bound, free)
+	case ir.CIf:
+		g.collectFreeVarsAtom(e.Cond, bound, free)
+		g.collectFreeVars(e.Then, bound, free)
+		g.collectFreeVars(e.Else, bound, free)
+	case ir.CMatch:
+		g.collectFreeVarsAtom(e.Scrutinee, bound, free)
+		for _, arm := range e.Arms {
+			g.collectFreeVars(arm.Body, bound, free)
+		}
+	case ir.CLambda:
+		newBound := copyScope(bound)
+		newBound[e.Param] = true
+		g.collectFreeVars(e.Body, newBound, free)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Emit functions
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emitFunc(fi *funcInfo) error {
+	g.currentFunc = fi
+	g.funcParams = make(map[string]string)
 	g.locals = make(map[string]string)
-	g.collectLocals(body)
 
-	// Emit function header with all locals declared up front
-	g.line("(func $main (result i64)")
+	// Build param signature
+	var paramSig string
+	for _, p := range fi.params {
+		paramSig += fmt.Sprintf(" (param $%s %s)", p.name, p.wasmType)
+		g.funcParams[p.name] = p.wasmType
+	}
+
+	// Collect locals
+	g.collectLocals(fi.body)
+
+	g.line("(func $%s%s (result %s)", fi.name, paramSig, fi.retType)
 	g.indent++
 
-	for _, name := range g.localOrder(body) {
+	// Declare locals
+	for _, name := range g.localOrder(fi.body) {
 		g.line("(local $%s %s)", name, g.locals[name])
 	}
 
-	if err := g.emitExpr(body); err != nil {
-		return fmt.Errorf("codegen main: %w", err)
+	// Emit body
+	if err := g.emitExpr(fi.body); err != nil {
+		return fmt.Errorf("codegen %s: %w", fi.name, err)
 	}
 
-	// main returns i64; if the body produced i32 (bool) or f64, convert
-	switch g.typeOfExpr(body) {
-	case wtI32:
-		g.line("i64.extend_i32_u")
-	case wtF64:
-		g.line("i64.trunc_f64_s")
+	// Convert result type if needed
+	bodyType := g.typeOfExpr(fi.body)
+	if bodyType != fi.retType {
+		g.emitConvert(bodyType, fi.retType)
+	}
+
+	g.indent--
+	g.line(")")
+	g.currentFunc = nil
+	return nil
+}
+
+func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
+	g.currentFunc = nil
+	g.funcParams = make(map[string]string)
+	g.locals = make(map[string]string)
+
+	// Lambda function signature: (self: ref $closure, param: i64) -> i64
+	closureType := "$closure"
+	if len(lf.captures) > 0 {
+		closureType = fmt.Sprintf("$closure_%d", len(lf.captures))
+	}
+
+	// Register captures and param as available locals
+	for i, cap := range lf.captures {
+		g.locals[cap] = lf.capTypes[i]
+	}
+	g.funcParams[lf.param] = wtI64
+
+	// Collect locals from body
+	g.collectLocals(lf.body)
+
+	g.line("(func %s (type $ft_apply) (param $self (ref null $closure)) (param $%s i64) (result i64)", lf.name, lf.param)
+	g.indent++
+
+	// Extract captures from closure struct
+	for i, cap := range lf.captures {
+		g.line("(local $%s i64)", cap)
+		g.line("(local.set $%s (struct.get %s $c%d (ref.cast (ref %s) (local.get $self))))",
+			cap, closureType, i, closureType)
+	}
+
+	// Declare other locals
+	for _, name := range g.localOrder(lf.body) {
+		if !containsStr(lf.captures, name) {
+			g.line("(local $%s %s)", name, g.locals[name])
+		}
+	}
+
+	if err := g.emitExpr(lf.body); err != nil {
+		return fmt.Errorf("codegen lambda %s: %w", lf.name, err)
+	}
+
+	// Convert to i64 if needed
+	bodyType := g.typeOfExpr(lf.body)
+	if bodyType != wtI64 {
+		g.emitConvert(bodyType, wtI64)
 	}
 
 	g.indent--
 	g.line(")")
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Partial application wrappers
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emitPartialApplyWrappers(fi *funcInfo) {
+	// For a function with arity N, generate N-1 wrapper functions.
+	// Wrapper k takes a closure with k captured args + 1 new arg,
+	// and either calls the next wrapper or the direct function.
+
+	// Ensure we have enough closure types
+	if fi.arity-1 > g.maxCaps {
+		g.maxCaps = fi.arity - 1
+	}
+
+	// Generate one wrapper per partial application level.
+	// $f__partial_k: takes a closure with k captures + 1 arg
+	// k = arity-1: has all args → call $f directly
+	// k < arity-1: creates a new closure with k+1 captures
+	for k := 0; k < fi.arity; k++ {
+		nCaps := k // number of captured args so far
+		closureType := "$closure"
+		if nCaps > 0 {
+			closureType = fmt.Sprintf("$closure_%d", nCaps)
+		}
+
+		g.line("(func $%s__partial_%d (type $ft_apply) (param $self (ref null $closure)) (param $arg i64) (result i64)",
+			fi.name, k)
+		g.indent++
+
+		if k == fi.arity-1 {
+			// Saturated: extract all captured args + this arg, call $f directly
+			for i := 0; i < nCaps; i++ {
+				g.line("(struct.get %s $c%d (ref.cast (ref %s) (local.get $self)))",
+					closureType, i, closureType)
+			}
+			g.line("(local.get $arg)")
+			g.line("(call $%s)", fi.name)
+		} else {
+			// Not saturated: create a new closure with one more capture
+			newCaps := nCaps + 1
+			newClosureType := fmt.Sprintf("$closure_%d", newCaps)
+			if newCaps > g.maxCaps {
+				g.maxCaps = newCaps
+			}
+
+			// The new closure's funcref is the next wrapper
+			g.line("(struct.new %s", newClosureType)
+			g.indent++
+			nextWrapper := fmt.Sprintf("$%s__partial_%d", fi.name, k+1)
+			g.funcRefs[nextWrapper] = true
+			g.line("(ref.func %s)", nextWrapper)
+			// Copy existing captures
+			for i := 0; i < nCaps; i++ {
+				g.line("(struct.get %s $c%d (ref.cast (ref %s) (local.get $self)))",
+					closureType, i, closureType)
+			}
+			// Add new arg as capture
+			g.line("(local.get $arg)")
+			g.indent--
+			g.line(")")
+
+			// The result is a closure ref, but our return type is i64.
+			// We need to pass it as-is. But our uniform closure calling convention
+			// uses i64 everywhere...
+			// Actually, closures are ref types, not i64. We need a different approach.
+			// For now, wrap the closure ref in a global table or use anyref boxing.
+			// TODO: This needs a ref return type, not i64.
+		}
+
+		g.indent--
+		g.line(")")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Type conversion helpers
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emitConvert(from, to string) {
+	if from == to {
+		return
+	}
+	switch {
+	case from == wtI32 && to == wtI64:
+		g.line("i64.extend_i32_u")
+	case from == wtF64 && to == wtI64:
+		g.line("i64.trunc_f64_s")
+	case from == wtI64 && to == wtI32:
+		g.line("i32.wrap_i64")
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +734,7 @@ func (g *watGen) collectLocals(expr ir.Expr) {
 	case ir.ELet:
 		localType := g.typeOfCExpr(e.Bind)
 		g.locals[e.Name] = localType
+		g.collectLocalsCExpr(e.Bind)
 		g.collectLocals(e.Body)
 	case ir.EComplex:
 		g.collectLocalsCExpr(e.C)
@@ -139,10 +746,13 @@ func (g *watGen) collectLocalsCExpr(c ir.CExpr) {
 	case ir.CIf:
 		g.collectLocals(e.Then)
 		g.collectLocals(e.Else)
+	case ir.CMatch:
+		for _, arm := range e.Arms {
+			g.collectLocals(arm.Body)
+		}
 	}
 }
 
-// localOrder returns local names in the order they appear (depth-first).
 func (g *watGen) localOrder(expr ir.Expr) []string {
 	var names []string
 	seen := make(map[string]bool)
@@ -169,6 +779,10 @@ func (g *watGen) collectLocalOrderCExpr(c ir.CExpr, names *[]string, seen map[st
 	case ir.CIf:
 		g.collectLocalOrder(e.Then, names, seen)
 		g.collectLocalOrder(e.Else, names, seen)
+	case ir.CMatch:
+		for _, arm := range e.Arms {
+			g.collectLocalOrder(arm.Body, names, seen)
+		}
 	}
 }
 
@@ -185,6 +799,9 @@ func (g *watGen) typeOfAtom(a ir.Atom) string {
 	case ir.ABool:
 		return wtI32
 	case ir.AVar:
+		if t, ok := g.funcParams[v.Name]; ok {
+			return t
+		}
 		if t, ok := g.locals[v.Name]; ok {
 			return t
 		}
@@ -196,6 +813,18 @@ func (g *watGen) typeOfAtom(a ir.Atom) string {
 
 func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 	switch e := c.(type) {
+	case ir.CApp:
+		// Check if calling a known function
+		if v, ok := e.Func.(ir.AVar); ok {
+			if fi, ok := g.funcs[v.Name]; ok {
+				if fi.arity == 1 {
+					return fi.retType
+				}
+				// Partial application returns a closure
+				return wtRef
+			}
+		}
+		return wtI64
 	case ir.CBinop:
 		switch e.Op {
 		case "Add", "Sub", "Mul", "Div", "Mod":
@@ -207,6 +836,8 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 		return g.typeOfAtom(e.Expr)
 	case ir.CIf:
 		return g.typeOfExpr(e.Then)
+	case ir.CLambda:
+		return wtRef
 	}
 	return wtI64
 }
@@ -224,7 +855,7 @@ func (g *watGen) typeOfExpr(expr ir.Expr) string {
 }
 
 // ---------------------------------------------------------------------------
-// Emission
+// Emit expressions
 // ---------------------------------------------------------------------------
 
 func (g *watGen) emitExpr(expr ir.Expr) error {
@@ -249,6 +880,15 @@ func (g *watGen) emitAtom(a ir.Atom) error {
 		g.line("f64.const %g", v.Value)
 		return nil
 	case ir.AVar:
+		// Check if this is a top-level function used as a value
+		if fi, ok := g.funcs[v.Name]; ok {
+			// Only wrap as closure if it's not a param or local (shadowing)
+			_, isParam := g.funcParams[v.Name]
+			_, isLocal := g.locals[v.Name]
+			if !isParam && !isLocal {
+				return g.emitFuncAsValue(fi)
+			}
+		}
 		g.line("local.get $%s", v.Name)
 		return nil
 	case ir.ABool:
@@ -263,18 +903,217 @@ func (g *watGen) emitAtom(a ir.Atom) error {
 	}
 }
 
+// emitFuncAsValue wraps a top-level function in a closure struct so it can
+// be passed as a value (e.g., as an argument to a higher-order function).
+func (g *watGen) emitFuncAsValue(fi *funcInfo) error {
+	if fi.arity > 1 {
+		return fmt.Errorf("codegen: function %s (arity %d) used as value — partial application not yet supported", fi.name, fi.arity)
+	}
+
+	wrapperName, exists := g.funcWrappers[fi.name]
+	if !exists {
+		wrapperName = fmt.Sprintf("$%s__wrap", fi.name)
+		g.funcWrappers[fi.name] = wrapperName
+	}
+
+	g.funcRefs[wrapperName] = true
+	g.line("(struct.new $closure (ref.func %s))", wrapperName)
+	return nil
+}
+
 func (g *watGen) emitCExpr(c ir.CExpr) error {
 	switch e := c.(type) {
+	case ir.CApp:
+		return g.emitApp(e)
 	case ir.CBinop:
 		return g.emitBinop(e)
 	case ir.CUnaryMinus:
 		return g.emitUnaryMinus(e)
 	case ir.CIf:
 		return g.emitIf(e)
+	case ir.CLambda:
+		return g.emitClosureCreate(e)
 	default:
 		return fmt.Errorf("unsupported cexpr: %T", c)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Function calls
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emitApp(e ir.CApp) error {
+	v, isVar := e.Func.(ir.AVar)
+	if !isVar {
+		return fmt.Errorf("codegen: non-variable function application not supported")
+	}
+
+	// Direct call to known function
+	if fi, ok := g.funcs[v.Name]; ok {
+		if fi.arity == 1 {
+			// Saturated call: emit arg, call
+			if err := g.emitAtom(e.Arg); err != nil {
+				return err
+			}
+			g.line("call $%s", fi.name)
+			return nil
+		}
+		// Partial application of multi-arg function — the saturated call
+		// detector handles the common case. If we get here, it means
+		// this single CApp wasn't part of a detected chain.
+		return fmt.Errorf("codegen: partial application of %s (arity %d) not yet supported; provide all arguments", fi.name, fi.arity)
+	}
+
+	// Call through closure reference (the variable holds a ref $closure)
+	if err := g.emitCallRef(v.Name, e.Arg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (g *watGen) emitCallRef(closureVar string, arg ir.Atom) error {
+	// call_ref $ft_apply: stack = [self, arg, funcref]
+	g.line("(local.get $%s)", closureVar) // self
+	if err := g.emitAtom(arg); err != nil {
+		return err
+	}
+	g.line("(struct.get $closure $fn (local.get $%s))", closureVar) // funcref
+	g.line("(call_ref $ft_apply)")
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Let bindings with saturated call detection
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emitLet(e ir.ELet) error {
+	// Detect saturated multi-arg calls:
+	// let _t = f arg1 in _t arg2  (where f has arity 2)
+	if app, ok := e.Bind.(ir.CApp); ok {
+		if fvar, ok := app.Func.(ir.AVar); ok {
+			if fi, ok := g.funcs[fvar.Name]; ok && fi.arity > 1 {
+				// Check if the body immediately uses _t in another application
+				if result, ok := g.trySaturatedCall(fi, []ir.Atom{app.Arg}, e.Name, e.Body); ok {
+					return result
+				}
+			}
+		}
+	}
+
+	// Normal let: emit bind, set local, emit body
+	if err := g.emitCExpr(e.Bind); err != nil {
+		return err
+	}
+	g.line("local.set $%s", e.Name)
+	return g.emitExpr(e.Body)
+}
+
+// trySaturatedCall detects chains of let-bound partial applications that
+// resolve to a saturated direct call.
+func (g *watGen) trySaturatedCall(fi *funcInfo, args []ir.Atom, tempName string, body ir.Expr) (error, bool) {
+	if len(args) == fi.arity {
+		// Saturated! Emit direct call
+		for _, arg := range args {
+			if err := g.emitAtom(arg); err != nil {
+				return err, true
+			}
+		}
+		g.line("call $%s", fi.name)
+		return nil, true
+	}
+
+	// Check if body is: EComplex{CApp{tempName, nextArg}}
+	if ec, ok := body.(ir.EComplex); ok {
+		if app, ok := ec.C.(ir.CApp); ok {
+			if v, ok := app.Func.(ir.AVar); ok && v.Name == tempName {
+				return g.trySaturatedCall(fi, append(args, app.Arg), tempName, nil)
+			}
+		}
+	}
+
+	// Check if body is: ELet{newTemp, CApp{tempName, nextArg}, restBody}
+	if let, ok := body.(ir.ELet); ok {
+		if app, ok := let.Bind.(ir.CApp); ok {
+			if v, ok := app.Func.(ir.AVar); ok && v.Name == tempName {
+				newArgs := append(args, app.Arg)
+				if len(newArgs) == fi.arity {
+					// Saturated! Emit call, then set temp and continue
+					for _, arg := range newArgs {
+						if err := g.emitAtom(arg); err != nil {
+							return err, true
+						}
+					}
+					g.line("call $%s", fi.name)
+					// The call result replaces the let binding
+					g.line("local.set $%s", let.Name)
+					err := g.emitExpr(let.Body)
+					return err, true
+				}
+				// Continue chaining
+				return g.trySaturatedCall(fi, newArgs, let.Name, let.Body)
+			}
+		}
+	}
+
+	return nil, false
+}
+
+// ---------------------------------------------------------------------------
+// Closures
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emitClosureCreate(lam ir.CLambda) error {
+	// Find the corresponding lifted lambda
+	for i := range g.lambdas {
+		lf := &g.lambdas[i]
+		// Match by param name and body (simple heuristic)
+		if lf.param == lam.Param {
+			closureType := "$closure"
+			nCaps := len(lf.captures)
+			if nCaps > 0 {
+				closureType = fmt.Sprintf("$closure_%d", nCaps)
+			}
+
+			g.line("(struct.new %s", closureType)
+			g.indent++
+			g.funcRefs[lf.name] = true
+			g.line("(ref.func %s)", lf.name)
+			for _, cap := range lf.captures {
+				g.line("(local.get $%s)", cap)
+			}
+			g.indent--
+			g.line(")")
+			return nil
+		}
+	}
+
+	return fmt.Errorf("codegen: lambda not found in lifted lambdas (param=%s)", lam.Param)
+}
+
+// emitFuncWrapper generates a wrapper function that allows a top-level function
+// to be called through the closure calling convention ($ft_apply).
+func (g *watGen) emitFuncWrapper(fi *funcInfo, wrapperName string) {
+	// Wrapper must match $ft_apply exactly (same type index from rec group)
+	g.line("(func %s (type $ft_apply) (param $self (ref null $closure)) (param $arg i64) (result i64)",
+		wrapperName)
+	g.indent++
+	// Convert arg from i64 to the function's expected param type if needed
+	g.line("local.get $arg")
+	if fi.params[0].wasmType != wtI64 {
+		g.emitConvert(wtI64, fi.params[0].wasmType)
+	}
+	g.line("call $%s", fi.name)
+	// Convert return to i64 if needed
+	if fi.retType != wtI64 {
+		g.emitConvert(fi.retType, wtI64)
+	}
+	g.indent--
+	g.line(")")
+}
+
+// ---------------------------------------------------------------------------
+// Binary operators
+// ---------------------------------------------------------------------------
 
 func (g *watGen) emitBinop(e ir.CBinop) error {
 	opType := g.typeOfAtom(e.Left)
@@ -382,11 +1221,31 @@ func (g *watGen) emitIf(e ir.CIf) error {
 	return nil
 }
 
-func (g *watGen) emitLet(e ir.ELet) error {
-	// Locals already declared at function top
-	if err := g.emitCExpr(e.Bind); err != nil {
-		return err
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func copyScope(m map[string]bool) map[string]bool {
+	c := make(map[string]bool, len(m))
+	for k, v := range m {
+		c[k] = v
 	}
-	g.line("local.set $%s", e.Name)
-	return g.emitExpr(e.Body)
+	return c
+}
+
+func containsStr(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
 }
