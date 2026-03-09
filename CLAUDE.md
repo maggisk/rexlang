@@ -20,13 +20,15 @@ RexLang is a functional language with algebraic data types and pattern matching.
 examples/          .rex example programs (one per feature)
 go.mod             module github.com/maggisk/rexlang
 cmd/
-  rex/main.go      CLI: run file, --test, REPL
+  rex/main.go      CLI: run file, --test, --compile, REPL
 internal/
   lexer/           Token + Tokenize()
   ast/             All AST node types (Expr, Pattern, TySyntax interfaces)
   parser/          Recursive-descent parser; offside rule via caseArmCol
   types/           TVar, TCon, Scheme; Unify, Generalize, ApplySubst, etc.
   typechecker/     Algorithm W (check_program, check_module, prelude cache)
+  ir/              A-normal form intermediate representation; Lowerer (AST → ANF)
+  codegen/         WAT emitter (IR → WebAssembly Text); assembled via wasm-tools
   eval/
     values.go      Value interface + all value types; StructuralEq, ValueToString
     eval.go        Eval(), EvalToplevel(), RunProgram(), RunTests(), REPL helpers
@@ -51,6 +53,10 @@ go build -o rex ./cmd/rex/
 # run tests in a .rex file (no main required)
 ./rex --test examples/testing.rex
 ./rex --test internal/stdlib/rexfiles/List.rex
+
+# compile to WebAssembly (requires wasm-tools)
+./rex --compile examples/hello.rex    # produces hello.wasm + hello.wat
+wasmtime hello.wasm                   # run with any WASI runtime
 
 # --safe flag: promote warnings (todo usage)to errors
 ./rex --safe examples/io.rex
@@ -249,8 +255,8 @@ export opaque type Rng = | Rng Int
 
 Ordered by dependency — each step builds on the previous:
 
-1. [ ] **IR (A-normal form)** — lower typechecked AST to ANF where every subexpression is named; carry type annotations for codegen; pattern match compilation to decision trees
-2. [ ] **Toolchain bootstrap** — emit WAT for `main _ = 0`, assemble with `wasm-tools`, run with Wasmtime; prove end-to-end pipeline
+1. [x] **IR (A-normal form)** — lower typechecked AST to ANF where every subexpression is named; carry type annotations for codegen; pattern match compilation to decision trees
+2. [x] **Toolchain bootstrap** — `--compile` flag emits WAT, assembles with `wasm-tools`; end-to-end tests with Wasmtime; `main _ = <int-expr>` works with arithmetic, if/else, let bindings
 3. [ ] **Primitives + arithmetic** — Int (`i64`), Float (`f64`), Bool (`i32`), basic operators
 4. [ ] **Functions + closures** — calling convention, closure structs (funcref + captured env), currying via partial application
 5. [ ] **ADTs + pattern matching** — `struct` subtypes with tag field, branch on tag + downcast; exhaustiveness already checked
@@ -277,7 +283,7 @@ Key design decisions:
 - **`()` unit**: zero-element tuple; `TUnit = TCon("Unit", [])` already existed; added `ast.Unit`, `ast.PUnit`, `VUnit`, `parse_atom`/`parse_atom_pattern` handling
 - **Error handling**: IO functions return `Result ok String` instead of raising; `getEnv` returns `Maybe String`; use `Std:Result` or `Std:Maybe` to handle failures
 - **Type system**: full Hindley-Milner inference; optional Elm-style annotations (`name : TypeSig` on separate line before `let`)
-- **Compilation target**: WasmGC — emit WAT, assemble with `wasm-tools`. Runs in browsers natively and on servers via a Wasm runtime (Wasmtime/Wasmer/WasmEdge). ADTs map to WasmGC `struct` subtypes; TCO via `return_call`.
+- **Compilation target**: WasmGC — emit WAT, assemble with `wasm-tools`. Runs in browsers natively and on servers via a Wasm runtime (Wasmtime/Wasmer/WasmEdge). ADTs map to WasmGC `struct` subtypes; TCO via `return_call`. Pipeline: `--compile` flag → parse → typecheck → IR lowering (ANF) → WAT emission (`internal/codegen`) → `wasm-tools parse` → `.wasm`. Currently supports `main _ = <int-expr>` with arithmetic, if/else, let bindings.
 - **Concurrency**: actors are a stdlib library / set of builtins, not a language feature. `Std:Process` ships five primitives (`spawn`, `send`, `receive`, `self`, `call`) as Go builtins. Require `import Std:Process` — not injected globally. `spawn` runs a Rex closure in a new goroutine with its own mailbox; `call` implements synchronous request-reply. API stable; internals could swap for WASI threads later.
 - **No hot reloading** for now
 - **Exhaustiveness checking**: planned static pass (post-HM); `__ctor_families__` registry in type env tracks constructor siblings

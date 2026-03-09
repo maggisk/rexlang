@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/chzyer/readline"
 	"github.com/maggisk/rexlang/internal/ast"
+	"github.com/maggisk/rexlang/internal/codegen"
 	"github.com/maggisk/rexlang/internal/eval"
+	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/lexer"
 	"github.com/maggisk/rexlang/internal/parser"
 	"github.com/maggisk/rexlang/internal/stdlib"
@@ -41,6 +44,14 @@ func main() {
 
 	if len(args) == 0 {
 		repl()
+		return
+	}
+	if args[0] == "--compile" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: rex --compile <file.rex>")
+			os.Exit(1)
+		}
+		compileFile(args[1])
 		return
 	}
 	if args[0] == "--types" {
@@ -185,6 +196,84 @@ func setupSrcRoot(entryFile string) {
 	}
 	typechecker.SetSrcRoot(absSrc)
 	eval.SetSrcRoot(absSrc)
+}
+
+// ---------------------------------------------------------------------------
+// compileFile
+// ---------------------------------------------------------------------------
+
+func compileFile(path string) {
+	setupSrcRoot(path)
+
+	source, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Parse
+	exprs, err := parser.Parse(string(source))
+	if err != nil {
+		printErr("Parse error", err)
+		os.Exit(1)
+	}
+
+	if err := eval.ValidateToplevel(exprs); err != nil {
+		printErr("Syntax error", err)
+		os.Exit(1)
+	}
+
+	if err := parser.ValidateIndentation(exprs); err != nil {
+		printErr("Indentation error", err)
+		os.Exit(1)
+	}
+
+	exprs, err = typechecker.ReorderToplevel(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+
+	_, warnings, err := typechecker.CheckProgram(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+	handleWarnings(path, warnings)
+
+	// Lower to IR
+	l := ir.NewLowerer()
+	prog, err := l.LowerProgram(exprs)
+	if err != nil {
+		printErr("IR error", err)
+		os.Exit(1)
+	}
+
+	// Emit WAT
+	wat, err := codegen.EmitWAT(prog)
+	if err != nil {
+		printErr("Codegen error", err)
+		os.Exit(1)
+	}
+
+	// Determine output paths
+	base := strings.TrimSuffix(filepath.Base(path), ".rex")
+	watPath := base + ".wat"
+	wasmPath := base + ".wasm"
+
+	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing WAT: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Assemble with wasm-tools
+	out, err := exec.Command("wasm-tools", "parse", watPath, "-o", wasmPath).CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wasm-tools failed: %v\n%s", err, out)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Compiled %s → %s (%s)\n", path, wasmPath, watPath)
 }
 
 // ---------------------------------------------------------------------------
