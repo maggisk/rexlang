@@ -2,12 +2,13 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/chzyer/readline"
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/eval"
 	"github.com/maggisk/rexlang/internal/lexer"
@@ -488,6 +489,14 @@ func stdlibModuleForPath(absPath string) string {
 // REPL
 // ---------------------------------------------------------------------------
 
+func replHistoryPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".rexlang_history")
+}
+
 func repl() {
 	fmt.Println("RexLang v0.1.0 (Go)")
 	fmt.Println("Press Enter on a blank line to evaluate. Ctrl-D to exit.")
@@ -498,7 +507,6 @@ func repl() {
 		fmt.Fprintf(os.Stderr, "Failed to load prelude: %v\n", err)
 		os.Exit(1)
 	}
-	// Use the exported fields via the type
 	evalEnv, err := eval.LoadPreludeForREPL(nil)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load prelude: %v\n", err)
@@ -508,21 +516,42 @@ func repl() {
 	typeDefs := typechecker.CopyTypeDefs(preludeTC.TypeDefs)
 	tc := typechecker.NewTypeChecker()
 
-	scanner := bufio.NewScanner(os.Stdin)
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:          "rex> ",
+		HistoryFile:     replHistoryPath(),
+		InterruptPrompt: "^C",
+		EOFPrompt:       "",
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize readline: %v\n", err)
+		os.Exit(1)
+	}
+	defer rl.Close()
+
 	var buf []string
 
 	for {
-		prompt := "rex> "
 		if len(buf) > 0 {
-			prompt = "  .. "
+			rl.SetPrompt("  .. ")
+		} else {
+			rl.SetPrompt("rex> ")
 		}
-		fmt.Print(prompt)
 
-		if !scanner.Scan() {
+		line, err := rl.Readline()
+		if err == readline.ErrInterrupt {
+			if len(buf) > 0 {
+				buf = buf[:0]
+				continue
+			}
+			break
+		}
+		if err == io.EOF {
 			fmt.Println()
 			break
 		}
-		line := scanner.Text()
+		if err != nil {
+			break
+		}
 
 		if strings.TrimSpace(line) != "" {
 			buf = append(buf, line)
