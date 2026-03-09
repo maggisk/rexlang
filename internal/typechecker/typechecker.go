@@ -2557,6 +2557,10 @@ func typeEnvForModule(name string) TypeEnv {
 		for k, v := range bitwiseTypeEnv() {
 			result[k] = v
 		}
+	case "DateTime":
+		for k, v := range dateTimeTypeEnv() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -2616,6 +2620,15 @@ func bitwiseTypeEnv() TypeEnv {
 func randomTypeEnv() TypeEnv {
 	return TypeEnv{
 		"systemSeed": types.Scheme{Ty: types.TFun(types.TUnit, types.TInt)},
+	}
+}
+
+func dateTimeTypeEnv() TypeEnv {
+	return TypeEnv{
+		// dateTimeNow : () -> Int
+		"dateTimeNow": types.Scheme{Ty: types.TFun(types.TUnit, types.TInt)},
+		// dateTimeUtcOffset : () -> Int
+		"dateTimeUtcOffset": types.Scheme{Ty: types.TFun(types.TUnit, types.TInt)},
 	}
 }
 

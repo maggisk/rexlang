@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -993,6 +994,10 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 		for k, v := range BitwiseBuiltins() {
 			result[k] = v
 		}
+	case "DateTime":
+		for k, v := range DateTimeBuiltins() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -1078,6 +1083,21 @@ func RandomBuiltins() map[string]Value {
 		"systemSeed": makeBuiltin("systemSeed", func(_ Value) (Value, error) {
 			n := rand.IntN(2147483646) + 1 // [1, 2147483646]
 			return VInt{V: n}, nil
+		}),
+	}
+}
+
+// DateTimeBuiltins returns builtins for the DateTime module.
+func DateTimeBuiltins() map[string]Value {
+	return map[string]Value{
+		// dateTimeNow : () -> Int
+		"dateTimeNow": makeBuiltin("dateTimeNow", func(_ Value) (Value, error) {
+			return VInt{V: int(time.Now().UnixMilli())}, nil
+		}),
+		// dateTimeUtcOffset : () -> Int
+		"dateTimeUtcOffset": makeBuiltin("dateTimeUtcOffset", func(_ Value) (Value, error) {
+			_, offset := time.Now().Zone()
+			return VInt{V: offset / 60}, nil
 		}),
 	}
 }
