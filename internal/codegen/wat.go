@@ -3401,6 +3401,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 
 	// Emit a block-based pattern match:
 	// Get tag, then use nested if/else
+	openBlocks := 0
 	for i, arm := range e.Arms {
 		isLast := i == numArms-1
 		switch pat := arm.Pat.(type) {
@@ -3422,6 +3423,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
+				openBlocks++
 
 				// Bind pattern variables by extracting fields
 				if err := g.emitPatternBindings(scrut, scrutName, ci, pat.Args); err != nil {
@@ -3469,6 +3471,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
+				openBlocks++
 				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
@@ -3497,6 +3500,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
+				openBlocks++
 				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
@@ -3522,6 +3526,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
+				openBlocks++
 				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
@@ -3547,6 +3552,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
+				openBlocks++
 				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
@@ -3573,6 +3579,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
+				openBlocks++
 			}
 			// Bind head if PVar — unbox from anyref to concrete type
 			if pv, ok := pat.Head.(ir.PVar); ok {
@@ -3603,21 +3610,92 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 			}
 
 		case ir.PTuple:
-			// Tuple pattern: extract each field — unbox from anyref
+			// Tuple pattern: may have nested patterns (PCtor, PWild, PVar, etc.)
+			arity := len(pat.Pats)
+
+			// Check if this tuple pattern has any nested constructor patterns
+			hasNestedCtors := false
+			for _, subPat := range pat.Pats {
+				if _, ok := subPat.(ir.PCtor); ok {
+					hasNestedCtors = true
+					break
+				}
+			}
+
+			if hasNestedCtors && !isLast {
+				// Build condition: all nested ctor tags must match
+				// First, emit the combined condition
+				conditions := 0
+				for fi, subPat := range pat.Pats {
+					if cp, ok := subPat.(ir.PCtor); ok {
+						ci, ok := g.ctorToAdt[cp.Name]
+						if !ok {
+							return fmt.Errorf("codegen: unknown constructor %s in tuple pattern", cp.Name)
+						}
+						if err := g.emitAtom(scrut); err != nil {
+							return err
+						}
+						g.line("(struct.get $tuple%d $f%d)", arity, fi)
+						g.line("(ref.cast (ref $adt))")
+						g.line("(struct.get $adt $tag)")
+						g.line("(i32.const %d)", ci.tag)
+						g.line("i32.eq")
+						conditions++
+					}
+				}
+				// AND all conditions together
+				for c := 1; c < conditions; c++ {
+					g.line("i32.and")
+				}
+				g.line("(if (result %s)", resultType)
+				g.indent++
+				g.line("(then")
+				g.indent++
+				openBlocks++
+			}
+
+			// Bind pattern variables by extracting fields
 			for fi, subPat := range pat.Pats {
-				if pv, ok := subPat.(ir.PVar); ok {
-					arity := len(pat.Pats)
+				switch sp := subPat.(type) {
+				case ir.PVar:
 					if err := g.emitAtom(scrut); err != nil {
 						return err
 					}
 					g.line("(struct.get $tuple%d $f%d)", arity, fi)
-					fieldType := g.locals[pv.Name]
+					fieldType := g.locals[sp.Name]
 					g.emitUnbox(fieldType)
-					g.line("local.set $%s", pv.Name)
+					g.line("local.set $%s", sp.Name)
+				case ir.PCtor:
+					// Extract constructor fields
+					ci, ok := g.ctorToAdt[sp.Name]
+					if !ok {
+						return fmt.Errorf("codegen: unknown constructor %s in tuple pattern", sp.Name)
+					}
+					for ai, argPat := range sp.Args {
+						if pv, ok := argPat.(ir.PVar); ok {
+							if err := g.emitAtom(scrut); err != nil {
+								return err
+							}
+							g.line("(struct.get $tuple%d $f%d)", arity, fi)
+							g.line("(ref.cast (ref $%s_%s))", ci.typeName, ci.name)
+							g.line("(struct.get $%s_%s $f%d)", ci.typeName, ci.name, ai)
+							fieldType := g.locals[pv.Name]
+							g.emitUnbox(fieldType)
+							g.line("local.set $%s", pv.Name)
+						}
+					}
+				case ir.PWild:
+					// Nothing to bind
 				}
 			}
 			if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 				return err
+			}
+			if hasNestedCtors && !isLast {
+				g.indent--
+				g.line(")")
+				g.line("(else")
+				g.indent++
 			}
 
 		default:
@@ -3625,8 +3703,8 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 		}
 	}
 
-	// Close all the if/else blocks (one for each non-last arm)
-	for i := 0; i < numArms-1; i++ {
+	// Close all the if/else blocks
+	for i := 0; i < openBlocks; i++ {
 		g.indent--
 		g.line(")")
 		g.indent--

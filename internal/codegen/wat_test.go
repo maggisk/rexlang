@@ -1760,3 +1760,159 @@ main _ =
 		t.Fatalf("expected exit 115, got %d", got)
 	}
 }
+
+func TestE2EListMap(t *testing.T) {
+	code := `
+map f lst =
+    match lst
+        when [] ->
+            []
+        when [h|t] ->
+            f h :: map f t
+
+foldl f acc lst =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            foldl f (f acc h) t
+
+main _ = foldl (\acc x -> acc + x) 0 (map (\x -> x * 2) [1, 2, 3, 4, 5])
+`
+	// 2+4+6+8+10 = 30
+	if got := runWasm(t, code); got != 30 {
+		t.Fatalf("expected exit 30, got %d", got)
+	}
+}
+
+func TestE2EListFilter(t *testing.T) {
+	code := `
+filter f lst =
+    match lst
+        when [] ->
+            []
+        when [h|t] ->
+            if f h then
+                h :: filter f t
+            else
+                filter f t
+
+length lst =
+    match lst
+        when [] ->
+            0
+        when [_|t] ->
+            1 + length t
+
+main _ = length (filter (\x -> x > 3) [1, 2, 3, 4, 5, 6])
+`
+	// [4, 5, 6] -> length 3
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected exit 3, got %d", got)
+	}
+}
+
+func TestE2EMaybeADT(t *testing.T) {
+	code := `
+type Maybe a = Nothing | Just a
+
+fromMaybe default m =
+    match m
+        when Nothing ->
+            default
+        when Just v ->
+            v
+
+main _ =
+    let x = Just 42
+    in
+    let y = Nothing
+    in fromMaybe 0 x + fromMaybe 10 y
+`
+	// 42 + 10 = 52
+	if got := runWasm(t, code); got != 52 {
+		t.Fatalf("expected exit 52, got %d", got)
+	}
+}
+
+func TestE2EListFoldWithADT(t *testing.T) {
+	code := `
+type Maybe a = Nothing | Just a
+
+foldl f acc lst =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            foldl f (f acc h) t
+
+find pred lst =
+    match lst
+        when [] ->
+            Nothing
+        when [h|t] ->
+            if pred h then
+                Just h
+            else
+                find pred t
+
+fromMaybe default m =
+    match m
+        when Nothing ->
+            default
+        when Just v ->
+            v
+
+main _ = fromMaybe 0 (find (\x -> x > 3) [1, 2, 3, 4, 5])
+`
+	// finds 4
+	if got := runWasm(t, code); got != 4 {
+		t.Fatalf("expected exit 4, got %d", got)
+	}
+}
+
+func TestE2ETopLevelMutualRecursion(t *testing.T) {
+	code := `
+isEven n =
+    if n == 0 then
+        1
+    else
+        isOdd (n - 1)
+
+isOdd n =
+    if n == 0 then
+        0
+    else
+        isEven (n - 1)
+
+main _ = isEven 10 + isOdd 7
+`
+	// isEven 10 = 1, isOdd 7 = 1 -> 2
+	if got := runWasm(t, code); got != 2 {
+		t.Fatalf("expected exit 2, got %d", got)
+	}
+}
+
+func TestE2ENestedPatternMatch(t *testing.T) {
+	code := `
+type Maybe a = Nothing | Just a
+
+matchPair p =
+    match p
+        when (Just x, Just y) ->
+            x + y
+        when (Just x, Nothing) ->
+            x
+        when (Nothing, Just y) ->
+            y
+        when (Nothing, Nothing) ->
+            0
+
+main _ = matchPair (Just 30, Just 12)
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+// TestE2EStringLength — deferred until stdlib compilation support
