@@ -43,6 +43,7 @@ func EmitWAT(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		implFuncs:     make(map[string]*funcInfo),
 		implBodies:    make(map[string]ir.Expr),
 		dispatchFuncs: make(map[string]*dispatchFuncDef),
+		usedBuiltins:  make(map[string]bool),
 	}
 	return g.emit(prog)
 }
@@ -144,6 +145,9 @@ type watGen struct {
 	implFuncs     map[string]*funcInfo        // "Show_Int_show" → generated func info
 	implBodies    map[string]ir.Expr          // "Show_Int_show" → impl method body
 	dispatchFuncs map[string]*dispatchFuncDef // "dispatch_show" → dispatch function def
+
+	// builtin tracking
+	usedBuiltins map[string]bool // builtin names referenced in code
 
 	// current function context
 	currentFunc *funcInfo
@@ -364,6 +368,87 @@ func (g *watGen) analyze(prog *ir.Program) {
 	}
 	for _, body := range g.implBodies {
 		g.scanStrings(body)
+	}
+
+	// Fourth pass: detect builtin usage
+	for _, d := range prog.Decls {
+		dl, ok := d.(ir.DLet)
+		if !ok {
+			continue
+		}
+		fi := g.funcs[dl.Name]
+		if fi == nil {
+			continue
+		}
+		g.scanBuiltins(fi.body)
+	}
+	for _, body := range g.implBodies {
+		g.scanBuiltins(body)
+	}
+
+	// Resolve transitive builtin dependencies
+	if g.usedBuiltins["println"] || g.usedBuiltins["print"] {
+		// println/print for Int calls showInt
+		g.usedBuiltins["showInt"] = true
+		// println/print for Float calls showFloat (which calls showInt)
+		g.usedBuiltins["showFloat"] = true
+		// println/print for Bool needs "true"/"false" string literals
+		g.internString("true")
+		g.internString("false")
+	}
+	if g.usedBuiltins["showFloat"] {
+		g.usedBuiltins["showInt"] = true
+	}
+}
+
+// knownBuiltins is the set of builtin names that the codegen can emit inline.
+var knownBuiltins = map[string]bool{
+	"println":   true,
+	"print":     true,
+	"showInt":   true,
+	"showFloat": true,
+	"not":       true,
+}
+
+func (g *watGen) scanBuiltins(expr ir.Expr) {
+	switch e := expr.(type) {
+	case ir.EAtom:
+		g.checkAtomBuiltin(e.A)
+	case ir.EComplex:
+		g.scanCExprBuiltins(e.C)
+	case ir.ELet:
+		g.scanCExprBuiltins(e.Bind)
+		g.scanBuiltins(e.Body)
+	case ir.ELetRec:
+		for _, b := range e.Bindings {
+			g.scanCExprBuiltins(b.Bind)
+		}
+		g.scanBuiltins(e.Body)
+	}
+}
+
+func (g *watGen) scanCExprBuiltins(c ir.CExpr) {
+	switch e := c.(type) {
+	case ir.CApp:
+		if v, ok := e.Func.(ir.AVar); ok && knownBuiltins[v.Name] {
+			g.usedBuiltins[v.Name] = true
+		}
+		g.checkAtomBuiltin(e.Arg)
+	case ir.CIf:
+		g.scanBuiltins(e.Then)
+		g.scanBuiltins(e.Else)
+	case ir.CMatch:
+		for _, arm := range e.Arms {
+			g.scanBuiltins(arm.Body)
+		}
+	case ir.CLambda:
+		g.scanBuiltins(e.Body)
+	}
+}
+
+func (g *watGen) checkAtomBuiltin(a ir.Atom) {
+	if v, ok := a.(ir.AVar); ok && knownBuiltins[v.Name] {
+		g.usedBuiltins[v.Name] = true
 	}
 }
 
@@ -1008,8 +1093,11 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 		g.line("")
 	}
 
-	// WASI import: proc_exit
+	// WASI imports
 	g.line("(import \"wasi_snapshot_preview1\" \"proc_exit\" (func $proc_exit (param i32)))")
+	if g.needsWASIIO() {
+		g.line("(import \"wasi_snapshot_preview1\" \"fd_write\" (func $fd_write (param i32 i32 i32 i32) (result i32)))")
+	}
 	g.line("")
 
 	// Memory (required by WASI)
@@ -1080,6 +1168,22 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 		g.line("")
 	}
 
+	// WASI IO helper functions
+	if g.needsWASIIO() {
+		g.emitWASIHelpers()
+		g.line("")
+	}
+
+	// Builtin functions (showInt, showFloat)
+	if g.usedBuiltins["showInt"] {
+		g.emitShowInt()
+		g.line("")
+	}
+	if g.usedBuiltins["showFloat"] {
+		g.emitShowFloat()
+		g.line("")
+	}
+
 	// _start function — pass dummy arg for main's ignored parameter
 	g.line("(func (export \"_start\")")
 	g.indent++
@@ -1125,7 +1229,334 @@ func (g *watGen) needsClosures() bool {
 }
 
 func (g *watGen) needsGCTypes() bool {
-	return g.needsClosures() || len(g.adts) > 0 || len(g.stringData) > 0 || g.usesLists || len(g.usesTuples) > 0 || len(g.dispatchFuncs) > 0
+	return g.needsClosures() || len(g.adts) > 0 || g.needsStrings() || g.usesLists || len(g.usesTuples) > 0 || len(g.dispatchFuncs) > 0
+}
+
+func (g *watGen) needsStrings() bool {
+	return len(g.stringData) > 0 || g.usedBuiltins["showInt"] || g.usedBuiltins["showFloat"] || g.needsWASIIO()
+}
+
+func (g *watGen) needsWASIIO() bool {
+	return g.usedBuiltins["println"] || g.usedBuiltins["print"]
+}
+
+// ---------------------------------------------------------------------------
+// WASI IO helpers
+// ---------------------------------------------------------------------------
+
+// emitWASIHelpers emits $__print_str (write GC string to stdout) used by
+// println and print builtins. Memory layout:
+//   offset 0-3:  iovec.buf (i32) = 16
+//   offset 4-7:  iovec.len (i32)
+//   offset 8-11: nwritten  (i32, fd_write output)
+//   offset 16+:  string data buffer
+func (g *watGen) emitWASIHelpers() {
+	// $__print_str: copy GC string to linear memory, call fd_write
+	g.line(";; WASI IO: print GC string to stdout")
+	g.line("(func $__print_str (param $s (ref null $string))")
+	g.indent++
+	g.line("(local $len i32)")
+	g.line("(local $i i32)")
+	g.line("(local.set $len (array.len (ref.as_non_null (local.get $s))))")
+	// Copy bytes to linear memory at offset 16
+	g.line("(local.set $i (i32.const 0))")
+	g.line("(block $done")
+	g.indent++
+	g.line("(loop $copy")
+	g.indent++
+	g.line("(br_if $done (i32.ge_u (local.get $i) (local.get $len)))")
+	g.line("(i32.store8 (i32.add (i32.const 16) (local.get $i))")
+	g.indent++
+	g.line("(array.get_u $string (ref.as_non_null (local.get $s)) (local.get $i)))")
+	g.indent--
+	g.line("(local.set $i (i32.add (local.get $i) (i32.const 1)))")
+	g.line("(br $copy)")
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	// Set up iovec: buf=16, len=len
+	g.line("(i32.store (i32.const 0) (i32.const 16))")
+	g.line("(i32.store (i32.const 4) (local.get $len))")
+	// fd_write(stdout=1, iovs=0, iovs_len=1, nwritten=8)
+	g.line("(drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))")
+	g.indent--
+	g.line(")")
+	g.line("")
+
+	// $__print_newline: write a single newline to stdout
+	g.line("(func $__print_newline")
+	g.indent++
+	g.line("(i32.store8 (i32.const 16) (i32.const 10))")
+	g.line("(i32.store (i32.const 0) (i32.const 16))")
+	g.line("(i32.store (i32.const 4) (i32.const 1))")
+	g.line("(drop (call $fd_write (i32.const 1) (i32.const 0) (i32.const 1) (i32.const 8)))")
+	g.indent--
+	g.line(")")
+}
+
+// ---------------------------------------------------------------------------
+// Builtin conversion functions
+// ---------------------------------------------------------------------------
+
+// emitShowInt emits $showInt: i64 → (ref null $string)
+// Converts an integer to its decimal string representation.
+func (g *watGen) emitShowInt() {
+	g.line(";; showInt: i64 → string")
+	g.line("(func $showInt (param $n i64) (result (ref null $string))")
+	g.indent++
+	g.line("(local $neg i32)")
+	g.line("(local $pos i32)")
+	g.line("(local $len i32)")
+	g.line("(local $i i32)")
+	g.line("(local $result (ref null $string))")
+	// Use linear memory at offset 1024-1044 as temp buffer (max 20 digits + sign)
+	g.line("(local.set $pos (i32.const 1044))")
+	// Handle negative
+	g.line("(if (i64.lt_s (local.get $n) (i64.const 0))")
+	g.indent++
+	g.line("(then")
+	g.indent++
+	g.line("(local.set $neg (i32.const 1))")
+	g.line("(local.set $n (i64.sub (i64.const 0) (local.get $n)))")
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	// Handle zero
+	g.line("(if (i64.eqz (local.get $n))")
+	g.indent++
+	g.line("(then")
+	g.indent++
+	g.line("(local.set $pos (i32.sub (local.get $pos) (i32.const 1)))")
+	g.line("(i32.store8 (local.get $pos) (i32.const 48))") // '0'
+	g.indent--
+	g.line(")")
+	g.line("(else")
+	g.indent++
+	// Extract digits
+	g.line("(block $done")
+	g.indent++
+	g.line("(loop $digits")
+	g.indent++
+	g.line("(br_if $done (i64.eqz (local.get $n)))")
+	g.line("(local.set $pos (i32.sub (local.get $pos) (i32.const 1)))")
+	g.line("(i32.store8 (local.get $pos)")
+	g.indent++
+	g.line("(i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_u (local.get $n) (i64.const 10)))))")
+	g.indent--
+	g.line("(local.set $n (i64.div_u (local.get $n) (i64.const 10)))")
+	g.line("(br $digits)")
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	// Prepend minus if negative
+	g.line("(if (local.get $neg)")
+	g.indent++
+	g.line("(then")
+	g.indent++
+	g.line("(local.set $pos (i32.sub (local.get $pos) (i32.const 1)))")
+	g.line("(i32.store8 (local.get $pos) (i32.const 45))") // '-'
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	// Length = 1044 - pos
+	g.line("(local.set $len (i32.sub (i32.const 1044) (local.get $pos)))")
+	// Create GC string array and copy
+	g.line("(local.set $result (array.new_default $string (local.get $len)))")
+	g.line("(local.set $i (i32.const 0))")
+	g.line("(block $done2")
+	g.indent++
+	g.line("(loop $copy")
+	g.indent++
+	g.line("(br_if $done2 (i32.ge_u (local.get $i) (local.get $len)))")
+	g.line("(array.set $string (ref.as_non_null (local.get $result))")
+	g.indent++
+	g.line("(local.get $i)")
+	g.line("(i32.load8_u (i32.add (local.get $pos) (local.get $i))))")
+	g.indent--
+	g.line("(local.set $i (i32.add (local.get $i) (i32.const 1)))")
+	g.line("(br $copy)")
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	g.line("(local.get $result)")
+	g.indent--
+	g.line(")")
+}
+
+// emitShowFloat emits $showFloat: f64 → (ref null $string)
+// Basic float-to-string conversion using dtoa-style algorithm.
+func (g *watGen) emitShowFloat() {
+	// For now, emit a simple wrapper that converts float to int and shows that,
+	// plus a decimal point. Full dtoa is complex — this is a placeholder.
+	// TODO: implement proper float formatting
+	g.line(";; showFloat: f64 → string (placeholder — truncates to int)")
+	g.line("(func $showFloat (param $f f64) (result (ref null $string))")
+	g.indent++
+	g.line("(call $showInt (i64.trunc_f64_s (local.get $f)))")
+	g.indent--
+	g.line(")")
+}
+
+// typeOfBuiltinApp returns the wasm result type for a builtin application.
+func (g *watGen) typeOfBuiltinApp(name string, arg ir.Atom) string {
+	switch name {
+	case "println", "print":
+		// a -> a: returns same type as argument
+		return g.typeOfAtom(arg)
+	case "showInt", "showFloat":
+		return wtStringRef
+	case "not":
+		return wtI32
+	default:
+		return wtAnyRef
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Builtin call emission
+// ---------------------------------------------------------------------------
+
+// emitBuiltinApp emits inline code for a builtin function call.
+// Builtins are expanded at the call site rather than being separate wasm functions.
+func (g *watGen) emitBuiltinApp(name string, arg ir.Atom) error {
+	argType := g.typeOfAtom(arg)
+
+	switch name {
+	case "println":
+		return g.emitBuiltinPrint(arg, argType, true)
+
+	case "print":
+		return g.emitBuiltinPrint(arg, argType, false)
+
+	case "showInt":
+		if err := g.emitAtom(arg); err != nil {
+			return err
+		}
+		if argType != wtI64 {
+			g.emitConvert(argType, wtI64)
+		}
+		g.line("call $showInt")
+		return nil
+
+	case "showFloat":
+		if err := g.emitAtom(arg); err != nil {
+			return err
+		}
+		if argType != wtF64 {
+			g.emitConvert(argType, wtF64)
+		}
+		g.line("call $showFloat")
+		return nil
+
+	case "not":
+		if err := g.emitAtom(arg); err != nil {
+			return err
+		}
+		if argType != wtI32 {
+			g.emitConvert(argType, wtI32)
+		}
+		g.line("(i32.eqz)")
+		return nil
+
+	default:
+		return fmt.Errorf("codegen: unknown builtin %s", name)
+	}
+}
+
+// emitBuiltinPrint handles println/print for any type. Converts the value to
+// a string, prints it, and returns the original value.
+func (g *watGen) emitBuiltinPrint(arg ir.Atom, argType string, newline bool) error {
+	switch argType {
+	case wtStringRef:
+		// Print the string directly, return the same string
+		if err := g.emitAtom(arg); err != nil {
+			return err
+		}
+		g.line("call $__print_str")
+		if newline {
+			g.line("call $__print_newline")
+		}
+		// Return the original value
+		return g.emitAtom(arg)
+
+	case wtI64:
+		// Convert to string, print, return original int
+		if err := g.emitAtom(arg); err != nil {
+			return err
+		}
+		g.line("call $showInt")
+		g.line("call $__print_str")
+		if newline {
+			g.line("call $__print_newline")
+		}
+		return g.emitAtom(arg)
+
+	case wtF64:
+		if err := g.emitAtom(arg); err != nil {
+			return err
+		}
+		g.line("call $showFloat")
+		g.line("call $__print_str")
+		if newline {
+			g.line("call $__print_newline")
+		}
+		return g.emitAtom(arg)
+
+	case wtI32:
+		// Bool: print "true" or "false"
+		if err := g.emitAtom(arg); err != nil {
+			return err
+		}
+		// Convert bool to string: use if/else
+		trueIdx := g.internString("true")
+		falseIdx := g.internString("false")
+		g.line("(if (result (ref null $string))")
+		g.indent++
+		g.line("(then (array.new_data $string $d%d (i32.const 0) (i32.const 4)))", trueIdx)
+		g.line("(else (array.new_data $string $d%d (i32.const 0) (i32.const 5)))", falseIdx)
+		g.indent--
+		g.line(")")
+		g.line("call $__print_str")
+		if newline {
+			g.line("call $__print_newline")
+		}
+		return g.emitAtom(arg)
+
+	default:
+		// For anyref/complex types: try to use show trait dispatch if available,
+		// otherwise just print "<value>"
+		if _, ok := g.dispatchFuncs["dispatch_show"]; ok {
+			// Use Show trait dispatch
+			if err := g.emitAtom(arg); err != nil {
+				return err
+			}
+			g.emitBox(argType)
+			g.line("call $dispatch_show")
+			g.emitUnbox(wtStringRef)
+			g.line("call $__print_str")
+			if newline {
+				g.line("call $__print_newline")
+			}
+			return g.emitAtom(arg)
+		}
+		// Fallback: print a placeholder
+		placeholderIdx := g.internString("<value>")
+		g.line("(array.new_data $string $d%d (i32.const 0) (i32.const 7))", placeholderIdx)
+		g.line("call $__print_str")
+		if newline {
+			g.line("call $__print_newline")
+		}
+		return g.emitAtom(arg)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1162,7 +1593,7 @@ func (g *watGen) emitGCTypes() {
 	}
 
 	// String type
-	if len(g.stringData) > 0 {
+	if g.needsStrings() {
 		g.line("(type $string (array (mut i8)))")
 	}
 
@@ -1417,8 +1848,11 @@ func (g *watGen) emitFunc(fi *funcInfo) error {
 	g.line("(func $%s%s (result %s)", fi.name, paramSig, fi.retType)
 	g.indent++
 
-	// Declare locals
+	// Declare locals (skip names that collide with params)
 	for _, name := range g.localOrder(fi.body) {
+		if _, isParam := g.funcParams[name]; isParam {
+			continue
+		}
 		g.line("(local $%s %s)", name, g.locals[name])
 	}
 
@@ -1824,6 +2258,10 @@ func (g *watGen) typeOfAtom(a ir.Atom) string {
 func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 	switch e := c.(type) {
 	case ir.CApp:
+		// Check if calling a builtin
+		if v, ok := e.Func.(ir.AVar); ok && knownBuiltins[v.Name] && !g.isLocalOrParam(v.Name) {
+			return g.typeOfBuiltinApp(v.Name, e.Arg)
+		}
 		// Check if calling a constructor
 		if v, ok := e.Func.(ir.AVar); ok {
 			if _, ok := g.ctorToAdt[v.Name]; ok {
@@ -2052,6 +2490,11 @@ func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 		return fmt.Errorf("codegen: non-variable function application not supported")
 	}
 
+	// Builtin intrinsics
+	if knownBuiltins[v.Name] && !g.isLocalOrParam(v.Name) {
+		return g.emitBuiltinApp(v.Name, e.Arg)
+	}
+
 	// Trait method dispatch (arity 1): redirect to impl function
 	if tmInfo, ok := g.traitMethods[v.Name]; ok && !g.isLocalOrParam(v.Name) {
 		argType := g.rexTypeName(e.Arg)
@@ -2209,7 +2652,12 @@ func (g *watGen) emitLetTail(e ir.ELet, tail bool) error {
 	if err := g.emitCExpr(e.Bind); err != nil {
 		return err
 	}
-	g.line("local.set $%s", e.Name)
+	// If name collides with a param, drop the value (can't shadow param as local)
+	if _, isParam := g.funcParams[e.Name]; isParam {
+		g.line("drop")
+	} else {
+		g.line("local.set $%s", e.Name)
+	}
 	return g.emitExprTail(e.Body, tail)
 }
 
@@ -2396,7 +2844,10 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 	scrut := e.Scrutinee
 	scrutName := ""
 	if v, ok := scrut.(ir.AVar); ok {
-		scrutName = v.Name
+		// Only use as scrutinee name if it's a local/param, not a constructor
+		if _, isCtor := g.ctorToAdt[v.Name]; !isCtor {
+			scrutName = v.Name
+		}
 	}
 
 	// Determine the number of arms
@@ -2430,10 +2881,10 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 
 				// Bind pattern variables by extracting fields
-				if err := g.emitPatternBindings(scrutName, ci, pat.Args); err != nil {
+				if err := g.emitPatternBindings(scrut, scrutName, ci, pat.Args); err != nil {
 					return err
 				}
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 
@@ -2443,10 +2894,10 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 			} else {
 				// Last arm: no condition check (catch-all or final branch)
-				if err := g.emitPatternBindings(scrutName, ci, pat.Args); err != nil {
+				if err := g.emitPatternBindings(scrut, scrutName, ci, pat.Args); err != nil {
 					return err
 				}
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 			}
@@ -2460,7 +2911,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				}
 				g.line("local.set $%s", pv.Name)
 			}
-			if err := g.emitExprTail(arm.Body, tail); err != nil {
+			if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 				return err
 			}
 
@@ -2475,7 +2926,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 				g.indent--
@@ -2483,7 +2934,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.line("(else")
 				g.indent++
 			} else {
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 			}
@@ -2503,7 +2954,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 				g.indent--
@@ -2511,7 +2962,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.line("(else")
 				g.indent++
 			} else {
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 			}
@@ -2528,7 +2979,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 				g.indent--
@@ -2536,7 +2987,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.line("(else")
 				g.indent++
 			} else {
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 			}
@@ -2553,7 +3004,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.indent++
 				g.line("(then")
 				g.indent++
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 				g.indent--
@@ -2561,7 +3012,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.line("(else")
 				g.indent++
 			} else {
-				if err := g.emitExprTail(arm.Body, tail); err != nil {
+				if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 					return err
 				}
 			}
@@ -2598,7 +3049,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				g.line("(struct.get $list_cons $tail (ref.cast (ref $list_cons)))")
 				g.line("local.set $%s", pv.Name)
 			}
-			if err := g.emitExprTail(arm.Body, tail); err != nil {
+			if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 				return err
 			}
 			if !isLast {
@@ -2622,7 +3073,7 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 					g.line("local.set $%s", pv.Name)
 				}
 			}
-			if err := g.emitExprTail(arm.Body, tail); err != nil {
+			if err := g.emitMatchArmBody(arm.Body, resultType, tail); err != nil {
 				return err
 			}
 
@@ -2642,16 +3093,40 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 	return nil
 }
 
+// emitMatchArmBody emits the body of a match arm and inserts unboxing
+// if the body's type doesn't match the match result type.
+// This handles polymorphic ADT pattern variables (typed as anyref)
+// that need to be unboxed to concrete types (i64, f64, i32).
+func (g *watGen) emitMatchArmBody(body ir.Expr, resultType string, tail bool) error {
+	if err := g.emitExprTail(body, tail); err != nil {
+		return err
+	}
+	bodyType := g.typeOfExpr(body)
+	if bodyType != resultType && bodyType == wtAnyRef && !isRefType(resultType) {
+		g.emitUnbox(resultType)
+	}
+	return nil
+}
+
 // emitPatternBindings extracts fields from an ADT struct and binds them
 // to the pattern variables.
-func (g *watGen) emitPatternBindings(scrutName string, ci *ctorInfo, pats []ir.Pattern) error {
+func (g *watGen) emitPatternBindings(scrut ir.Atom, scrutName string, ci *ctorInfo, pats []ir.Pattern) error {
 	for i, pat := range pats {
 		switch p := pat.(type) {
 		case ir.PVar:
 			// Extract field i from the constructor struct
 			ctorType := fmt.Sprintf("$%s_%s", ci.typeName, ci.name)
-			g.line("(struct.get %s $f%d (ref.cast (ref %s) (local.get $%s)))",
-				ctorType, i, ctorType, scrutName)
+			if scrutName != "" {
+				g.line("(struct.get %s $f%d (ref.cast (ref %s) (local.get $%s)))",
+					ctorType, i, ctorType, scrutName)
+			} else {
+				// Scrutinee isn't a local variable — re-emit the atom
+				if err := g.emitAtom(scrut); err != nil {
+					return err
+				}
+				g.line("(ref.cast (ref %s))", ctorType)
+				g.line("(struct.get %s $f%d)", ctorType, i)
+			}
 			// Unbox from anyref if needed
 			fieldType := wtAnyRef
 			if i < len(ci.fieldTypes) {

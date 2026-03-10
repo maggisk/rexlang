@@ -12,7 +12,7 @@ import (
 	"github.com/maggisk/rexlang/internal/typechecker"
 )
 
-// compileCode runs the full pipeline: parse → typecheck → lower → WAT.
+// compileCode runs the full pipeline: parse → typecheck → resolve imports → lower → WAT.
 func compileCode(t *testing.T, code string) string {
 	t.Helper()
 	exprs, err := parser.Parse(code)
@@ -23,8 +23,14 @@ func compileCode(t *testing.T, code string) string {
 	if err != nil {
 		t.Fatalf("typecheck error: %v", err)
 	}
+	// Resolve imports: collect module type/trait/impl/function declarations
+	moduleDecls, err := ir.ResolveImports(exprs, "")
+	if err != nil {
+		t.Fatalf("resolve imports: %v", err)
+	}
+	allExprs := append(moduleDecls, exprs...)
 	l := ir.NewLowerer()
-	prog, err := l.LowerProgram(exprs)
+	prog, err := l.LowerProgram(allExprs)
 	if err != nil {
 		t.Fatalf("lower error: %v", err)
 	}
@@ -1099,5 +1105,218 @@ main _ =
 `
 	if got := runWasm(t, code); got != 1 {
 		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Builtin tests
+// ---------------------------------------------------------------------------
+
+func TestE2EBuiltinNot(t *testing.T) {
+	code := `
+main _ =
+    if not true then
+        1
+    else
+        0
+`
+	if got := runWasm(t, code); got != 0 {
+		t.Fatalf("expected exit 0, got %d", got)
+	}
+}
+
+func TestE2EBuiltinNotFalse(t *testing.T) {
+	code := `
+main _ =
+    if not false then
+        1
+    else
+        0
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
+
+// runWasmStdout compiles Rex source to .wasm and runs it, returning stdout and exit code.
+func runWasmStdout(t *testing.T, code string) (string, int) {
+	t.Helper()
+	if !hasCmd("wasm-tools") {
+		t.Skip("wasm-tools not found")
+	}
+	if !hasCmd("wasmtime") {
+		t.Skip("wasmtime not found")
+	}
+
+	wat := compileCode(t, code)
+
+	dir := t.TempDir()
+	watFile := filepath.Join(dir, "main.wat")
+	wasmFile := filepath.Join(dir, "main.wasm")
+
+	if err := os.WriteFile(watFile, []byte(wat), 0644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+
+	out, err := exec.Command("wasm-tools", "parse", watFile, "-o", wasmFile).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools parse: %v\n%s\nWAT:\n%s", err, out, wat)
+	}
+
+	cmd := exec.Command("wasmtime", "--wasm", "gc", "--wasm", "function-references", "--wasm", "tail-call", wasmFile)
+	out, err = cmd.CombinedOutput()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("wasmtime: %v\n%s", err, out)
+		}
+	}
+	return string(out), exitCode
+}
+
+func TestE2EPrintlnString(t *testing.T) {
+	code := `
+import Std:IO (println)
+
+main _ =
+    let _ = println "hello world"
+    in 0
+`
+	stdout, exitCode := runWasmStdout(t, code)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if strings.TrimRight(stdout, "\n") != "hello world" {
+		t.Fatalf("expected 'hello world', got %q", stdout)
+	}
+}
+
+func TestE2EPrintlnMultiple(t *testing.T) {
+	code := `
+import Std:IO (println)
+
+main _ =
+    let _ = println "hello"
+    in
+    let _ = println "world"
+    in 0
+`
+	stdout, exitCode := runWasmStdout(t, code)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	expected := "hello\nworld\n"
+	if stdout != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout)
+	}
+}
+
+func TestE2EShowInt(t *testing.T) {
+	code := `
+import Std:IO (println)
+
+main _ =
+    let _ = println (showInt 42)
+    in 0
+`
+	stdout, exitCode := runWasmStdout(t, code)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if strings.TrimRight(stdout, "\n") != "42" {
+		t.Fatalf("expected '42', got %q", stdout)
+	}
+}
+
+func TestE2EShowIntNegative(t *testing.T) {
+	code := `
+import Std:IO (println)
+
+main _ =
+    let _ = println (showInt (0 - 123))
+    in 0
+`
+	stdout, exitCode := runWasmStdout(t, code)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if strings.TrimRight(stdout, "\n") != "-123" {
+		t.Fatalf("expected '-123', got %q", stdout)
+	}
+}
+
+func TestE2EPrintlnInt(t *testing.T) {
+	// println with int arg: should convert to string and print
+	code := `
+import Std:IO (println)
+
+main _ =
+    let _ = println 42
+    in 0
+`
+	stdout, exitCode := runWasmStdout(t, code)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if strings.TrimRight(stdout, "\n") != "42" {
+		t.Fatalf("expected '42', got %q", stdout)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Module import tests
+// ---------------------------------------------------------------------------
+
+func TestE2EImportMaybe(t *testing.T) {
+	code := `
+import Std:Maybe (Just, Nothing)
+
+main _ =
+    match Just 42
+        when Just n ->
+            n
+        when Nothing ->
+            0
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EImportMaybeNothing(t *testing.T) {
+	code := `
+import Std:Maybe (Just, Nothing)
+
+main _ =
+    match Nothing
+        when Just n ->
+            n
+        when Nothing ->
+            99
+`
+	if got := runWasm(t, code); got != 99 {
+		t.Fatalf("expected exit 99, got %d", got)
+	}
+}
+
+func TestE2EPrintlnBool(t *testing.T) {
+	code := `
+import Std:IO (println)
+
+main _ =
+    let _ = println true
+    in
+    let _ = println false
+    in 0
+`
+	stdout, exitCode := runWasmStdout(t, code)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	expected := "true\nfalse\n"
+	if stdout != expected {
+		t.Fatalf("expected %q, got %q", expected, stdout)
 	}
 }

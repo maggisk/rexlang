@@ -2207,6 +2207,11 @@ func getSrcRoot() string {
 	return srcRoot
 }
 
+// GetSrcRoot returns the current src/ directory root for user module resolution.
+func GetSrcRoot() string {
+	return getSrcRoot()
+}
+
 func pushImportStack(name string) {
 	importStackMu.Lock()
 	importStack = append(importStack, name)

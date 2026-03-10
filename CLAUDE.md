@@ -261,10 +261,13 @@ Ordered by dependency — each step builds on the previous:
 4. [x] **Functions + closures** — calling convention, closure structs (funcref + captured env), currying via partial application
 5. [x] **ADTs + pattern matching** — `struct` subtypes with tag field, branch on tag + downcast; exhaustiveness already checked
 6. [x] **Strings** — WasmGC `(array (mut i8))` for UTF-8 bytes; data segments for literals; `$string_eq` byte-by-byte comparison; string patterns in match
-7. [x] **Lists, tuples** — cons-cell lists (`$list`/`$list_cons` subtypes with tag+head+tail); tuple structs by arity; `PNil`/`PCons`/`PTuple` pattern matching; element type `i64` for now (polymorphic boxing is future work)
+7. [x] **Lists, tuples** — cons-cell lists (`$list`/`$list_cons` subtypes with tag+head+tail); tuple structs by arity; `PNil`/`PCons`/`PTuple` pattern matching; polymorphic elements via anyref boxing
 8. [x] **Tail calls** — `return_call` for TCO
-9. [ ] **Stdlib** — recompile pure Rex stdlib; WASI host imports for IO/Net/Env; JS host imports for browser (Temporal API for DateTime)
-10. [ ] **Traits** — runtime dispatch via `funcref` tables or indirect calls
+9. [x] **Polymorphic boxing** — box primitives to `anyref` (`$box_i64`, `$box_f64`, `ref.i31` for Bool); unbox at use sites; enables polymorphic data structures and trait dispatch
+10. [x] **Traits** — static dispatch when type is known at compile time; runtime dispatch via `br_on_cast` + `call_ref` when polymorphic; per-ADT supertypes for type testing; resolve functions return reusable funcrefs
+11. [ ] **Stdlib** — recompile pure Rex stdlib; WASI host imports for IO/Net/Env; JS host imports for browser (Temporal API for DateTime)
+12. [ ] **Actors** — depends on WASI threads or single-threaded event loop
+10. [ ] **Stdlib** — recompile pure Rex stdlib; WASI host imports for IO/Net/Env; JS host imports for browser (Temporal API for DateTime)
 11. [ ] **Actors** — depends on WASI threads or single-threaded event loop
 
 Key design decisions:

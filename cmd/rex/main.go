@@ -241,9 +241,18 @@ func compileFile(path string) {
 	}
 	handleWarnings(path, warnings)
 
+	// Resolve module imports: collect type/trait/impl/function declarations
+	// from imported modules so codegen has full program visibility.
+	moduleDecls, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot())
+	if err != nil {
+		printErr("Import resolution error", err)
+		os.Exit(1)
+	}
+	allExprs := append(moduleDecls, exprs...)
+
 	// Lower to IR
 	l := ir.NewLowerer()
-	prog, err := l.LowerProgram(exprs)
+	prog, err := l.LowerProgram(allExprs)
 	if err != nil {
 		printErr("IR error", err)
 		os.Exit(1)
