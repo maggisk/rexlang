@@ -137,8 +137,9 @@ type watGen struct {
 	stringDataIdx map[string]int // string value → index in stringData
 
 	// list/tuple usage tracking
-	usesLists  bool
-	usesTuples map[int]bool // tuple arity → true
+	usesLists        bool
+	usesStringConcat bool
+	usesTuples       map[int]bool // tuple arity → true
 
 	// trait dispatch
 	traitMethods  map[string]traitMethodInfo  // method name → trait info ("show" → Show)
@@ -399,6 +400,13 @@ func (g *watGen) analyze(prog *ir.Program) {
 	if g.usedBuiltins["showFloat"] {
 		g.usedBuiltins["showInt"] = true
 	}
+	// String interpolation may need showInt/showFloat for non-string parts
+	if g.usesStringConcat {
+		g.usedBuiltins["showInt"] = true
+		g.usedBuiltins["showFloat"] = true
+		g.internString("true")
+		g.internString("false")
+	}
 }
 
 // knownBuiltins is the set of builtin names that the codegen can emit inline.
@@ -476,6 +484,9 @@ func (g *watGen) scanCExprStrings(c ir.CExpr) {
 		g.scanAtomString(e.Func)
 		g.scanAtomString(e.Arg)
 	case ir.CBinop:
+		if e.Op == "Concat" {
+			g.usesStringConcat = true
+		}
 		g.scanAtomString(e.Left)
 		g.scanAtomString(e.Right)
 	case ir.CUnaryMinus:
@@ -505,6 +516,11 @@ func (g *watGen) scanCExprStrings(c ir.CExpr) {
 		g.usesTuples[len(e.Items)] = true
 		for _, item := range e.Items {
 			g.scanAtomString(item)
+		}
+	case ir.CStringInterp:
+		g.usesStringConcat = true
+		for _, part := range e.Parts {
+			g.scanAtomString(part)
 		}
 	}
 }
@@ -554,6 +570,118 @@ func (g *watGen) emitStringEq() {
 	g.line("(i32.const 1)")
 	g.indent--
 	g.line(")")
+}
+
+// emitStringConcat emits a helper that concatenates two $string arrays into a new one.
+func (g *watGen) emitStringConcat() {
+	g.line("(func $string_concat (param $a (ref null $string)) (param $b (ref null $string)) (result (ref null $string))")
+	g.indent++
+	g.line("(local $len_a i32)")
+	g.line("(local $len_b i32)")
+	g.line("(local $result (ref null $string))")
+	g.line("(local $i i32)")
+	// Get lengths
+	g.line("(local.set $len_a (array.len (local.get $a)))")
+	g.line("(local.set $len_b (array.len (local.get $b)))")
+	// Create new array of combined length, initialized to 0
+	g.line("(local.set $result (array.new $string (i32.const 0) (i32.add (local.get $len_a) (local.get $len_b))))")
+	// Copy bytes from $a
+	g.line("(local.set $i (i32.const 0))")
+	g.line("(block $done_a")
+	g.indent++
+	g.line("(loop $loop_a")
+	g.indent++
+	g.line("(br_if $done_a (i32.ge_u (local.get $i) (local.get $len_a)))")
+	g.line("(array.set $string (local.get $result) (local.get $i) (array.get_u $string (local.get $a) (local.get $i)))")
+	g.line("(local.set $i (i32.add (local.get $i) (i32.const 1)))")
+	g.line("(br $loop_a)")
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	// Copy bytes from $b
+	g.line("(local.set $i (i32.const 0))")
+	g.line("(block $done_b")
+	g.indent++
+	g.line("(loop $loop_b")
+	g.indent++
+	g.line("(br_if $done_b (i32.ge_u (local.get $i) (local.get $len_b)))")
+	g.line("(array.set $string (local.get $result) (i32.add (local.get $len_a) (local.get $i)) (array.get_u $string (local.get $b) (local.get $i)))")
+	g.line("(local.set $i (i32.add (local.get $i) (i32.const 1)))")
+	g.line("(br $loop_b)")
+	g.indent--
+	g.line(")")
+	g.indent--
+	g.line(")")
+	// Return result
+	g.line("(local.get $result)")
+	g.indent--
+	g.line(")")
+}
+
+// emitStringInterp emits code for string interpolation.
+// Each part is converted to a string (if not already) and concatenated.
+func (g *watGen) emitStringInterp(e ir.CStringInterp) error {
+	if len(e.Parts) == 0 {
+		// Empty interpolation → empty string
+		idx := g.internString("")
+		g.line("(array.new_data $string $d%d (i32.const 0) (i32.const 0))", idx)
+		return nil
+	}
+
+	// Emit first part as a string
+	if err := g.emitAtomAsString(e.Parts[0]); err != nil {
+		return err
+	}
+
+	// For each subsequent part, emit as string and concat
+	for _, part := range e.Parts[1:] {
+		if err := g.emitAtomAsString(part); err != nil {
+			return err
+		}
+		g.line("call $string_concat")
+	}
+
+	return nil
+}
+
+// emitAtomAsString emits an atom, converting it to a $string if needed.
+func (g *watGen) emitAtomAsString(a ir.Atom) error {
+	atomType := g.typeOfAtom(a)
+	switch atomType {
+	case wtStringRef:
+		return g.emitAtom(a)
+	case wtI64:
+		if err := g.emitAtom(a); err != nil {
+			return err
+		}
+		g.line("call $showInt")
+		return nil
+	case wtF64:
+		if err := g.emitAtom(a); err != nil {
+			return err
+		}
+		g.line("call $showFloat")
+		return nil
+	case wtI32:
+		// Bool → "true" or "false"
+		if err := g.emitAtom(a); err != nil {
+			return err
+		}
+		idxTrue := g.internString("true")
+		idxFalse := g.internString("false")
+		g.line("(if (result (ref null $string))")
+		g.indent++
+		g.line("(then (array.new_data $string $d%d (i32.const 0) (i32.const 4)))", idxTrue)
+		g.line("(else (array.new_data $string $d%d (i32.const 0) (i32.const 5)))", idxFalse)
+		g.indent--
+		g.line(")")
+		return nil
+	default:
+		// anyref — try to unbox and convert
+		// For now, just emit as-is (will need show trait dispatch later)
+		return g.emitAtom(a)
+	}
 }
 
 // scanFuncAsValue finds atoms that reference top-level functions in value position.
@@ -1162,9 +1290,13 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 		g.line("")
 	}
 
-	// String equality helper
-	if len(g.stringData) > 0 {
+	// String helpers
+	if g.needsStrings() {
 		g.emitStringEq()
+		g.line("")
+	}
+	if g.usesStringConcat {
+		g.emitStringConcat()
 		g.line("")
 	}
 
@@ -1233,7 +1365,7 @@ func (g *watGen) needsGCTypes() bool {
 }
 
 func (g *watGen) needsStrings() bool {
-	return len(g.stringData) > 0 || g.usedBuiltins["showInt"] || g.usedBuiltins["showFloat"] || g.needsWASIIO()
+	return len(g.stringData) > 0 || g.usesStringConcat || g.usedBuiltins["showInt"] || g.usedBuiltins["showFloat"] || g.needsWASIIO()
 }
 
 func (g *watGen) needsWASIIO() bool {
@@ -2258,6 +2390,10 @@ func (g *watGen) typeOfAtom(a ir.Atom) string {
 func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 	switch e := c.(type) {
 	case ir.CApp:
+		// Identity function: __id x → type of x
+		if v, ok := e.Func.(ir.AVar); ok && v.Name == "__id" {
+			return g.typeOfAtom(e.Arg)
+		}
 		// Check if calling a builtin
 		if v, ok := e.Func.(ir.AVar); ok && knownBuiltins[v.Name] && !g.isLocalOrParam(v.Name) {
 			return g.typeOfBuiltinApp(v.Name, e.Arg)
@@ -2313,6 +2449,8 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 			return leftType
 		case "Eq", "Neq", "Lt", "Gt", "Leq", "Geq", "And", "Or":
 			return wtI32
+		case "Concat":
+			return wtStringRef
 		}
 	case ir.CUnaryMinus:
 		return g.typeOfAtom(e.Expr)
@@ -2349,6 +2487,8 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 		return wtListRef
 	case ir.CTuple:
 		return wtTupleRef(len(e.Items))
+	case ir.CStringInterp:
+		return wtStringRef
 	}
 	return wtAnyRef
 }
@@ -2471,6 +2611,8 @@ func (g *watGen) emitCExprTail(c ir.CExpr, tail bool) error {
 		return g.emitList(e)
 	case ir.CTuple:
 		return g.emitTuple(e)
+	case ir.CStringInterp:
+		return g.emitStringInterp(e)
 	default:
 		return fmt.Errorf("unsupported cexpr: %T", c)
 	}
@@ -2488,6 +2630,11 @@ func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 	v, isVar := e.Func.(ir.AVar)
 	if !isVar {
 		return fmt.Errorf("codegen: non-variable function application not supported")
+	}
+
+	// Identity function: __id x → just emit x
+	if v.Name == "__id" {
+		return g.emitAtom(e.Arg)
 	}
 
 	// Builtin intrinsics
@@ -3270,7 +3417,27 @@ func (g *watGen) emitBinop(e ir.CBinop) error {
 			opType = wtI32
 		case "Eq", "Neq":
 			opType = wtI64 // default equality type
+		case "Concat":
+			opType = wtStringRef // string concat
 		}
+	}
+
+	// String/list concat: handle specially (no unboxing needed for string operands)
+	if e.Op == "Concat" {
+		if err := g.emitAtom(e.Left); err != nil {
+			return err
+		}
+		if leftType == wtAnyRef {
+			g.emitUnbox(wtStringRef)
+		}
+		if err := g.emitAtom(e.Right); err != nil {
+			return err
+		}
+		if rightType == wtAnyRef {
+			g.emitUnbox(wtStringRef)
+		}
+		g.line("call $string_concat")
+		return nil
 	}
 
 	// Emit left operand, unboxing from anyref if needed

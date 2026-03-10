@@ -1320,3 +1320,91 @@ main _ =
 		t.Fatalf("expected %q, got %q", expected, stdout)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// String concat tests
+// ---------------------------------------------------------------------------
+
+func TestE2EStringConcat(t *testing.T) {
+	code := `
+import Std:IO (println)
+
+main _ =
+    let _ = println ("hello" ++ " " ++ "world")
+    in 0
+`
+	stdout, exitCode := runWasmStdout(t, code)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if stdout != "hello world\n" {
+		t.Fatalf("expected %q, got %q", "hello world\n", stdout)
+	}
+}
+
+func TestE2EStringConcatResult(t *testing.T) {
+	code := `
+main _ =
+    let s = "ab" ++ "cd"
+    in if s == "abcd" then
+        42
+    else
+        0
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// String interpolation tests
+// ---------------------------------------------------------------------------
+
+func TestE2EStringInterpSimple(t *testing.T) {
+	code := `
+main _ =
+    if "hello ${"world"}" == "hello world" then
+        42
+    else
+        0
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EStringInterpInt(t *testing.T) {
+	code := `
+import Std:IO (println)
+
+main _ =
+    let _ = println "the answer is ${42}"
+    in 0
+`
+	stdout, exitCode := runWasmStdout(t, code)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if stdout != "the answer is 42\n" {
+		t.Fatalf("expected %q, got %q", "the answer is 42\n", stdout)
+	}
+}
+
+func TestE2EStringInterpVar(t *testing.T) {
+	code := `
+import Std:IO (println)
+
+main _ =
+    let name = "world"
+    in
+    let _ = println "hello ${name}!"
+    in 0
+`
+	stdout, exitCode := runWasmStdout(t, code)
+	if exitCode != 0 {
+		t.Fatalf("expected exit 0, got %d", exitCode)
+	}
+	if stdout != "hello world!\n" {
+		t.Fatalf("expected %q, got %q", "hello world!\n", stdout)
+	}
+}
