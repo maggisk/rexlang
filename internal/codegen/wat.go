@@ -2550,16 +2550,22 @@ func (g *watGen) emitAtom(a ir.Atom) error {
 // emitFuncAsValue wraps a top-level function in a closure struct so it can
 // be passed as a value (e.g., as an argument to a higher-order function).
 func (g *watGen) emitFuncAsValue(fi *funcInfo) error {
-	if fi.arity > 1 {
-		return fmt.Errorf("codegen: function %s (arity %d) used as value — partial application not yet supported", fi.name, fi.arity)
+	if fi.arity == 1 {
+		wrapperName, exists := g.funcWrappers[fi.name]
+		if !exists {
+			wrapperName = fmt.Sprintf("$%s__wrap", fi.name)
+			g.funcWrappers[fi.name] = wrapperName
+		}
+		g.funcRefs[wrapperName] = true
+		g.line("(struct.new $closure (ref.func %s))", wrapperName)
+		return nil
 	}
 
-	wrapperName, exists := g.funcWrappers[fi.name]
-	if !exists {
-		wrapperName = fmt.Sprintf("$%s__wrap", fi.name)
-		g.funcWrappers[fi.name] = wrapperName
-	}
-
+	// Multi-arg function used as value: create a closure whose apply function
+	// performs the first partial application (depth=0 → receives first arg → pa1).
+	paKey := fmt.Sprintf("%s__pa0", fi.name)
+	g.partialApps[paKey] = true
+	wrapperName := "$" + paKey
 	g.funcRefs[wrapperName] = true
 	g.line("(struct.new $closure (ref.func %s))", wrapperName)
 	return nil
@@ -2637,9 +2643,11 @@ func (g *watGen) emitPartialAppWrapper(fi *funcInfo, depth int, paKey string) {
 			g.maxCaps = newDepth
 		}
 
-		// Cast self to access existing captures
-		g.line("(local $self_cast (ref null $closure_%d))", depth)
-		g.line("(local.set $self_cast (ref.cast (ref null $closure_%d) (local.get $self)))", depth)
+		// Cast self to access existing captures (if any)
+		if depth > 0 {
+			g.line("(local $self_cast (ref null $closure_%d))", depth)
+			g.line("(local.set $self_cast (ref.cast (ref null $closure_%d) (local.get $self)))", depth)
+		}
 
 		// Create new closure with all previous captures + the new arg
 		g.funcRefs[nextWrapper] = true

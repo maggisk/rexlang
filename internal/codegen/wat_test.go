@@ -1495,3 +1495,124 @@ main _ = foldl (\acc x -> acc + x) 0 (myfilter (\x -> x > 2) [1, 2, 3, 4, 5])
 		t.Fatalf("expected exit 12, got %d", got)
 	}
 }
+
+func TestE2EFuncAsValueArity2(t *testing.T) {
+	code := `
+add a b = a + b
+
+apply f x = f x
+
+main _ = apply (add 10) 32
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EMultiArgFuncAsValue(t *testing.T) {
+	code := `
+add a b = a + b
+
+mymap f lst =
+    match lst
+        when [] ->
+            []
+        when [h|t] ->
+            f h :: mymap f t
+
+foldl f acc lst =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            foldl f (f acc h) t
+
+main _ = foldl add 0 [10, 20, 12]
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2EReverse(t *testing.T) {
+	code := `
+foldl f acc lst =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            foldl f (f acc h) t
+
+reverse lst = foldl (\acc x -> x :: acc) [] lst
+
+length lst =
+    match lst
+        when [] ->
+            0
+        when [_|t] ->
+            1 + length t
+
+head lst =
+    match lst
+        when [h|_] ->
+            h
+        when [] ->
+            0
+
+main _ = head (reverse [1, 2, 3])
+`
+	// reverse [1,2,3] = [3,2,1], head = 3
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected exit 3, got %d", got)
+	}
+}
+
+func TestE2EAppend(t *testing.T) {
+	code := `
+foldr f acc lst =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            f h (foldr f acc t)
+
+append a b = foldr (\x xs -> x :: xs) b a
+
+foldl f acc lst =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            foldl f (f acc h) t
+
+main _ = foldl (\acc x -> acc + x) 0 (append [1, 2] [3, 4, 5])
+`
+	// 1+2+3+4+5 = 15
+	if got := runWasm(t, code); got != 15 {
+		t.Fatalf("expected exit 15, got %d", got)
+	}
+}
+
+func TestE2EConcatMap(t *testing.T) {
+	code := `
+mymap f lst =
+    match lst
+        when [] ->
+            []
+        when [h|t] ->
+            f h :: mymap f t
+
+foldl f acc lst =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            foldl f (f acc h) t
+
+main _ = foldl (\acc x -> acc + x) 0 (mymap (\x -> x * x) [1, 2, 3, 4])
+`
+	// 1+4+9+16 = 30
+	if got := runWasm(t, code); got != 30 {
+		t.Fatalf("expected exit 30, got %d", got)
+	}
+}
