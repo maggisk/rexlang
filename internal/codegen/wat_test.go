@@ -1705,3 +1705,58 @@ main _ =
 		t.Fatalf("expected exit 42, got %d", got)
 	}
 }
+
+func TestE2ELetRecLocalRecursion(t *testing.T) {
+	code := `
+main _ =
+    let rec sum n =
+        if n == 0 then
+            0
+        else
+            n + sum (n - 1)
+    in sum 9
+`
+	// 9+8+7+6+5+4+3+2+1 = 45
+	if got := runWasm(t, code); got != 45 {
+		t.Fatalf("expected exit 45, got %d", got)
+	}
+}
+
+func TestE2ELetRecMutualRecursion(t *testing.T) {
+	code := `
+main _ =
+    let rec
+        isEven n =
+            if n == 0 then
+                1
+            else
+                isOdd (n - 1)
+        and isOdd n =
+            if n == 0 then
+                0
+            else
+                isEven (n - 1)
+    in isEven 10
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected exit 1, got %d", got)
+	}
+}
+
+func TestE2ELetRecWithCapture(t *testing.T) {
+	code := `
+main _ =
+    let offset = 100
+    in
+    let rec go n =
+        if n == 0 then
+            offset
+        else
+            n + go (n - 1)
+    in go 5
+`
+	// 5+4+3+2+1+100 = 115
+	if got := runWasm(t, code); got != 115 {
+		t.Fatalf("expected exit 115, got %d", got)
+	}
+}

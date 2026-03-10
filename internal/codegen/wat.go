@@ -86,14 +86,15 @@ type paramInfo struct {
 
 // lambdaFunc is a lifted lambda that becomes a wasm function.
 type lambdaFunc struct {
-	name      string   // generated func name
-	captures  []string // names of captured variables
-	capTypes  []string // wasm types of captures
-	param     string
-	paramType string // concrete wasm type of the parameter
-	retType   string
-	body ir.Expr
-	used bool // true after closure creation emitted
+	name        string   // generated func name
+	captures    []string // names of captured variables
+	capTypes    []string // wasm types of captures
+	param       string
+	paramType   string // concrete wasm type of the parameter
+	retType     string
+	body        ir.Expr
+	used        bool   // true after closure creation emitted
+	selfCapture string // non-empty if one capture is the closure itself (self-recursion)
 }
 
 // pendingCall tracks partial application chains for multi-arg call detection.
@@ -491,6 +492,11 @@ func (g *watGen) scanStrings(expr ir.Expr) {
 		g.scanCExprStrings(e.C)
 	case ir.ELet:
 		g.scanCExprStrings(e.Bind)
+		g.scanStrings(e.Body)
+	case ir.ELetRec:
+		for _, b := range e.Bindings {
+			g.scanCExprStrings(b.Bind)
+		}
 		g.scanStrings(e.Body)
 	}
 }
@@ -1269,10 +1275,19 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 	// Override main return type to i64 (exit code)
 	mainFI.retType = wtI64
 
-	// Determine max captures from lambdas in all function bodies
+	// Determine max captures from lambdas in all function bodies.
+	// Pre-populate locals and funcParams so capture types are correct.
 	for _, fi := range g.funcs {
+		g.funcParams = make(map[string]string)
+		g.locals = make(map[string]string)
+		for _, p := range fi.params {
+			g.funcParams[p.name] = p.wasmType
+		}
+		g.collectLocals(fi.body)
 		g.scanForLambdas(fi.name, fi.body, fi.params)
 	}
+	g.funcParams = make(map[string]string)
+	g.locals = make(map[string]string)
 
 	g.line("(module")
 	g.indent++
@@ -1934,12 +1949,53 @@ func (g *watGen) scanExprForLambdas(owner string, expr ir.Expr, scope map[string
 	case ir.EComplex:
 		g.scanCExprForLambdas(owner, e.C, scope, letBindings)
 	case ir.ELet:
-		g.scanCExprForLambdas(owner, e.Bind, scope, letBindings)
+		// For let bindings where the RHS is a lambda, add the name to scope
+		// before scanning (enables self-recursive closures from `let rec`).
+		// Then post-process to convert self-captures to selfCapture field.
+		lambdaIdxBefore := len(g.lambdas)
+		bindScope := scope
+		bindLet := letBindings
+		if _, isLambda := e.Bind.(ir.CLambda); isLambda {
+			bindScope = copyScope(scope)
+			bindScope[e.Name] = true
+			bindLet = copyScope(letBindings)
+			bindLet[e.Name] = true
+		}
+		g.scanCExprForLambdas(owner, e.Bind, bindScope, bindLet)
+		// Post-process: if a newly-added lambda captures e.Name, convert to selfCapture
+		for i := lambdaIdxBefore; i < len(g.lambdas); i++ {
+			lf := &g.lambdas[i]
+			for j, cap := range lf.captures {
+				if cap == e.Name {
+					lf.selfCapture = cap
+					// Remove from captures list
+					lf.captures = append(lf.captures[:j], lf.captures[j+1:]...)
+					lf.capTypes = append(lf.capTypes[:j], lf.capTypes[j+1:]...)
+					// Recalculate maxCaps
+					if len(lf.captures) > g.maxCaps {
+						g.maxCaps = len(lf.captures)
+					}
+					break
+				}
+			}
+		}
 		// Add let-bound name to scope
 		newScope := copyScope(scope)
 		newScope[e.Name] = true
 		newLet := copyScope(letBindings)
 		newLet[e.Name] = true
+		g.scanExprForLambdas(owner, e.Body, newScope, newLet)
+	case ir.ELetRec:
+		// All bindings are in scope for each other
+		newScope := copyScope(scope)
+		newLet := copyScope(letBindings)
+		for _, b := range e.Bindings {
+			newScope[b.Name] = true
+			newLet[b.Name] = true
+		}
+		for _, b := range e.Bindings {
+			g.scanCExprForLambdas(owner, b.Bind, newScope, newLet)
+		}
 		g.scanExprForLambdas(owner, e.Body, newScope, newLet)
 	}
 }
@@ -2139,6 +2195,9 @@ func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
 	for i, cap := range lf.captures {
 		g.locals[cap] = lf.capTypes[i]
 	}
+	if lf.selfCapture != "" {
+		g.locals[lf.selfCapture] = "(ref null $closure)"
+	}
 	// The raw param from $ft_apply is anyref; we unbox it into a concrete local
 	g.funcParams[lf.param] = lf.paramType
 
@@ -2154,9 +2213,13 @@ func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
 		g.line("(local $%s %s)", cap, lf.capTypes[i])
 	}
 	for _, name := range g.localOrder(lf.body) {
-		if !containsStr(lf.captures, name) && name != lf.param {
+		if !containsStr(lf.captures, name) && name != lf.param && name != lf.selfCapture {
 			g.line("(local $%s %s)", name, g.locals[name])
 		}
+	}
+	// Declare selfCapture local if present
+	if lf.selfCapture != "" {
+		g.line("(local $%s (ref null $closure))", lf.selfCapture)
 	}
 
 	// Unbox the raw anyref param into the concrete-typed local
@@ -2175,6 +2238,11 @@ func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
 		g.emitUnbox(lf.capTypes[i])
 		g.indent--
 		g.line(")")
+	}
+
+	// For self-recursive closures, $self IS the closure itself
+	if lf.selfCapture != "" {
+		g.line("(local.set $%s (local.get $self))", lf.selfCapture)
 	}
 
 	if err := g.emitExpr(lf.body); err != nil {
@@ -2296,6 +2364,13 @@ func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*cto
 		g.locals[e.Name] = localType
 		g.collectLocalsCExpr(e.Bind)
 		g.collectLocalsWithCtx(e.Body, partialCtors, partialTraits, partialRecCtors)
+	case ir.ELetRec:
+		for _, b := range e.Bindings {
+			localType := g.typeOfCExpr(b.Bind)
+			g.locals[b.Name] = localType
+			g.collectLocalsCExpr(b.Bind)
+		}
+		g.collectLocalsWithCtx(e.Body, partialCtors, partialTraits, partialRecCtors)
 	case ir.EComplex:
 		g.collectLocalsCExpr(e.C)
 	}
@@ -2379,6 +2454,15 @@ func (g *watGen) collectLocalOrder(expr ir.Expr, names *[]string, seen map[strin
 			*names = append(*names, e.Name)
 		}
 		g.collectLocalOrderCExpr(e.Bind, names, seen)
+		g.collectLocalOrder(e.Body, names, seen)
+	case ir.ELetRec:
+		for _, b := range e.Bindings {
+			if !seen[b.Name] {
+				seen[b.Name] = true
+				*names = append(*names, b.Name)
+			}
+			g.collectLocalOrderCExpr(b.Bind, names, seen)
+		}
 		g.collectLocalOrder(e.Body, names, seen)
 	case ir.EComplex:
 		g.collectLocalOrderCExpr(e.C, names, seen)
@@ -2596,6 +2680,8 @@ func (g *watGen) typeOfExpr(expr ir.Expr) string {
 		return g.typeOfCExpr(e.C)
 	case ir.ELet:
 		return g.typeOfExpr(e.Body)
+	case ir.ELetRec:
+		return g.typeOfExpr(e.Body)
 	}
 	return wtAnyRef
 }
@@ -2616,6 +2702,8 @@ func (g *watGen) emitExprTail(expr ir.Expr, tail bool) error {
 		return g.emitCExprTail(e.C, tail)
 	case ir.ELet:
 		return g.emitLetTail(e, tail)
+	case ir.ELetRec:
+		return g.emitLetRecTail(e, tail)
 	default:
 		return fmt.Errorf("unsupported expr: %T", expr)
 	}
@@ -3041,6 +3129,18 @@ func (g *watGen) emitLetTail(e ir.ELet, tail bool) error {
 		g.line("drop")
 	} else {
 		g.line("local.set $%s", e.Name)
+	}
+	return g.emitExprTail(e.Body, tail)
+}
+
+func (g *watGen) emitLetRecTail(e ir.ELetRec, tail bool) error {
+	// ELetRec bindings are typically CLambda (local recursive functions).
+	// Emit each binding's closure, store in its local, then emit the body.
+	for _, b := range e.Bindings {
+		if err := g.emitCExpr(b.Bind); err != nil {
+			return err
+		}
+		g.line("local.set $%s", b.Name)
 	}
 	return g.emitExprTail(e.Body, tail)
 }
@@ -3754,7 +3854,12 @@ func (g *watGen) emitClosureCreate(lam ir.CLambda) error {
 		if lf.used {
 			continue
 		}
-		if lf.param == lam.Param && len(lf.captures) == expectedCaptures {
+		// Self-recursive closures have selfCapture removed from captures list
+		effectiveCaptures := len(lf.captures)
+		if lf.selfCapture != "" {
+			effectiveCaptures++
+		}
+		if lf.param == lam.Param && effectiveCaptures == expectedCaptures {
 			lf.used = true
 			closureType := "$closure"
 			nCaps := len(lf.captures)
