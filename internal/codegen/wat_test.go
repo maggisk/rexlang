@@ -1429,3 +1429,69 @@ main _ = foldl (\acc x -> acc + x) 0 [1, 2, 3, 4, 5]
 		t.Fatalf("expected exit 15, got %d", got)
 	}
 }
+
+func TestE2EConsOperator(t *testing.T) {
+	code := `
+length lst =
+    match lst
+        when [] ->
+            0
+        when [_|t] ->
+            1 + length t
+
+main _ = length (1 :: 2 :: 3 :: [])
+`
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected exit 3, got %d", got)
+	}
+}
+
+func TestE2ELocalMap(t *testing.T) {
+	code := `
+mymap f lst =
+    match lst
+        when [] ->
+            []
+        when [h|t] ->
+            f h :: mymap f t
+
+length lst =
+    match lst
+        when [] ->
+            0
+        when [_|t] ->
+            1 + length t
+
+main _ = length (mymap (\x -> x + 1) [10, 20, 30])
+`
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected exit 3, got %d", got)
+	}
+}
+
+func TestE2ELocalFilter(t *testing.T) {
+	code := `
+foldl f acc lst =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            foldl f (f acc h) t
+
+myfilter f lst =
+    match lst
+        when [] ->
+            []
+        when [h|t] ->
+            if f h then
+                h :: myfilter f t
+            else
+                myfilter f t
+
+main _ = foldl (\acc x -> acc + x) 0 (myfilter (\x -> x > 2) [1, 2, 3, 4, 5])
+`
+	// 3+4+5 = 12
+	if got := runWasm(t, code); got != 12 {
+		t.Fatalf("expected exit 12, got %d", got)
+	}
+}

@@ -35,6 +35,7 @@ func EmitWAT(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		typeEnv:       typeEnv,
 		funcRefs:      make(map[string]bool),
 		funcWrappers:  make(map[string]string),
+		partialApps:   make(map[string]bool),
 		adts:          make(map[string]*adtInfo),
 		ctorToAdt:     make(map[string]*ctorInfo),
 		stringDataIdx: make(map[string]int),
@@ -83,7 +84,8 @@ type lambdaFunc struct {
 	param     string
 	paramType string // concrete wasm type of the parameter
 	retType   string
-	body      ir.Expr
+	body ir.Expr
+	used bool // true after closure creation emitted
 }
 
 // pendingCall tracks partial application chains for multi-arg call detection.
@@ -131,6 +133,9 @@ type watGen struct {
 
 	// wrapper functions for top-level funcs used as values
 	funcWrappers map[string]string // func name → wrapper name
+
+	// partial application wrappers: "funcName_pa1" → funcInfo
+	partialApps map[string]bool
 
 	// string literal data segments
 	stringData    []string       // ordered unique string values
@@ -486,6 +491,9 @@ func (g *watGen) scanCExprStrings(c ir.CExpr) {
 	case ir.CBinop:
 		if e.Op == "Concat" {
 			g.usesStringConcat = true
+		}
+		if e.Op == "Cons" {
+			g.usesLists = true
 		}
 		g.scanAtomString(e.Left)
 		g.scanAtomString(e.Right)
@@ -1290,6 +1298,33 @@ func (g *watGen) emit(prog *ir.Program) (string, error) {
 		g.line("")
 	}
 
+	// Emit partial application wrappers
+	// Note: emitting wrappers may register new deeper wrappers, so loop until stable
+	for len(g.partialApps) > 0 {
+		current := make(map[string]bool)
+		for k, v := range g.partialApps {
+			current[k] = v
+		}
+		g.partialApps = make(map[string]bool)
+		keys := make([]string, 0, len(current))
+		for k := range current {
+			keys = append(keys, k)
+		}
+		sortStrings(keys)
+		for _, paKey := range keys {
+			parts := strings.SplitN(paKey, "__pa", 2)
+			funcName := parts[0]
+			depth := 0
+			fmt.Sscanf(parts[1], "%d", &depth)
+			fi := g.funcs[funcName]
+			if fi == nil {
+				continue
+			}
+			g.emitPartialAppWrapper(fi, depth, paKey)
+			g.line("")
+		}
+	}
+
 	// String helpers
 	if g.needsStrings() {
 		g.emitStringEq()
@@ -2083,76 +2118,6 @@ func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
 // Partial application wrappers
 // ---------------------------------------------------------------------------
 
-func (g *watGen) emitPartialApplyWrappers(fi *funcInfo) {
-	// For a function with arity N, generate N-1 wrapper functions.
-	// Wrapper k takes a closure with k captured args + 1 new arg,
-	// and either calls the next wrapper or the direct function.
-
-	// Ensure we have enough closure types
-	if fi.arity-1 > g.maxCaps {
-		g.maxCaps = fi.arity - 1
-	}
-
-	// Generate one wrapper per partial application level.
-	// $f__partial_k: takes a closure with k captures + 1 arg
-	// k = arity-1: has all args → call $f directly
-	// k < arity-1: creates a new closure with k+1 captures
-	for k := 0; k < fi.arity; k++ {
-		nCaps := k // number of captured args so far
-		closureType := "$closure"
-		if nCaps > 0 {
-			closureType = fmt.Sprintf("$closure_%d", nCaps)
-		}
-
-		g.line("(func $%s__partial_%d (type $ft_apply) (param $self (ref null $closure)) (param $arg i64) (result i64)",
-			fi.name, k)
-		g.indent++
-
-		if k == fi.arity-1 {
-			// Saturated: extract all captured args + this arg, call $f directly
-			for i := 0; i < nCaps; i++ {
-				g.line("(struct.get %s $c%d (ref.cast (ref %s) (local.get $self)))",
-					closureType, i, closureType)
-			}
-			g.line("(local.get $arg)")
-			g.line("(call $%s)", fi.name)
-		} else {
-			// Not saturated: create a new closure with one more capture
-			newCaps := nCaps + 1
-			newClosureType := fmt.Sprintf("$closure_%d", newCaps)
-			if newCaps > g.maxCaps {
-				g.maxCaps = newCaps
-			}
-
-			// The new closure's funcref is the next wrapper
-			g.line("(struct.new %s", newClosureType)
-			g.indent++
-			nextWrapper := fmt.Sprintf("$%s__partial_%d", fi.name, k+1)
-			g.funcRefs[nextWrapper] = true
-			g.line("(ref.func %s)", nextWrapper)
-			// Copy existing captures
-			for i := 0; i < nCaps; i++ {
-				g.line("(struct.get %s $c%d (ref.cast (ref %s) (local.get $self)))",
-					closureType, i, closureType)
-			}
-			// Add new arg as capture
-			g.line("(local.get $arg)")
-			g.indent--
-			g.line(")")
-
-			// The result is a closure ref, but our return type is i64.
-			// We need to pass it as-is. But our uniform closure calling convention
-			// uses i64 everywhere...
-			// Actually, closures are ref types, not i64. We need a different approach.
-			// For now, wrap the closure ref in a global table or use anyref boxing.
-			// TODO: This needs a ref return type, not i64.
-		}
-
-		g.indent--
-		g.line(")")
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Type conversion helpers
 // ---------------------------------------------------------------------------
@@ -2460,6 +2425,8 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 			return wtI32
 		case "Concat":
 			return wtStringRef
+		case "Cons":
+			return wtListRef
 		}
 	case ir.CUnaryMinus:
 		return g.typeOfAtom(e.Expr)
@@ -2598,6 +2565,102 @@ func (g *watGen) emitFuncAsValue(fi *funcInfo) error {
 	return nil
 }
 
+// emitPartialApp creates a closure that captures `depth` args for a multi-arg function.
+// depth=1 means one arg has been applied; the closure captures it and waits for more.
+func (g *watGen) emitPartialApp(fi *funcInfo, arg ir.Atom, depth int) error {
+	// Register that we need a partial application wrapper for this function at this depth
+	paKey := fmt.Sprintf("%s__pa%d", fi.name, depth)
+	g.partialApps[paKey] = true
+	wrapperName := "$" + paKey
+
+	// Ensure we have enough closure captures
+	if depth > g.maxCaps {
+		g.maxCaps = depth
+	}
+
+	// Create closure_N with captured args
+	// For depth=1: struct.new $closure_1 (ref.func $f__pa1) (box arg)
+	g.funcRefs[wrapperName] = true
+	g.line("(struct.new $closure_%d", depth)
+	g.indent++
+	g.line("(ref.func %s)", wrapperName)
+	if err := g.emitAtom(arg); err != nil {
+		return err
+	}
+	g.emitBox(g.typeOfAtom(arg))
+	g.indent--
+	g.line(")")
+	return nil
+}
+
+// emitPartialAppWrapper emits a single partial application wrapper function.
+// For depth=1, arity=2: extracts captured arg, calls $f(captured, newArg)
+// For depth=1, arity=3: extracts captured arg, creates closure_2 with both args
+// For depth=2, arity=3: extracts both captured args, calls $f(c0, c1, newArg)
+func (g *watGen) emitPartialAppWrapper(fi *funcInfo, depth int, paKey string) {
+	wrapperName := "$" + paKey
+	g.line("(func %s (type $ft_apply) (param $self (ref null $closure)) (param $arg (ref null any)) (result (ref null any))",
+		wrapperName)
+	g.indent++
+
+	remaining := fi.arity - depth
+	if remaining == 1 {
+		// Final application: extract all captured args and call the function
+		// Cast self to the right closure type to access captures
+		g.line("(local $self_cast (ref null $closure_%d))", depth)
+		g.line("(local.set $self_cast (ref.cast (ref null $closure_%d) (local.get $self)))", depth)
+
+		// Emit all captured args (c0, c1, ...)
+		for i := 0; i < depth; i++ {
+			g.line("(local.get $self_cast)")
+			g.line("(struct.get $closure_%d $c%d)", depth, i)
+			// Unbox captured arg to the expected param type
+			g.emitUnbox(fi.params[i].wasmType)
+		}
+
+		// Emit the new arg (last param)
+		g.line("(local.get $arg)")
+		g.emitUnbox(fi.params[depth].wasmType)
+
+		// Call the function
+		g.line("(call $%s)", fi.name)
+		// Box the result to anyref
+		g.emitBox(fi.retType)
+	} else {
+		// Need more args: create a closure with one more capture
+		newDepth := depth + 1
+		nextPaKey := fmt.Sprintf("%s__pa%d", fi.name, newDepth)
+		g.partialApps[nextPaKey] = true
+		nextWrapper := "$" + nextPaKey
+
+		if newDepth > g.maxCaps {
+			g.maxCaps = newDepth
+		}
+
+		// Cast self to access existing captures
+		g.line("(local $self_cast (ref null $closure_%d))", depth)
+		g.line("(local.set $self_cast (ref.cast (ref null $closure_%d) (local.get $self)))", depth)
+
+		// Create new closure with all previous captures + the new arg
+		g.funcRefs[nextWrapper] = true
+		g.line("(struct.new $closure_%d", newDepth)
+		g.indent++
+		g.line("(ref.func %s)", nextWrapper)
+		// Copy existing captures
+		for i := 0; i < depth; i++ {
+			g.line("(local.get $self_cast)")
+			g.line("(struct.get $closure_%d $c%d)", depth, i)
+		}
+		// Add new arg
+		g.line("(local.get $arg)")
+		g.indent--
+		g.line(")")
+	}
+
+	g.indent--
+	g.line(")")
+}
+
 func (g *watGen) emitCExpr(c ir.CExpr) error {
 	return g.emitCExprTail(c, false)
 }
@@ -2729,10 +2792,10 @@ func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 			}
 			return nil
 		}
-		// Partial application of multi-arg function — the saturated call
-		// detector handles the common case. If we get here, it means
-		// this single CApp wasn't part of a detected chain.
-		return fmt.Errorf("codegen: partial application of %s (arity %d) not yet supported; provide all arguments", fi.name, fi.arity)
+		// Partial application: create a closure that captures the first arg.
+		// When called later with the next arg, the wrapper either calls the
+		// function directly (arity 2) or creates another partial application.
+		return g.emitPartialApp(fi, e.Arg, 1)
 	}
 
 	// Call through closure reference (the variable holds a ref $closure)
@@ -3370,12 +3433,36 @@ func (g *watGen) emitTuple(e ir.CTuple) error {
 // Closures
 // ---------------------------------------------------------------------------
 
+// countFreeVarsInLambda counts the free variables in a lambda that would
+// become captures when lifted. Used to disambiguate lambdas with the same param name.
+func (g *watGen) countFreeVarsInLambda(lam ir.CLambda) int {
+	free := make(map[string]bool)
+	g.collectFreeVars(lam.Body, map[string]bool{lam.Param: true}, free)
+	count := 0
+	for name := range free {
+		if _, isCtor := g.ctorToAdt[name]; isCtor {
+			continue
+		}
+		if _, isFunc := g.funcs[name]; isFunc {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
 func (g *watGen) emitClosureCreate(lam ir.CLambda) error {
-	// Find the corresponding lifted lambda
+	// Find the corresponding lifted lambda.
+	// Match by param name + number of captures. Mark as used to avoid
+	// re-matching a different lambda with the same param name.
+	expectedCaptures := g.countFreeVarsInLambda(lam)
 	for i := range g.lambdas {
 		lf := &g.lambdas[i]
-		// Match by param name and body (simple heuristic)
-		if lf.param == lam.Param {
+		if lf.used {
+			continue
+		}
+		if lf.param == lam.Param && len(lf.captures) == expectedCaptures {
+			lf.used = true
 			closureType := "$closure"
 			nCaps := len(lf.captures)
 			if nCaps > 0 {
@@ -3443,6 +3530,27 @@ func (g *watGen) emitBinop(e ir.CBinop) error {
 		case "Concat":
 			opType = wtStringRef // string concat
 		}
+	}
+
+	// Cons operator: head :: tail → struct.new $list_cons (tag=1) (box head) tail
+	if e.Op == "Cons" {
+		g.line("(struct.new $list_cons (i32.const 1)")
+		g.indent++
+		if err := g.emitAtom(e.Left); err != nil {
+			return err
+		}
+		// Box the head element to anyref for polymorphic storage
+		g.emitBox(g.typeOfAtom(e.Left))
+		if err := g.emitAtom(e.Right); err != nil {
+			return err
+		}
+		// If tail is anyref, cast to list ref
+		if rightType == wtAnyRef {
+			g.line("(ref.cast (ref null $list))")
+		}
+		g.indent--
+		g.line(")")
+		return nil
 	}
 
 	// String/list concat: handle specially (no unboxing needed for string operands)
@@ -3584,6 +3692,11 @@ func (g *watGen) emitIfTail(e ir.CIf, tail bool) error {
 	}
 	if err := g.emitAtom(e.Cond); err != nil {
 		return err
+	}
+	// Unbox condition to i32 if it's an anyref (e.g., from call_ref returning boxed bool)
+	condType := g.typeOfAtom(e.Cond)
+	if condType != wtI32 {
+		g.emitUnbox(wtI32)
 	}
 	g.line("(if (result %s)", resultType)
 	g.indent++
