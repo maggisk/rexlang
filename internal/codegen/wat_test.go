@@ -1616,3 +1616,92 @@ main _ = foldl (\acc x -> acc + x) 0 (mymap (\x -> x * x) [1, 2, 3, 4])
 		t.Fatalf("expected exit 30, got %d", got)
 	}
 }
+
+func TestE2ERecordCreate(t *testing.T) {
+	code := `
+type Point = { x : Int, y : Int }
+
+main _ =
+    let p = Point { x = 10, y = 32 }
+    in p.x + p.y
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2ERecordFieldAccess(t *testing.T) {
+	code := `
+type Pair = { fst : Int, snd : Int }
+
+getFirst p = p.fst
+getSecond p = p.snd
+
+main _ =
+    let p = Pair { fst = 30, snd = 12 }
+    in getFirst p + getSecond p
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2ERecordUpdate(t *testing.T) {
+	code := `
+type Point = { x : Int, y : Int }
+
+main _ =
+    let p = Point { x = 10, y = 20 }
+    in
+    let q = { p | x = 30 }
+    in q.x + q.y
+`
+	// 30 + 20 = 50
+	if got := runWasm(t, code); got != 50 {
+		t.Fatalf("expected exit 50, got %d", got)
+	}
+}
+
+func TestE2ERecordPositionalCtor(t *testing.T) {
+	code := `
+type Point = { x : Int, y : Int }
+
+main _ =
+    let p = Point 15 27
+    in p.x + p.y
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2ERecordInFunction(t *testing.T) {
+	code := `
+type Point = { x : Int, y : Int }
+
+sum p = p.x + p.y
+
+main _ =
+    let p = Point { x = 20, y = 22 }
+    in sum p
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}
+
+func TestE2ERecordUpdateMultiple(t *testing.T) {
+	code := `
+type Vec3 = { x : Int, y : Int, z : Int }
+
+main _ =
+    let v = Vec3 { x = 1, y = 2, z = 3 }
+    in
+    let w = { v | x = 10, z = 30 }
+    in w.x + w.y + w.z
+`
+	// 10 + 2 + 30 = 42
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected exit 42, got %d", got)
+	}
+}

@@ -38,6 +38,7 @@ func EmitWAT(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		partialApps:   make(map[string]bool),
 		adts:          make(map[string]*adtInfo),
 		ctorToAdt:     make(map[string]*ctorInfo),
+		records:       make(map[string]*recordInfo),
 		stringDataIdx: make(map[string]int),
 		usesTuples:    make(map[int]bool),
 		traitMethods:  make(map[string]traitMethodInfo),
@@ -60,6 +61,13 @@ type ctorInfo struct {
 	tag        int
 	typeName   string   // parent ADT name
 	fieldTypes []string // wasm types of constructor fields
+}
+
+// recordInfo describes a record type for codegen.
+type recordInfo struct {
+	name       string
+	fieldNames []string // ordered field names
+	fieldTypes []string // wasm types matching fieldNames
 }
 
 // funcInfo describes a top-level function for codegen.
@@ -127,6 +135,9 @@ type watGen struct {
 	// ADT info
 	adts      map[string]*adtInfo  // ADT name → info
 	ctorToAdt map[string]*ctorInfo // constructor name → ctor info
+
+	// Record info
+	records map[string]*recordInfo // record type name → info
 
 	// functions referenced via ref.func (need elem declare)
 	funcRefs map[string]bool
@@ -225,6 +236,9 @@ func (g *watGen) wasmType(t types.Type) string {
 			if _, ok := g.adts[ty.Name]; ok {
 				return wtAdtRef
 			}
+			if _, ok := g.records[ty.Name]; ok {
+				return fmt.Sprintf("(ref null $rec_%s)", ty.Name)
+			}
 		}
 	}
 	return wtAnyRef // type variables and unknown types use boxed representation
@@ -319,13 +333,17 @@ func (g *watGen) lookupType(name string) (types.Type, bool) {
 // ---------------------------------------------------------------------------
 
 func (g *watGen) analyze(prog *ir.Program) {
-	// Pass 0: collect ADT info (before functions, since param types may be ADTs)
+	// Pass 0: collect ADT and record info (before functions, since param types may reference them)
 	for _, d := range prog.Decls {
 		dt, ok := d.(ir.DType)
-		if !ok || len(dt.Ctors) == 0 {
+		if !ok {
 			continue
 		}
-		g.analyzeADT(dt)
+		if len(dt.Fields) > 0 {
+			g.analyzeRecord(dt)
+		} else if len(dt.Ctors) > 0 {
+			g.analyzeADT(dt)
+		}
 	}
 
 	// First pass: collect function info
@@ -529,6 +547,17 @@ func (g *watGen) scanCExprStrings(c ir.CExpr) {
 		g.usesStringConcat = true
 		for _, part := range e.Parts {
 			g.scanAtomString(part)
+		}
+	case ir.CRecord:
+		for _, fi := range e.Fields {
+			g.scanAtomString(fi.Value)
+		}
+	case ir.CFieldAccess:
+		g.scanAtomString(e.Record)
+	case ir.CRecordUpdate:
+		g.scanAtomString(e.Record)
+		for _, u := range e.Updates {
+			g.scanAtomString(u.Value)
 		}
 	}
 }
@@ -816,6 +845,31 @@ func (g *watGen) analyzeADT(dt ir.DType) {
 		g.ctorToAdt[c.Name] = &ai.ctors[len(ai.ctors)-1]
 	}
 	g.adts[dt.Name] = ai
+}
+
+func (g *watGen) analyzeRecord(dt ir.DType) {
+	ri := &recordInfo{name: dt.Name}
+	// Try to get field types from __record_fields__ in typeEnv (IR may have nil types)
+	var rfMap map[string]types.RecordInfo
+	if rf, ok := g.typeEnv["__record_fields__"]; ok {
+		rfMap, _ = rf.(map[string]types.RecordInfo)
+	}
+	for _, f := range dt.Fields {
+		ri.fieldNames = append(ri.fieldNames, f.Name)
+		wt := wtAnyRef
+		if rfMap != nil {
+			if rfi, ok := rfMap[dt.Name]; ok {
+				for _, fi := range rfi.Fields {
+					if fi.Name == f.Name {
+						wt = g.wasmType(fi.Type)
+						break
+					}
+				}
+			}
+		}
+		ri.fieldTypes = append(ri.fieldTypes, wt)
+	}
+	g.records[dt.Name] = ri
 }
 
 // analyzeTraits collects trait method info and generates impl function entries.
@@ -1396,7 +1450,7 @@ func (g *watGen) needsClosures() bool {
 }
 
 func (g *watGen) needsGCTypes() bool {
-	return g.needsClosures() || len(g.adts) > 0 || g.needsStrings() || g.usesLists || len(g.usesTuples) > 0 || len(g.dispatchFuncs) > 0
+	return g.needsClosures() || len(g.adts) > 0 || len(g.records) > 0 || g.needsStrings() || g.usesLists || len(g.usesTuples) > 0 || len(g.dispatchFuncs) > 0
 }
 
 func (g *watGen) needsStrings() bool {
@@ -1810,6 +1864,28 @@ func (g *watGen) emitGCTypes() {
 		}
 	}
 
+	// Record types
+	if len(g.records) > 0 {
+		g.line(";; Record types")
+		recNames := make([]string, 0, len(g.records))
+		for name := range g.records {
+			recNames = append(recNames, name)
+		}
+		sortStrings(recNames)
+		for _, recName := range recNames {
+			ri := g.records[recName]
+			fields := ""
+			for i, fn := range ri.fieldNames {
+				ft := ri.fieldTypes[i]
+				if fields != "" {
+					fields += " "
+				}
+				fields += fmt.Sprintf("(field $%s %s)", fn, ft)
+			}
+			g.line("(type $rec_%s (struct %s))", recName, fields)
+		}
+	}
+
 	// List types — head is (ref null any) for polymorphism
 	if g.usesLists {
 		g.line(";; List types")
@@ -2151,17 +2227,20 @@ func (g *watGen) emitConvert(from, to string) {
 // ---------------------------------------------------------------------------
 
 func (g *watGen) collectLocals(expr ir.Expr) {
-	g.collectLocalsWithCtx(expr, nil, nil)
+	g.collectLocalsWithCtx(expr, nil, nil, nil)
 }
 
 // collectLocalsWithCtx collects local variable types, tracking partial constructor
 // and trait method application chains to determine final result types.
-func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*ctorInfo, partialTraits map[string]*funcInfo) {
+func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*ctorInfo, partialTraits map[string]*funcInfo, partialRecCtors map[string]*recordInfo) {
 	if partialCtors == nil {
 		partialCtors = make(map[string]*ctorInfo)
 	}
 	if partialTraits == nil {
 		partialTraits = make(map[string]*funcInfo)
+	}
+	if partialRecCtors == nil {
+		partialRecCtors = make(map[string]*recordInfo)
 	}
 	switch e := expr.(type) {
 	case ir.ELet:
@@ -2178,6 +2257,16 @@ func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*cto
 				if ci, ok := partialCtors[fvar.Name]; ok {
 					partialCtors[e.Name] = ci
 					localType = wtAdtRef
+				}
+				// Record constructor (positional): first arg of multi-field record ctor
+				if ri, ok := g.records[fvar.Name]; ok && len(ri.fieldNames) > 1 {
+					partialRecCtors[e.Name] = ri
+				}
+				// Continuing a partial record ctor chain
+				if ri, ok := partialRecCtors[fvar.Name]; ok {
+					recType := fmt.Sprintf("(ref null $rec_%s)", ri.name)
+					localType = recType
+					partialRecCtors[e.Name] = ri // keep propagating
 				}
 				// Detect trait method partial application chains
 				if tmInfo, ok := g.traitMethods[fvar.Name]; ok && !g.isLocalOrParam(fvar.Name) {
@@ -2206,7 +2295,7 @@ func (g *watGen) collectLocalsWithCtx(expr ir.Expr, partialCtors map[string]*cto
 		}
 		g.locals[e.Name] = localType
 		g.collectLocalsCExpr(e.Bind)
-		g.collectLocalsWithCtx(e.Body, partialCtors, partialTraits)
+		g.collectLocalsWithCtx(e.Body, partialCtors, partialTraits, partialRecCtors)
 	case ir.EComplex:
 		g.collectLocalsCExpr(e.C)
 	}
@@ -2465,8 +2554,38 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 		return wtTupleRef(len(e.Items))
 	case ir.CStringInterp:
 		return wtStringRef
+	case ir.CRecord:
+		return fmt.Sprintf("(ref null $rec_%s)", e.TypeName)
+	case ir.CFieldAccess:
+		if ri, ok := g.records[g.recordTypeOfAtom(e.Record)]; ok {
+			for i, fn := range ri.fieldNames {
+				if fn == e.Field {
+					return ri.fieldTypes[i]
+				}
+			}
+		}
+		return wtAnyRef
+	case ir.CRecordUpdate:
+		return fmt.Sprintf("(ref null $rec_%s)", g.recordTypeOfAtom(e.Record))
 	}
 	return wtAnyRef
+}
+
+// recordTypeOfAtom returns the record type name for an atom, or "" if unknown.
+func (g *watGen) recordTypeOfAtom(a ir.Atom) string {
+	if v, ok := a.(ir.AVar); ok {
+		wt := g.locals[v.Name]
+		if wt == "" {
+			if pt, ok := g.funcParams[v.Name]; ok {
+				wt = pt
+			}
+		}
+		// Extract record type name from "(ref null $rec_Foo)"
+		if strings.HasPrefix(wt, "(ref null $rec_") {
+			return wt[len("(ref null $rec_") : len(wt)-1]
+		}
+	}
+	return ""
 }
 
 func (g *watGen) typeOfExpr(expr ir.Expr) string {
@@ -2693,6 +2812,12 @@ func (g *watGen) emitCExprTail(c ir.CExpr, tail bool) error {
 		return g.emitTuple(e)
 	case ir.CStringInterp:
 		return g.emitStringInterp(e)
+	case ir.CRecord:
+		return g.emitRecord(e)
+	case ir.CFieldAccess:
+		return g.emitFieldAccess(e)
+	case ir.CRecordUpdate:
+		return g.emitRecordUpdate(e)
 	default:
 		return fmt.Errorf("unsupported cexpr: %T", c)
 	}
@@ -2755,6 +2880,18 @@ func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 			g.line("call $%s", dispName)
 			return nil
 		}
+	}
+
+	// Record constructor application (single-field records, positional)
+	if ri, ok := g.records[v.Name]; ok && len(ri.fieldNames) == 1 {
+		g.line("(struct.new $rec_%s", ri.name)
+		g.indent++
+		if err := g.emitAtom(e.Arg); err != nil {
+			return err
+		}
+		g.indent--
+		g.line(")")
+		return nil
 	}
 
 	// Constructor application (single-arg constructors)
@@ -2883,6 +3020,12 @@ func (g *watGen) emitLetTail(e ir.ELet, tail bool) error {
 			// Detect saturated multi-arg constructor applications
 			if ci, ok := g.ctorToAdt[fvar.Name]; ok && len(ci.fieldTypes) > 1 {
 				if result, ok := g.trySaturatedCtor(ci, []ir.Atom{app.Arg}, e.Name, e.Body); ok {
+					return result
+				}
+			}
+			// Detect saturated record constructor applications (positional)
+			if ri, ok := g.records[fvar.Name]; ok && len(ri.fieldNames) > 1 {
+				if result, ok := g.trySaturatedRecordCtor(ri, []ir.Atom{app.Arg}, e.Name, e.Body); ok {
 					return result
 				}
 			}
@@ -3060,6 +3203,65 @@ func (g *watGen) trySaturatedCtor(ci *ctorInfo, args []ir.Atom, tempName string,
 					return err, true
 				}
 				return g.trySaturatedCtor(ci, newArgs, let.Name, let.Body)
+			}
+		}
+	}
+
+	return nil, false
+}
+
+// trySaturatedRecordCtor detects chains of let-bound partial record constructor applications.
+func (g *watGen) trySaturatedRecordCtor(ri *recordInfo, args []ir.Atom, tempName string, body ir.Expr) (error, bool) {
+	nFields := len(ri.fieldNames)
+	if len(args) == nFields {
+		// Saturated! Emit struct.new
+		recType := fmt.Sprintf("(ref null $rec_%s)", ri.name)
+		g.line("(struct.new $rec_%s", ri.name)
+		g.indent++
+		for _, arg := range args {
+			if err := g.emitAtom(arg); err != nil {
+				return err, true
+			}
+		}
+		g.indent--
+		g.line(")")
+		_ = recType
+		return nil, true
+	}
+
+	// Check if body is: ELet{newTemp, CApp{tempName, nextArg}, restBody}
+	if let, ok := body.(ir.ELet); ok {
+		if app, ok := let.Bind.(ir.CApp); ok {
+			if v, ok := app.Func.(ir.AVar); ok && v.Name == tempName {
+				newArgs := append(args, app.Arg)
+				if len(newArgs) == nFields {
+					// Saturated! Emit struct.new, then set local and continue
+					recType := fmt.Sprintf("(ref null $rec_%s)", ri.name)
+					g.line("(struct.new $rec_%s", ri.name)
+					g.indent++
+					for _, arg := range newArgs {
+						if err := g.emitAtom(arg); err != nil {
+							return err, true
+						}
+					}
+					g.indent--
+					g.line(")")
+					// Override local type
+					g.locals[let.Name] = recType
+					g.line("local.set $%s", let.Name)
+					err := g.emitExpr(let.Body)
+					return err, true
+				}
+				return g.trySaturatedRecordCtor(ri, newArgs, let.Name, let.Body)
+			}
+		}
+	}
+
+	// Check if body is: EComplex{CApp{tempName, nextArg}}
+	if ec, ok := body.(ir.EComplex); ok {
+		if app, ok := ec.C.(ir.CApp); ok {
+			if v, ok := app.Func.(ir.AVar); ok && v.Name == tempName {
+				return g.trySaturatedRecordCtor(ri, append(args, app.Arg), tempName, nil)
 			}
 		}
 	}
@@ -3431,6 +3633,89 @@ func (g *watGen) emitTuple(e ir.CTuple) error {
 		}
 		// Box the element to anyref for polymorphic storage
 		g.emitBox(g.typeOfAtom(item))
+	}
+	g.indent--
+	g.line(")")
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Records
+// ---------------------------------------------------------------------------
+
+func (g *watGen) emitRecord(e ir.CRecord) error {
+	ri, ok := g.records[e.TypeName]
+	if !ok {
+		return fmt.Errorf("codegen: unknown record type %s", e.TypeName)
+	}
+	g.line("(struct.new $rec_%s", e.TypeName)
+	g.indent++
+	// Emit fields in declaration order
+	for _, fn := range ri.fieldNames {
+		// Find the matching field init
+		found := false
+		for _, fi := range e.Fields {
+			if fi.Name == fn {
+				if err := g.emitAtom(fi.Value); err != nil {
+					return err
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("codegen: missing field %s in record %s", fn, e.TypeName)
+		}
+	}
+	g.indent--
+	g.line(")")
+	return nil
+}
+
+func (g *watGen) emitFieldAccess(e ir.CFieldAccess) error {
+	recType := g.recordTypeOfAtom(e.Record)
+	if recType == "" {
+		return fmt.Errorf("codegen: cannot determine record type for field access .%s", e.Field)
+	}
+	if err := g.emitAtom(e.Record); err != nil {
+		return err
+	}
+	g.line("(struct.get $rec_%s $%s)", recType, e.Field)
+	return nil
+}
+
+func (g *watGen) emitRecordUpdate(e ir.CRecordUpdate) error {
+	recType := g.recordTypeOfAtom(e.Record)
+	if recType == "" {
+		return fmt.Errorf("codegen: cannot determine record type for record update")
+	}
+	ri, ok := g.records[recType]
+	if !ok {
+		return fmt.Errorf("codegen: unknown record type %s", recType)
+	}
+	// Build a set of updated field names
+	updates := make(map[string]ir.Atom)
+	for _, u := range e.Updates {
+		if len(u.Path) == 1 {
+			updates[u.Path[0]] = u.Value
+		}
+		// Nested updates not yet supported in wasm codegen
+	}
+	g.line("(struct.new $rec_%s", recType)
+	g.indent++
+	for _, fn := range ri.fieldNames {
+		if val, ok := updates[fn]; ok {
+			// Use the updated value
+			if err := g.emitAtom(val); err != nil {
+				return err
+			}
+		} else {
+			// Copy the original field
+			if err := g.emitAtom(e.Record); err != nil {
+				return err
+			}
+			g.line("(struct.get $rec_%s $%s)", recType, fn)
+		}
 	}
 	g.indent--
 	g.line(")")
