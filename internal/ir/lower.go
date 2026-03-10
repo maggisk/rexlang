@@ -129,7 +129,12 @@ func (l *Lowerer) lowerTypeDecl(e ast.TypeDecl) Decl {
 		Params:   e.Params,
 	}
 	for _, c := range e.Ctors {
-		d.Ctors = append(d.Ctors, CtorDef{Name: c.Name})
+		cd := CtorDef{Name: c.Name}
+		// Carry arg count so codegen knows constructor arity even without type env
+		for range c.ArgTypes {
+			cd.ArgTypes = append(cd.ArgTypes, nil)
+		}
+		d.Ctors = append(d.Ctors, cd)
 	}
 	for _, f := range e.RecordFields {
 		d.Fields = append(d.Fields, FieldDef{Name: f.Name})

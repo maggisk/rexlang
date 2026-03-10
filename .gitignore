@@ -3,3 +3,6 @@ guide.elm-lang.org/
 *.pyc
 /rex
 .DS_Store
+
+*.wasm
+*.wat

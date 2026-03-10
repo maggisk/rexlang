@@ -24,16 +24,18 @@ func compileCode(t *testing.T, code string) string {
 		t.Fatalf("typecheck error: %v", err)
 	}
 	// Resolve imports: collect module type/trait/impl/function declarations
-	moduleDecls, err := ir.ResolveImports(exprs, "")
+	importInfo, err := ir.ResolveImports(exprs, "")
 	if err != nil {
 		t.Fatalf("resolve imports: %v", err)
 	}
-	allExprs := append(moduleDecls, exprs...)
+	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
+	allExprs := append(importInfo.Decls, userExprs...)
 	l := ir.NewLowerer()
 	prog, err := l.LowerProgram(allExprs)
 	if err != nil {
 		t.Fatalf("lower error: %v", err)
 	}
+	prog = ir.Shake(prog)
 	wat, err := EmitWAT(prog, typeEnv)
 	if err != nil {
 		t.Fatalf("EmitWAT error: %v", err)
@@ -1915,4 +1917,173 @@ main _ = matchPair (Just 30, Just 12)
 	}
 }
 
-// TestE2EStringLength — deferred until stdlib compilation support
+func TestE2EStdlibListLength(t *testing.T) {
+	code := `
+import Std:List (length)
+
+main _ = length [10, 20, 30]
+`
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected 3, got %d", got)
+	}
+}
+
+func TestE2EStdlibListSum(t *testing.T) {
+	code := `
+import Std:List (sum)
+
+main _ = sum [10, 20, 12]
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected 42, got %d", got)
+	}
+}
+
+// TODO: TestE2EStdlibListReverse — needs inner let rec support
+// reverse uses `let rec go acc xs = ...` which creates an inner recursive
+// function that the lambda lifter doesn't handle yet.
+
+func TestE2EStdlibListMap(t *testing.T) {
+	code := `
+import Std:List (map, sum)
+
+main _ =
+    [1, 2, 3] |> map (\x -> x * 10) |> sum
+`
+	if got := runWasm(t, code); got != 60 {
+		t.Fatalf("expected 60, got %d", got)
+	}
+}
+
+func TestE2EStdlibListFilter(t *testing.T) {
+	code := `
+import Std:List (filter, length)
+
+main _ =
+    [1, 2, 3, 4, 5, 6] |> filter (\x -> x > 3) |> length
+`
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected 3, got %d", got)
+	}
+}
+
+func TestE2EStdlibListFoldl(t *testing.T) {
+	code := `
+import Std:List (foldl)
+
+main _ = foldl (\acc x -> acc + x) 0 [1, 2, 3, 4, 5]
+`
+	if got := runWasm(t, code); got != 15 {
+		t.Fatalf("expected 15, got %d", got)
+	}
+}
+
+func TestE2EStdlibListAppend(t *testing.T) {
+	code := `
+import Std:List (append, length)
+
+main _ =
+    append [1, 2, 3] [4, 5] |> length
+`
+	if got := runWasm(t, code); got != 5 {
+		t.Fatalf("expected 5, got %d", got)
+	}
+}
+
+func TestE2EStdlibListRange(t *testing.T) {
+	code := `
+import Std:List (range, sum)
+
+main _ = range 1 11 |> sum
+`
+	if got := runWasm(t, code); got != 55 {
+		t.Fatalf("expected 55, got %d", got)
+	}
+}
+
+func TestE2EStdlibListProduct(t *testing.T) {
+	code := `
+import Std:List (product)
+
+main _ = product [1, 2, 3, 4, 5]
+`
+	if got := runWasm(t, code); got != 120 {
+		t.Fatalf("expected 120, got %d", got)
+	}
+}
+
+func TestE2EStdlibListFoldr(t *testing.T) {
+	code := `
+import Std:List (foldr, length)
+
+main _ =
+    foldr (\x acc -> x :: acc) [] [1, 2, 3] |> length
+`
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected 3, got %d", got)
+	}
+}
+
+func TestE2EStdlibListConcat(t *testing.T) {
+	code := `
+import Std:List (concat, length)
+
+main _ = concat [[1, 2], [3], [4, 5]] |> length
+`
+	if got := runWasm(t, code); got != 5 {
+		t.Fatalf("expected 5, got %d", got)
+	}
+}
+
+func TestE2EStdlibListAny(t *testing.T) {
+	code := `
+import Std:List (any)
+
+main _ =
+    if any (\x -> x > 3) [1, 2, 3, 4, 5] then 1 else 0
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected 1, got %d", got)
+	}
+}
+
+func TestE2EStdlibListAll(t *testing.T) {
+	code := `
+import Std:List (all)
+
+main _ =
+    if all (\x -> x > 0) [1, 2, 3] then 1 else 0
+`
+	if got := runWasm(t, code); got != 1 {
+		t.Fatalf("expected 1, got %d", got)
+	}
+}
+
+func TestE2EStdlibMaybeFromMaybe(t *testing.T) {
+	code := `
+import Std:Maybe (Just, Nothing, fromMaybe)
+
+main _ =
+    let a = fromMaybe 0 (Just 42)
+    in let b = fromMaybe 10 Nothing
+    in a + b
+`
+	if got := runWasm(t, code); got != 52 {
+		t.Fatalf("expected 52, got %d", got)
+	}
+}
+
+func TestE2EStdlibMaybeMap(t *testing.T) {
+	code := `
+import Std:Maybe (Just, Nothing, map)
+
+main _ =
+    let r = map (\x -> x * 2) (Just 21)
+    in match r
+        when Just n -> n
+        when Nothing -> 0
+`
+	if got := runWasm(t, code); got != 42 {
+		t.Fatalf("expected 42, got %d", got)
+	}
+}

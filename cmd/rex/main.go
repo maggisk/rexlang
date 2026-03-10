@@ -243,12 +243,13 @@ func compileFile(path string) {
 
 	// Resolve module imports: collect type/trait/impl/function declarations
 	// from imported modules so codegen has full program visibility.
-	moduleDecls, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot())
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot())
 	if err != nil {
 		printErr("Import resolution error", err)
 		os.Exit(1)
 	}
-	allExprs := append(moduleDecls, exprs...)
+	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
+	allExprs := append(importInfo.Decls, userExprs...)
 
 	// Lower to IR
 	l := ir.NewLowerer()
@@ -257,6 +258,9 @@ func compileFile(path string) {
 		printErr("IR error", err)
 		os.Exit(1)
 	}
+
+	// Tree shake: remove functions not reachable from main
+	prog = ir.Shake(prog)
 
 	// Emit WAT
 	wat, err := codegen.EmitWAT(prog, typeEnv)

@@ -840,11 +840,17 @@ func (g *watGen) analyzeADT(dt ir.DType) {
 			tag:      i,
 			typeName: dt.Name,
 		}
-		// Determine field types from type env
+		// Determine field types from type env, fall back to IR arg count
 		if ty, ok := g.lookupType(c.Name); ok {
 			paramTypes, _ := decomposeFuncType(ty)
 			for _, pt := range paramTypes {
 				ci.fieldTypes = append(ci.fieldTypes, g.wasmType(pt))
+			}
+		} else {
+			// Type env doesn't have this constructor (e.g., from imported module).
+			// Use IR's arg count with anyref as field type.
+			for range c.ArgTypes {
+				ci.fieldTypes = append(ci.fieldTypes, wtAnyRef)
 			}
 		}
 		ai.ctors = append(ai.ctors, ci)
@@ -2063,9 +2069,17 @@ func (g *watGen) findCaptures(lam ir.CLambda, outerScope map[string]bool, letBin
 
 	var captures []string
 	for name := range free {
-		// Only capture variables from let bindings and function params
-		// (not top-level functions — those are called directly)
+		// Skip top-level functions, constructors, trait methods, dispatch functions
 		if _, isFunc := g.funcs[name]; isFunc {
+			continue
+		}
+		if _, isCtor := g.ctorToAdt[name]; isCtor {
+			continue
+		}
+		if _, isDispatch := g.dispatchFuncs[name]; isDispatch {
+			continue
+		}
+		if _, isTrait := g.traitMethods[name]; isTrait {
 			continue
 		}
 		if outerScope[name] {
@@ -2604,7 +2618,18 @@ func (g *watGen) typeOfCExpr(c ir.CExpr) string {
 	case ir.CUnaryMinus:
 		return g.typeOfAtom(e.Expr)
 	case ir.CIf:
-		return g.typeOfExpr(e.Then)
+		thenType := g.typeOfExpr(e.Then)
+		elseType := g.typeOfExpr(e.Else)
+		if thenType != elseType {
+			// Types differ: use function return type if available, else widen
+			if g.currentFunc != nil {
+				return g.currentFunc.retType
+			}
+			if isRefType(thenType) && isRefType(elseType) {
+				return wtAnyRef
+			}
+		}
+		return thenType
 	case ir.CMatch:
 		if len(e.Arms) > 0 {
 			// Use widest type across all arms
@@ -3546,6 +3571,10 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 				if err := g.emitAtom(scrut); err != nil {
 					return err
 				}
+				scrutType := g.typeOfAtom(scrut)
+				if scrutType == wtAnyRef {
+					g.line("(ref.cast (ref $list))")
+				}
 				g.line("(struct.get $list $tag)")
 				g.line("i32.eqz")
 				g.line("(if (result %s)", resultType)
@@ -3571,6 +3600,10 @@ func (g *watGen) emitMatchTail(e ir.CMatch, tail bool) error {
 			if !isLast {
 				if err := g.emitAtom(scrut); err != nil {
 					return err
+				}
+				scrutType := g.typeOfAtom(scrut)
+				if scrutType == wtAnyRef {
+					g.line("(ref.cast (ref $list))")
 				}
 				g.line("(struct.get $list $tag)")
 				g.line("(i32.const 1)")
@@ -3917,6 +3950,13 @@ func (g *watGen) countFreeVarsInLambda(lam ir.CLambda) int {
 		if _, isFunc := g.funcs[name]; isFunc {
 			continue
 		}
+		// Skip trait dispatch functions and trait methods (globally available)
+		if _, isDispatch := g.dispatchFuncs[name]; isDispatch {
+			continue
+		}
+		if _, isTrait := g.traitMethods[name]; isTrait {
+			continue
+		}
 		count++
 	}
 	return count
@@ -3924,8 +3964,7 @@ func (g *watGen) countFreeVarsInLambda(lam ir.CLambda) int {
 
 func (g *watGen) emitClosureCreate(lam ir.CLambda) error {
 	// Find the corresponding lifted lambda.
-	// Match by param name + number of captures. Mark as used to avoid
-	// re-matching a different lambda with the same param name.
+	// Match by param name + number of captures.
 	expectedCaptures := g.countFreeVarsInLambda(lam)
 	for i := range g.lambdas {
 		lf := &g.lambdas[i]
