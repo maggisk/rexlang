@@ -1873,6 +1873,13 @@ func (g *watGen) scanCExprForLambdas(owner string, c ir.CExpr, scope map[string]
 			retType:   retType,
 			body:      e.Body,
 		})
+		// Scan the lambda body for nested lambdas (e.g., multi-arg lambdas)
+		innerScope := copyScope(scope)
+		innerScope[e.Param] = true
+		for _, cap := range captures {
+			innerScope[cap] = true
+		}
+		g.scanExprForLambdas(lambdaName, e.Body, innerScope, nil)
 	case ir.CIf:
 		g.scanExprForLambdas(owner, e.Then, scope, letBindings)
 		g.scanExprForLambdas(owner, e.Else, scope, letBindings)
@@ -2030,8 +2037,18 @@ func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
 	g.line("(func %s (type $ft_apply) (param $self (ref null $closure)) (param $%s__raw (ref null any)) (result (ref null any))", lf.name, lf.param)
 	g.indent++
 
-	// Declare the concrete-typed param local and unbox from the raw anyref param
+	// Declare ALL locals first (WAT requires locals before any instructions)
 	g.line("(local $%s %s)", lf.param, lf.paramType)
+	for i, cap := range lf.captures {
+		g.line("(local $%s %s)", cap, lf.capTypes[i])
+	}
+	for _, name := range g.localOrder(lf.body) {
+		if !containsStr(lf.captures, name) && name != lf.param {
+			g.line("(local $%s %s)", name, g.locals[name])
+		}
+	}
+
+	// Unbox the raw anyref param into the concrete-typed local
 	g.line("(local.set $%s", lf.param)
 	g.indent++
 	g.line("(local.get $%s__raw)", lf.param)
@@ -2041,20 +2058,12 @@ func (g *watGen) emitLambdaFunc(lf *lambdaFunc) error {
 
 	// Extract captures from closure struct — unbox from anyref to concrete type
 	for i, cap := range lf.captures {
-		g.line("(local $%s %s)", cap, lf.capTypes[i])
 		g.line("(local.set $%s", cap)
 		g.indent++
 		g.line("(struct.get %s $c%d (ref.cast (ref %s) (local.get $self)))", closureType, i, closureType)
 		g.emitUnbox(lf.capTypes[i])
 		g.indent--
 		g.line(")")
-	}
-
-	// Declare other locals
-	for _, name := range g.localOrder(lf.body) {
-		if !containsStr(lf.captures, name) && name != lf.param {
-			g.line("(local $%s %s)", name, g.locals[name])
-		}
 	}
 
 	if err := g.emitExpr(lf.body); err != nil {
@@ -2735,13 +2744,27 @@ func (g *watGen) emitAppTail(e ir.CApp, tail bool) error {
 
 func (g *watGen) emitCallRef(closureVar string, arg ir.Atom) error {
 	// call_ref $ft_apply: stack = [self, arg, funcref]
-	g.line("(local.get $%s)", closureVar) // self
+	varType := g.locals[closureVar]
+	if varType == "" {
+		varType = g.funcParams[closureVar]
+	}
+	needsCast := varType == wtAnyRef
+	// Push self (cast to closure if needed)
+	g.line("(local.get $%s)", closureVar)
+	if needsCast {
+		g.line("(ref.cast (ref $closure))")
+	}
 	if err := g.emitAtom(arg); err != nil {
 		return err
 	}
 	// Box argument to anyref for $ft_apply convention
 	g.emitBox(g.typeOfAtom(arg))
-	g.line("(struct.get $closure $fn (local.get $%s))", closureVar) // funcref
+	// Get funcref (cast to closure if needed)
+	g.line("(local.get $%s)", closureVar)
+	if needsCast {
+		g.line("(ref.cast (ref $closure))")
+	}
+	g.line("(struct.get $closure $fn)")
 	g.line("(call_ref $ft_apply)")
 	// Result is anyref — will be unboxed by the caller if needed
 	return nil

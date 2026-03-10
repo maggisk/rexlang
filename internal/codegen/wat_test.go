@@ -1408,3 +1408,24 @@ main _ =
 		t.Fatalf("expected %q, got %q", "hello world!\n", stdout)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Higher-order function tests
+// ---------------------------------------------------------------------------
+
+func TestE2ELocalFoldl(t *testing.T) {
+	code := `
+foldl f acc lst =
+    match lst
+        when [] ->
+            acc
+        when [h|t] ->
+            foldl f (f acc h) t
+
+main _ = foldl (\acc x -> acc + x) 0 [1, 2, 3, 4, 5]
+`
+	// 1+2+3+4+5 = 15
+	if got := runWasm(t, code); got != 15 {
+		t.Fatalf("expected exit 15, got %d", got)
+	}
+}
