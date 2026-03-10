@@ -1488,10 +1488,11 @@ func (g *watGen) needsWASIIO() bool {
 
 // emitWASIHelpers emits $__print_str (write GC string to stdout) used by
 // println and print builtins. Memory layout:
-//   offset 0-3:  iovec.buf (i32) = 16
-//   offset 4-7:  iovec.len (i32)
-//   offset 8-11: nwritten  (i32, fd_write output)
-//   offset 16+:  string data buffer
+//
+//	offset 0-3:  iovec.buf (i32) = 16
+//	offset 4-7:  iovec.len (i32)
+//	offset 8-11: nwritten  (i32, fd_write output)
+//	offset 16+:  string data buffer
 func (g *watGen) emitWASIHelpers() {
 	// $__print_str: copy GC string to linear memory, call fd_write
 	g.line(";; WASI IO: print GC string to stdout")
@@ -1999,8 +2000,30 @@ func (g *watGen) scanExprForLambdas(owner string, expr ir.Expr, scope map[string
 			newScope[b.Name] = true
 			newLet[b.Name] = true
 		}
+		// Track which lambda index is the direct (outermost) lambda for each binding
+		directLambdaIdx := make(map[int]string) // lambda index → binding name
 		for _, b := range e.Bindings {
+			idx := len(g.lambdas)
 			g.scanCExprForLambdas(owner, b.Bind, newScope, newLet)
+			if len(g.lambdas) > idx {
+				directLambdaIdx[idx] = b.Name
+			}
+		}
+		// Post-process: only set selfCapture on the DIRECT lambda of each binding,
+		// not on inner lambdas (which should capture the binding as a regular capture)
+		for i, bindName := range directLambdaIdx {
+			lf := &g.lambdas[i]
+			for j := 0; j < len(lf.captures); j++ {
+				if lf.captures[j] == bindName {
+					lf.selfCapture = lf.captures[j]
+					lf.captures = append(lf.captures[:j], lf.captures[j+1:]...)
+					lf.capTypes = append(lf.capTypes[:j], lf.capTypes[j+1:]...)
+					if len(lf.captures) > g.maxCaps {
+						g.maxCaps = len(lf.captures)
+					}
+					break
+				}
+			}
 		}
 		g.scanExprForLambdas(owner, e.Body, newScope, newLet)
 	}
@@ -2137,12 +2160,37 @@ func (g *watGen) collectFreeVarsCExpr(c ir.CExpr, bound map[string]bool, free ma
 	case ir.CMatch:
 		g.collectFreeVarsAtom(e.Scrutinee, bound, free)
 		for _, arm := range e.Arms {
-			g.collectFreeVars(arm.Body, bound, free)
+			armBound := copyScope(bound)
+			collectPatternBindings(arm.Pat, armBound)
+			g.collectFreeVars(arm.Body, armBound, free)
 		}
 	case ir.CLambda:
 		newBound := copyScope(bound)
 		newBound[e.Param] = true
 		g.collectFreeVars(e.Body, newBound, free)
+	}
+}
+
+// collectPatternBindings adds all variable names bound by a pattern to the set.
+func collectPatternBindings(pat ir.Pattern, bound map[string]bool) {
+	switch p := pat.(type) {
+	case ir.PVar:
+		bound[p.Name] = true
+	case ir.PCons:
+		collectPatternBindings(p.Head, bound)
+		collectPatternBindings(p.Tail, bound)
+	case ir.PTuple:
+		for _, sub := range p.Pats {
+			collectPatternBindings(sub, bound)
+		}
+	case ir.PCtor:
+		for _, sub := range p.Args {
+			collectPatternBindings(sub, bound)
+		}
+	case ir.PRecord:
+		for _, f := range p.Fields {
+			collectPatternBindings(f.Pat, bound)
+		}
 	}
 }
 

@@ -390,6 +390,20 @@ func (l *Lowerer) normalizeLet(e ast.Let) (Expr, error) {
 	if err != nil {
 		return nil, err
 	}
+	// If recursive, produce ELetRec so codegen can handle self-capture
+	if e.Recursive {
+		var cexpr CExpr
+		switch be := bind.(type) {
+		case EComplex:
+			cexpr = be.C
+		default:
+			cexpr = CLambda{Body: bind}
+		}
+		return ELetRec{
+			Bindings: []RecBinding{{Name: e.Name, Bind: cexpr}},
+			Body:     cont,
+		}, nil
+	}
 	return l.wrapExpr(bind, e.Name, cont), nil
 }
 

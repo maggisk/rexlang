@@ -1939,9 +1939,18 @@ main _ = sum [10, 20, 12]
 	}
 }
 
-// TODO: TestE2EStdlibListReverse — needs inner let rec support
-// reverse uses `let rec go acc xs = ...` which creates an inner recursive
-// function that the lambda lifter doesn't handle yet.
+func TestE2EStdlibListReverse(t *testing.T) {
+	code := `
+import Std:List (reverse, length)
+
+main _ =
+    let xs = reverse [1, 2, 3]
+    in length xs
+`
+	if got := runWasm(t, code); got != 3 {
+		t.Fatalf("expected 3, got %d", got)
+	}
+}
 
 func TestE2EStdlibListMap(t *testing.T) {
 	code := `
