@@ -235,6 +235,7 @@ func (g *goGen) analyze(prog *ir.Program) {
 					typeName: d.TargetTypeName,
 					funcName: funcName,
 				})
+				g.scanExpr(m.Body)
 			}
 		}
 	}

@@ -496,6 +496,76 @@ main _ =
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Step 9: Stdlib
+// ---------------------------------------------------------------------------
+
+func TestGoStdlibMaybe(t *testing.T) {
+	code, _ := runGo(t, `
+import Std:Maybe (Just, Nothing)
+
+withDefault d m =
+    match m
+        when Nothing -> d
+        when Just x -> x
+
+main _ = withDefault 0 (Just 42)
+`)
+	if code != 42 {
+		t.Errorf("expected 42, got %d", code)
+	}
+}
+
+func TestGoStdlibList(t *testing.T) {
+	code, _ := runGo(t, `
+import Std:List (length, map)
+
+main _ = length (map (\x -> x + 1) [1, 2, 3, 4, 5])
+`)
+	if code != 5 {
+		t.Errorf("expected 5, got %d", code)
+	}
+}
+
+func TestGoStdlibListFilter(t *testing.T) {
+	code, _ := runGo(t, `
+import Std:List (length, filter)
+
+main _ = length (filter (\x -> x > 3) [1, 2, 3, 4, 5])
+`)
+	if code != 2 {
+		t.Errorf("expected 2, got %d", code)
+	}
+}
+
+func TestGoStdlibListFoldl(t *testing.T) {
+	code, _ := runGo(t, `
+import Std:List (foldl)
+
+main _ = foldl (\acc x -> acc + x) 0 [1, 2, 3, 4, 5]
+`)
+	if code != 15 {
+		t.Errorf("expected 15, got %d", code)
+	}
+}
+
+func TestGoStdlibMultipleImports(t *testing.T) {
+	_, stdout := runGo(t, `
+import Std:IO (println)
+import Std:List (map, foldl)
+
+sum lst = foldl (\acc x -> acc + x) 0 lst
+
+main _ =
+    let result = sum (map (\x -> x * 2) [1, 2, 3])
+    in let _ = println result
+    in 0
+`)
+	if stdout != "12\n" {
+		t.Errorf("expected '12\\n', got %q", stdout)
+	}
+}
+
 func TestGoLetRec(t *testing.T) {
 	code, _ := runGo(t, `
 main _ =
