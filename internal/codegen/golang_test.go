@@ -469,6 +469,33 @@ main _ = length (myMap (\x -> x + 1) [1, 2, 3])
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Step 8: Traits
+// ---------------------------------------------------------------------------
+
+func TestGoTraitDispatch(t *testing.T) {
+	_, stdout := runGo(t, `
+import Std:IO (println)
+
+trait MyShow a where
+    myShow : a -> String
+
+impl MyShow Int where
+    myShow _ = "an int"
+
+impl MyShow String where
+    myShow _ = "a string"
+
+main _ =
+    let _ = println (myShow 42)
+    in let _ = println (myShow "hello")
+    in 0
+`)
+	if stdout != "an int\na string\n" {
+		t.Errorf("expected 'an int\\na string\\n', got %q", stdout)
+	}
+}
+
 func TestGoLetRec(t *testing.T) {
 	code, _ := runGo(t, `
 main _ =

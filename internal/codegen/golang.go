@@ -86,6 +86,9 @@ type goGen struct {
 	locals       map[string]bool
 	tempCounter  int
 
+	// trait method names → dispatch function names
+	traitMethodNames map[string]string // "myShow" → "dispatch_myshow_myShow"
+
 	// track what features are used so we can emit the right imports/helpers
 	usesLists        bool
 	usesTuples       map[int]bool
@@ -171,6 +174,17 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 
 func (g *goGen) analyze(prog *ir.Program) {
 	g.usesTuples = make(map[int]bool)
+	g.traitMethodNames = make(map[string]string)
+
+	// First pass: collect trait method names from DImpl declarations
+	for _, d := range prog.Decls {
+		if di, ok := d.(ir.DImpl); ok {
+			for _, m := range di.Methods {
+				dispatchName := fmt.Sprintf("dispatch_%s_%s", strings.ToLower(di.TraitName), m.Name)
+				g.traitMethodNames[m.Name] = dispatchName
+			}
+		}
+	}
 
 	for _, d := range prog.Decls {
 		switch d := d.(type) {
@@ -760,7 +774,12 @@ func (g *goGen) emitDImpl(d ir.DImpl) error {
 		g.indent = 1
 		g.locals = make(map[string]bool)
 		for i, p := range params {
-			g.w("%s := args[%d]", goVarName(p), i)
+			vn := goVarName(p)
+			if p == "_" {
+				g.w("_ = args[%d]", i)
+			} else {
+				g.w("%s := args[%d]", vn, i)
+			}
 			g.locals[p] = true
 		}
 
@@ -1014,6 +1033,14 @@ func (g *goGen) emitApp(c ir.CApp) error {
 		return nil
 	case "todo":
 		g.buf.WriteString("rex_todo(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+		return nil
+	}
+
+	// Trait method dispatch
+	if dispatchName, ok := g.traitMethodNames[funcName]; ok {
+		fmt.Fprintf(g.buf, "%s(", dispatchName)
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
@@ -1629,6 +1656,10 @@ func (g *goGen) atomStr(a ir.Atom) string {
 		return "nil"
 	case ir.AVar:
 		name := a.Name
+		// Check if it's a trait method — wrap as a closure calling the dispatch function
+		if dispatchName, ok := g.traitMethodNames[name]; ok {
+			return fmt.Sprintf("func(a any) any { return %s(a) }", dispatchName)
+		}
 		// Check if it's a known ADT constructor
 		if ci, ok := g.ctorToAdt[name]; ok {
 			if len(ci.fieldTypes) == 0 {
