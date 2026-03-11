@@ -275,6 +275,29 @@ Key design decisions:
 - **Closures**: every function potentially partially applied; uncurry optimization where arity is known at call site
 - **Two deployment targets**: WASI (server/CLI via Wasmtime/Wasmer) and browser (JS host provides IO + DOM)
 
+### Compilation (Go backend)
+
+Compile Rex to Go source code, then `go build` to produce a native binary. Reuses the existing IR (ANF) — only the codegen layer is new. Pipeline: `source → parse → typecheck → IR → Go codegen → go build → binary`. Flag: `--compile-go`.
+
+Ordered by dependency — each step builds on the previous:
+
+1. [ ] **Scaffold + hello world** — `internal/codegen/golang.go` with `EmitGo(prog, typeEnv)`; `--compile-go` flag in `cmd/rex/main.go`; `main _ = 0` emits Go `main()` + `os.Exit()`; write `.go` file, run `go build`
+2. [ ] **Primitives + arithmetic** — Int (`int64`), Float (`float64`), Bool, String, Unit; arithmetic, comparison, logical operators; `println`/`print` builtins; `if/then/else`; let bindings → Go local variables
+3. [ ] **Functions + closures** — top-level functions → Go functions; closures → Go closures; currying via partial application helpers; functions as values (`any` interface for polymorphism)
+4. [ ] **ADTs + pattern matching** — ADTs → Go interfaces + structs (tag + fields); pattern matching → type switches / if-else chains; constructor functions
+5. [ ] **Strings, lists, tuples** — strings → `string`; lists → cons cells (Go structs) or slices; tuples → generated struct types by arity; pattern matching on all three
+6. [ ] **Records** — record types → Go structs; field access, record update (clone + modify); record patterns
+7. [ ] **Tail call optimization** — trampoline loop for self-recursive tail calls
+8. [ ] **Traits** — static dispatch when type is known; runtime dispatch via type switch on `any`; Show/Eq/Ord from Prelude
+9. [ ] **Stdlib** — pure Rex stdlib compiles through same pipeline; IO/Net/Env → Go stdlib calls; module resolution reuses `ir.ResolveImports`
+10. [ ] **Actors** — `spawn` → `go func()`; mailboxes → Go channels; `send`/`receive`/`self`/`call` → channel operations
+
+Key design decisions:
+- **Polymorphism**: `any` (Go interface) for type variables; type assertions at use sites
+- **Closures**: Go closures capture variables naturally; currying needs wrapper functions
+- **Actors**: goroutines + channels are a direct match for Rex's actor model
+- **Advantage over WasmGC**: no manual memory layout, no boxing gymnastics, actors work natively via goroutines
+
 ### Before going public
 
 - `go install` support for the `rex` CLI

@@ -54,6 +54,14 @@ func main() {
 		compileFile(args[1])
 		return
 	}
+	if args[0] == "--compile-go" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: rex --compile-go <file.rex>")
+			os.Exit(1)
+		}
+		compileGoFile(args[1])
+		return
+	}
 	if args[0] == "--types" {
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "Usage: rex --types <file.rex | Std:Module>")
@@ -287,6 +295,114 @@ func compileFile(path string) {
 	}
 
 	fmt.Printf("Compiled %s → %s (%s)\n", path, wasmPath, watPath)
+}
+
+// ---------------------------------------------------------------------------
+// compileGoFile
+// ---------------------------------------------------------------------------
+
+func compileGoFile(path string) {
+	setupSrcRoot(path)
+
+	source, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Parse
+	exprs, err := parser.Parse(string(source))
+	if err != nil {
+		printErr("Parse error", err)
+		os.Exit(1)
+	}
+
+	if err := eval.ValidateToplevel(exprs); err != nil {
+		printErr("Syntax error", err)
+		os.Exit(1)
+	}
+
+	if err := parser.ValidateIndentation(exprs); err != nil {
+		printErr("Indentation error", err)
+		os.Exit(1)
+	}
+
+	exprs, err = typechecker.ReorderToplevel(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+
+	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+	handleWarnings(path, warnings)
+
+	// Resolve module imports
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot())
+	if err != nil {
+		printErr("Import resolution error", err)
+		os.Exit(1)
+	}
+	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
+	allExprs := append(importInfo.Decls, userExprs...)
+
+	// Lower to IR
+	l := ir.NewLowerer()
+	prog, err := l.LowerProgram(allExprs)
+	if err != nil {
+		printErr("IR error", err)
+		os.Exit(1)
+	}
+
+	// Tree shake
+	prog = ir.Shake(prog)
+
+	// Emit Go source
+	goSrc, err := codegen.EmitGo(prog, typeEnv)
+	if err != nil {
+		printErr("Codegen error", err)
+		os.Exit(1)
+	}
+
+	// Determine output paths
+	base := strings.TrimSuffix(filepath.Base(path), ".rex")
+	goDir := base + "_go"
+	goFile := filepath.Join(goDir, "main.go")
+	binaryPath := base
+
+	// Create output directory
+	if err := os.MkdirAll(goDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := os.WriteFile(goFile, []byte(goSrc), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing Go source: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create a go.mod for the generated code
+	goMod := fmt.Sprintf("module %s\n\ngo 1.24\n", base)
+	goModFile := filepath.Join(goDir, "go.mod")
+	if err := os.WriteFile(goModFile, []byte(goMod), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing go.mod: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Build with go build
+	absOutput, _ := filepath.Abs(binaryPath)
+	cmd := exec.Command("go", "build", "-o", absOutput, ".")
+	cmd.Dir = goDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "go build failed: %v\n%s\nGenerated Go source: %s\n", err, out, goFile)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Compiled %s → %s (%s)\n", path, binaryPath, goFile)
 }
 
 // ---------------------------------------------------------------------------
