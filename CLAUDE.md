@@ -313,13 +313,14 @@ Ordered by dependency — each step builds on the previous:
 7. [x] **Tail call optimization** — not needed for basic recursion (Node.js stack is deep enough); trampoline can be added later
 8. [x] **Traits** — dispatch functions with `typeof` + `.$tag`/`.$type` checks
 9. [x] **Stdlib** — pure Rex stdlib through same pipeline; IO builtins → `console.log`; module resolution reuses `ir.ResolveImports`
-10. [ ] **Actors** — requires `worker_threads` or async event loop; not yet implemented
+10. [x] **Actors** — synchronous CPS-transformed `receive()`: `let msg = receive() in body` → `rex_receive_cps((msg) => { body })`. `spawn(f)` runs `f` which sets a `_resume` callback and returns. `send(pid, msg)` calls `pid._resume(msg)` synchronously. `call(pid, msgFn)` creates a reply pid and reads the reply from its buffer. No async, no `worker_threads` — pure synchronous direct function calls.
 
 Key design decisions:
 - **No boxing needed**: JS is dynamically typed — everything is already `any`
 - **Closures**: arrow functions capture variables naturally; currying is trivial
 - **No compilation step**: emit `.js` and run directly with `node`
 - **Browser potential**: same generated code could run in browsers with minimal changes
+- **Actors**: synchronous CPS — `receive()` is CPS-transformed so `send` directly invokes the handler; no event loop or threads needed
 
 ### Before going public
 

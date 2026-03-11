@@ -425,27 +425,61 @@ function rex_todo(msg) { throw new Error("TODO: " + (typeof msg === "string" ? m
 
 `)
 
-	// Concurrency runtime
+	// Concurrency runtime — synchronous CPS actors
 	if g.usesConcurrency {
-		b.WriteString(`// Actor runtime — synchronous simulation using shared arrays
-// (Full async actors would need worker_threads; this suffices for basic programs)
+		b.WriteString(`// Actor runtime — direct function calls via CPS-transformed receive().
+// spawn(f) runs f, which sets pid._resume = (msg) => { ... } and returns.
+// send(pid, msg) calls pid._resume(msg) synchronously.
+// call(pid, msgFn) sends and reads the reply from a buffer.
 let _pidCounter = 0;
-function RexPid() { this.ch = []; this.id = ++_pidCounter; this._waiting = null; }
-let _currentPid = new RexPid();
+let _currentPid = { ch: [], id: 0, _resume: null };
 
 function rex_spawn(f) {
-  const pid = new RexPid();
+  const pid = { ch: [], id: ++_pidCounter, _resume: null };
   const prevPid = _currentPid;
-  // Use setTimeout to run the spawned function asynchronously
-  const run = () => { _currentPid = pid; try { f(null); } finally { _currentPid = prevPid; } };
-  setTimeout(run, 0);
+  _currentPid = pid;
+  f(null);
+  _currentPid = prevPid;
   return pid;
 }
 
 function rex_send(pid, msg) {
-  pid.ch.push(msg);
-  if (pid._waiting) { const w = pid._waiting; pid._waiting = null; w(); }
+  if (pid._resume) {
+    const resume = pid._resume;
+    pid._resume = null;
+    const prevPid = _currentPid;
+    _currentPid = pid;
+    resume(msg);
+    _currentPid = prevPid;
+  } else {
+    pid.ch.push(msg);
+  }
   return null;
+}
+
+function rex_receive_cps(handler) {
+  const self = _currentPid;
+  if (self.ch.length > 0) {
+    handler(self.ch.shift());
+  } else {
+    self._resume = handler;
+  }
+}
+
+function rex_call(targetPid, msgFn) {
+  const replyPid = { ch: [], id: ++_pidCounter, _resume: null };
+  const msg = msgFn(replyPid);
+  if (targetPid._resume) {
+    const resume = targetPid._resume;
+    targetPid._resume = null;
+    const prevPid = _currentPid;
+    _currentPid = targetPid;
+    resume(msg);
+    _currentPid = prevPid;
+  } else {
+    targetPid.ch.push(msg);
+  }
+  return replyPid.ch.shift();
 }
 
 function rex_getSelf() { return _currentPid; }
@@ -501,14 +535,16 @@ func (g *jsGen) emitDecl(d ir.Decl) error {
 }
 
 func (g *jsGen) emitDLet(d ir.DLet) error {
-	// _ bindings: side-effect-only, always emit
+	// _ bindings: side-effect-only, always emit as IIFE
 	if d.Name == "_" {
-		g.wn("const _ = ")
+		g.wn("(() => {\n")
+		g.indent++
 		g.locals = make(map[string]bool)
-		if err := g.emitExprInline(d.Body); err != nil {
+		if err := g.emitExprStmt(d.Body, true); err != nil {
 			return err
 		}
-		g.buf.WriteString(";\n\n")
+		g.indent--
+		g.w("})();\n")
 		return nil
 	}
 
@@ -692,6 +728,20 @@ func (g *jsGen) emitExprStmt(expr ir.Expr, isReturn bool) error {
 		return g.emitCExprStmt(e.C, isReturn)
 
 	case ir.ELet:
+		// CPS transform for receive(): instead of blocking, set _resume callback
+		if g.usesConcurrency && isReceiveCall(e.Bind) {
+			varName := jsVarName(e.Name)
+			g.w("rex_receive_cps((%s) => {", varName)
+			g.indent++
+			g.locals[e.Name] = true
+			if err := g.emitExprStmt(e.Body, true); err != nil {
+				return err
+			}
+			g.indent--
+			g.w("});")
+			return nil
+		}
+
 		varName := jsVarName(e.Name)
 		if e.Name == "_" {
 			g.wn("")
@@ -1584,6 +1634,16 @@ func jsVarName(name string) string {
 		return "r_" + s
 	}
 	return s
+}
+
+// isReceiveCall checks if a CExpr is a call to the "receive" builtin.
+func isReceiveCall(c ir.CExpr) bool {
+	if app, ok := c.(ir.CApp); ok {
+		if v, ok := app.Func.(ir.AVar); ok {
+			return v.Name == "receive"
+		}
+	}
+	return false
 }
 
 func jsSanitize(name string) string {

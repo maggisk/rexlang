@@ -547,6 +547,83 @@ main _ =
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Step 10: Actors
+// ---------------------------------------------------------------------------
+
+func TestJSSpawnSendReceive(t *testing.T) {
+	_, stdout := runJS(t, `
+import Std:IO (println)
+import Std:Process (spawn, send, receive, self)
+
+main _ =
+    let me = self
+    in let pid = spawn \_ ->
+        let msg = receive ()
+        in send me msg
+    in let _ = send pid "hello from actor"
+    in let reply = receive ()
+    in let _ = println reply
+    in 0
+`)
+	if stdout != "hello from actor\n" {
+		t.Errorf("expected 'hello from actor\\n', got %q", stdout)
+	}
+}
+
+func TestJSCall(t *testing.T) {
+	code, _ := runJS(t, `
+import Std:Process (spawn, send, receive, self, call)
+
+main _ =
+    let actor = spawn \_ ->
+        let msg = receive ()
+        in match msg
+            when (replyTo, n) ->
+                send replyTo (n + 1)
+    in call actor (\replyTo -> (replyTo, 41))
+`)
+	if code != 42 {
+		t.Errorf("expected 42, got %d", code)
+	}
+}
+
+func TestJSActorLoop(t *testing.T) {
+	_, stdout := runJS(t, `
+import Std:IO (println)
+import Std:Process (spawn, send, receive, self, call)
+import Std:String (toString)
+
+type Msg = Inc | Get (Pid Int) | Stop
+
+counter =
+    spawn \_ ->
+        let rec loop n =
+            match receive ()
+                when Inc ->
+                    loop (n + 1)
+                when Get replyTo ->
+                    let _ = send replyTo n
+                    in loop n
+                when Stop ->
+                    ()
+        in
+        loop 0
+
+_ = send counter Inc
+_ = send counter Inc
+_ = send counter Inc
+n = call counter Get
+
+main _ =
+    let _ = n |> toString |> println
+    in 0
+`)
+	if stdout != "3\n" {
+		t.Errorf("expected '3\\n', got %q", stdout)
+	}
+}
+
 func TestJSLetRec(t *testing.T) {
 	code, _ := runJS(t, `
 main _ =
