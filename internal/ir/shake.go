@@ -53,7 +53,7 @@ func Shake(prog *Program) *Program {
 	for _, d := range prog.Decls {
 		switch dl := d.(type) {
 		case DLet:
-			if reachable[dl.Name] {
+			if dl.Name == "_" || reachable[dl.Name] {
 				kept = append(kept, d)
 			}
 		case DLetRec:

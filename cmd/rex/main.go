@@ -385,7 +385,7 @@ func compileGoFile(path string) {
 	}
 
 	// Create a go.mod for the generated code
-	goMod := fmt.Sprintf("module %s\n\ngo 1.24\n", base)
+	goMod := fmt.Sprintf("module rex_%s\n\ngo 1.24\n", base)
 	goModFile := filepath.Join(goDir, "go.mod")
 	if err := os.WriteFile(goModFile, []byte(goMod), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing go.mod: %v\n", err)

@@ -339,7 +339,7 @@ func (g *goGen) scanAtom(a ir.Atom) {
 		case "showInt", "showFloat":
 			g.usedBuiltins[v.Name] = true
 			g.usesShow = true
-		case "not", "error", "todo":
+		case "not", "error", "todo", "toString":
 			g.usedBuiltins[v.Name] = true
 		case "spawn", "send", "receive", "self", "call":
 			g.usesConcurrencyBuiltins = true
@@ -762,6 +762,18 @@ func (g *goGen) emitDecl(d ir.Decl) error {
 
 func (g *goGen) emitDLet(d ir.DLet) error {
 	fi := g.funcs[d.Name]
+
+	// _ bindings: side-effect-only, always emit
+	if d.Name == "_" {
+		g.buf.WriteString("var _ = ")
+		g.locals = make(map[string]bool)
+		if err := g.emitExprInline(d.Body); err != nil {
+			return err
+		}
+		g.buf.WriteString("\n\n")
+		return nil
+	}
+
 	if fi == nil {
 		return nil
 	}
@@ -1102,6 +1114,12 @@ func (g *goGen) emitApp(c ir.CApp) error {
 		return nil
 	case "showFloat":
 		g.buf.WriteString("rex_showFloat(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+		return nil
+	case "toString":
+		// toString : a -> String — same as rex_display
+		g.buf.WriteString("rex_display(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
@@ -1780,6 +1798,23 @@ func (g *goGen) atomStr(a ir.Atom) string {
 				return "func(pid any) any { return func(fn any) any { return rex_call(pid, fn) } }"
 			}
 		}
+		// Builtins as values (when passed as function arguments)
+		switch name {
+		case "println":
+			return "func(v any) any { return rex_println(v) }"
+		case "print":
+			return "func(v any) any { return rex_print(v) }"
+		case "toString":
+			return "func(v any) any { return rex_display(v) }"
+		case "showInt":
+			return "func(v any) any { return rex_showInt(v) }"
+		case "showFloat":
+			return "func(v any) any { return rex_showFloat(v) }"
+		case "not":
+			return "func(v any) any { return rex_not(v) }"
+		case "error":
+			return "func(v any) any { return rex_error(v) }"
+		}
 		// Check if it's a trait method — wrap as a closure calling the dispatch function
 		if dispatchName, ok := g.traitMethodNames[name]; ok {
 			return fmt.Sprintf("func(a any) any { return %s(a) }", dispatchName)
@@ -1793,11 +1828,15 @@ func (g *goGen) atomStr(a ir.Atom) string {
 			// Constructor with fields — return as a curried function
 			return g.ctorAsClosure(ci)
 		}
-		// Check if it's a known top-level function — if so, and if arity > 0,
-		// we need to wrap it as a closure when used as a value
-		if fi, ok := g.funcs[name]; ok && fi.arity > 0 {
+		// Check if it's a known top-level function
+		if fi, ok := g.funcs[name]; ok {
 			if !g.locals[name] {
-				return g.funcAsClosure(name, fi)
+				if fi.arity > 0 {
+					// Wrap as closure when used as a value
+					return g.funcAsClosure(name, fi)
+				}
+				// Zero-arity top-level binding — use goFuncName for rex_ prefix
+				return goFuncName(name)
 			}
 		}
 		return goVarName(name)
