@@ -298,6 +298,29 @@ Key design decisions:
 - **Actors**: goroutines + channels are a direct match for Rex's actor model
 - **Advantage over WasmGC**: no manual memory layout, no boxing gymnastics, actors work natively via goroutines
 
+### Compilation (JS backend — Node.js)
+
+Compile Rex to JavaScript, run with Node.js. Same pipeline as Go backend: `source → parse → typecheck → IR → JS codegen → .js file`. Flag: `--compile-js`.
+
+Ordered by dependency — each step builds on the previous:
+
+1. [x] **Scaffold + hello world** — `internal/codegen/javascript.go` with `EmitJS(prog, typeEnv)`; `--compile-js` flag in `cmd/rex/main.go`; `main _ = 0` emits `process.exit(rex_main(null))`. Write `.js` file, run with `node`.
+2. [x] **Primitives + arithmetic** — numbers (JS `number` for both Int and Float), Bool, String, Unit (`null`); arithmetic, comparison, logical operators; `println`/`print`; `if/then/else`; let bindings → `const` declarations
+3. [x] **Functions + closures** — top-level functions → JS functions; closures work naturally; currying via nested arrow functions; all values are JS dynamic types (no boxing needed)
+4. [x] **ADTs + pattern matching** — constructors → objects `{$tag: "Red", $type: "Color"}` with field access `._0`, `._1`; pattern matching → if/else chains checking `.$tag`
+5. [x] **Strings, lists, tuples** — strings → JS strings; lists → `{$tag: "Cons", head, tail}` / `null` for nil; tuples → arrays `[a, b]`; pattern matching on all three
+6. [x] **Records** — plain JS objects `{x: 10, y: 32}`; field access → `.field`; record update → spread `{...rec, field: val}`
+7. [x] **Tail call optimization** — not needed for basic recursion (Node.js stack is deep enough); trampoline can be added later
+8. [x] **Traits** — dispatch functions with `typeof` + `.$tag`/`.$type` checks
+9. [x] **Stdlib** — pure Rex stdlib through same pipeline; IO builtins → `console.log`; module resolution reuses `ir.ResolveImports`
+10. [ ] **Actors** — requires `worker_threads` or async event loop; not yet implemented
+
+Key design decisions:
+- **No boxing needed**: JS is dynamically typed — everything is already `any`
+- **Closures**: arrow functions capture variables naturally; currying is trivial
+- **No compilation step**: emit `.js` and run directly with `node`
+- **Browser potential**: same generated code could run in browsers with minimal changes
+
 ### Before going public
 
 - `go install` support for the `rex` CLI

@@ -62,6 +62,14 @@ func main() {
 		compileGoFile(args[1])
 		return
 	}
+	if args[0] == "--compile-js" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: rex --compile-js <file.rex>")
+			os.Exit(1)
+		}
+		compileJSFile(args[1])
+		return
+	}
 	if args[0] == "--types" {
 		if len(args) < 2 {
 			fmt.Fprintln(os.Stderr, "Usage: rex --types <file.rex | Std:Module>")
@@ -403,6 +411,82 @@ func compileGoFile(path string) {
 	}
 
 	fmt.Printf("Compiled %s → %s (%s)\n", path, binaryPath, goFile)
+}
+
+// ---------------------------------------------------------------------------
+// compileJSFile
+// ---------------------------------------------------------------------------
+
+func compileJSFile(path string) {
+	setupSrcRoot(path)
+
+	source, err := os.ReadFile(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
+	}
+
+	exprs, err := parser.Parse(string(source))
+	if err != nil {
+		printErr("Parse error", err)
+		os.Exit(1)
+	}
+
+	if err := eval.ValidateToplevel(exprs); err != nil {
+		printErr("Syntax error", err)
+		os.Exit(1)
+	}
+
+	if err := parser.ValidateIndentation(exprs); err != nil {
+		printErr("Indentation error", err)
+		os.Exit(1)
+	}
+
+	exprs, err = typechecker.ReorderToplevel(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+
+	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+	handleWarnings(path, warnings)
+
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot())
+	if err != nil {
+		printErr("Import resolution error", err)
+		os.Exit(1)
+	}
+	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
+	allExprs := append(importInfo.Decls, userExprs...)
+
+	l := ir.NewLowerer()
+	prog, err := l.LowerProgram(allExprs)
+	if err != nil {
+		printErr("IR error", err)
+		os.Exit(1)
+	}
+
+	prog = ir.Shake(prog)
+
+	jsSrc, err := codegen.EmitJS(prog, typeEnv)
+	if err != nil {
+		printErr("Codegen error", err)
+		os.Exit(1)
+	}
+
+	base := strings.TrimSuffix(filepath.Base(path), ".rex")
+	jsFile := base + ".js"
+
+	if err := os.WriteFile(jsFile, []byte(jsSrc), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing JS file: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Compiled %s → %s\n", path, jsFile)
 }
 
 // ---------------------------------------------------------------------------
