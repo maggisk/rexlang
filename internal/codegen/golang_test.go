@@ -566,6 +566,47 @@ main _ =
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Step 10: Actors
+// ---------------------------------------------------------------------------
+
+func TestGoSpawnSendReceive(t *testing.T) {
+	_, stdout := runGo(t, `
+import Std:IO (println)
+import Std:Process (spawn, send, receive, self)
+
+main _ =
+    let me = self
+    in let pid = spawn \_ ->
+        let msg = receive ()
+        in send me msg
+    in let _ = send pid "hello from actor"
+    in let reply = receive ()
+    in let _ = println reply
+    in 0
+`)
+	if stdout != "hello from actor\n" {
+		t.Errorf("expected 'hello from actor\\n', got %q", stdout)
+	}
+}
+
+func TestGoCall(t *testing.T) {
+	code, _ := runGo(t, `
+import Std:Process (spawn, send, receive, self, call)
+
+main _ =
+    let actor = spawn \_ ->
+        let msg = receive ()
+        in match msg
+            when (replyTo, n) ->
+                send replyTo (n + 1)
+    in call actor (\replyTo -> (replyTo, 41))
+`)
+	if code != 42 {
+		t.Errorf("expected 42, got %d", code)
+	}
+}
+
 func TestGoLetRec(t *testing.T) {
 	code, _ := runGo(t, `
 main _ =

@@ -89,13 +89,13 @@ type goGen struct {
 	// trait method names → dispatch function names
 	traitMethodNames map[string]string // "myShow" → "dispatch_myshow_myShow"
 
-	// track what features are used so we can emit the right imports/helpers
-	usesLists        bool
-	usesTuples       map[int]bool
-	usesStringConcat bool
-	usesShow         bool
-	usesStringInterp bool
-	usesConcurrency  bool
+	// track what features are used
+	usesConcurrencyBuiltins bool // spawn/send/receive/self/call
+	usesLists               bool
+	usesTuples              map[int]bool
+	usesStringConcat        bool
+	usesShow                bool
+	usesStringInterp        bool
 }
 
 func (g *goGen) fresh() string {
@@ -341,6 +341,8 @@ func (g *goGen) scanAtom(a ir.Atom) {
 			g.usesShow = true
 		case "not", "error", "todo":
 			g.usedBuiltins[v.Name] = true
+		case "spawn", "send", "receive", "self", "call":
+			g.usesConcurrencyBuiltins = true
 		}
 	}
 }
@@ -387,6 +389,9 @@ func (g *goGen) emitImports() string {
 	// Only import "strings" when list display uses strings.Join
 	if g.usesLists {
 		imports = append(imports, `"strings"`)
+	}
+	if g.usesConcurrencyBuiltins {
+		imports = append(imports, `"runtime"`, `"sync"`)
 	}
 
 	var b strings.Builder
@@ -593,6 +598,84 @@ func (g *goGen) emitRuntimeHelpers() string {
 	if g.usedBuiltins["not"] {
 		b.WriteString("func rex_not(v any) any {\n")
 		b.WriteString("\treturn !v.(bool)\n")
+		b.WriteString("}\n\n")
+	}
+
+	// Actor/concurrency runtime
+	if g.usesConcurrencyBuiltins {
+		b.WriteString("type RexPid struct {\n")
+		b.WriteString("\tch chan any\n")
+		b.WriteString("\tid int64\n")
+		b.WriteString("}\n\n")
+
+		b.WriteString("var rexPidCounter int64\n")
+		b.WriteString("var rexPidMu sync.Mutex\n\n")
+
+		// Goroutine-local self Pid: each goroutine stores its Pid in a sync.Map
+		// keyed by a unique goroutine token passed via closure.
+		b.WriteString("var rexGoroutineSelf sync.Map // goroutine token -> *RexPid\n\n")
+
+		b.WriteString("func rexNextPidID() int64 {\n")
+		b.WriteString("\trexPidMu.Lock()\n")
+		b.WriteString("\trexPidCounter++\n")
+		b.WriteString("\tid := rexPidCounter\n")
+		b.WriteString("\trexPidMu.Unlock()\n")
+		b.WriteString("\treturn id\n")
+		b.WriteString("}\n\n")
+
+		// The main goroutine's pid (for receive/self in main)
+		b.WriteString("var rexMainPid = &RexPid{ch: make(chan any, 1024), id: 0}\n\n")
+
+		b.WriteString("func rexGoroutineID() int64 {\n")
+		b.WriteString("\tvar buf [64]byte\n")
+		b.WriteString("\tn := runtime.Stack(buf[:], false)\n")
+		b.WriteString("\ts := string(buf[:n])\n")
+		b.WriteString("\t// \"goroutine 123 [...]\"\n")
+		b.WriteString("\ts = s[len(\"goroutine \"):]\n")
+		b.WriteString("\tfor i := 0; i < len(s); i++ {\n")
+		b.WriteString("\t\tif s[i] < '0' || s[i] > '9' {\n")
+		b.WriteString("\t\t\ts = s[:i]\n")
+		b.WriteString("\t\t\tbreak\n")
+		b.WriteString("\t\t}\n")
+		b.WriteString("\t}\n")
+		b.WriteString("\tid, _ := strconv.ParseInt(s, 10, 64)\n")
+		b.WriteString("\treturn id\n")
+		b.WriteString("}\n\n")
+
+		// init: register main goroutine's pid
+		b.WriteString("func init() {\n")
+		b.WriteString("\trexGoroutineSelf.Store(rexGoroutineID(), rexMainPid)\n")
+		b.WriteString("}\n\n")
+
+		b.WriteString("func rexGetSelf() *RexPid {\n")
+		b.WriteString("\tv, ok := rexGoroutineSelf.Load(rexGoroutineID())\n")
+		b.WriteString("\tif !ok { return rexMainPid }\n")
+		b.WriteString("\treturn v.(*RexPid)\n")
+		b.WriteString("}\n\n")
+
+		// spawn : (() -> b) -> Pid a
+		b.WriteString("func rex_spawn(f any) any {\n")
+		b.WriteString("\tpid := &RexPid{ch: make(chan any, 1024), id: rexNextPidID()}\n")
+		b.WriteString("\tgo func() {\n")
+		b.WriteString("\t\trexGoroutineSelf.Store(rexGoroutineID(), pid)\n")
+		b.WriteString("\t\tf.(func(any) any)(nil)\n")
+		b.WriteString("\t}()\n")
+		b.WriteString("\treturn pid\n")
+		b.WriteString("}\n\n")
+
+		// send : Pid a -> a -> ()
+		b.WriteString("func rex_send(pid any, msg any) any {\n")
+		b.WriteString("\tpid.(*RexPid).ch <- msg\n")
+		b.WriteString("\treturn nil\n")
+		b.WriteString("}\n\n")
+
+		// call : Pid b -> (Pid a -> b) -> a
+		b.WriteString("func rex_call(targetPid any, msgFn any) any {\n")
+		b.WriteString("\treplyPid := &RexPid{ch: make(chan any, 1), id: rexNextPidID()}\n")
+		b.WriteString("\tfn := msgFn.(func(any) any)\n")
+		b.WriteString("\tmsg := fn(replyPid)\n")
+		b.WriteString("\ttargetPid.(*RexPid).ch <- msg\n")
+		b.WriteString("\treturn <-replyPid.ch\n")
 		b.WriteString("}\n\n")
 	}
 
@@ -1036,6 +1119,31 @@ func (g *goGen) emitApp(c ir.CApp) error {
 		g.buf.WriteString("rex_todo(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
+		return nil
+	case "spawn":
+		g.buf.WriteString("rex_spawn(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+		return nil
+	case "send":
+		// send is curried: send pid msg → partial app
+		g.buf.WriteString("func(_msg any) any { return rex_send(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _msg) }")
+		return nil
+	case "receive":
+		// receive takes () and returns the next message from the current goroutine's mailbox
+		g.buf.WriteString("<-rexGetSelf().ch")
+		return nil
+	case "self":
+		// self returns the current goroutine's Pid
+		g.buf.WriteString("rexGetSelf()")
+		return nil
+	case "call":
+		// call is curried: call pid fn → partial app
+		g.buf.WriteString("func(_fn any) any { return rex_call(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _fn) }")
 		return nil
 	}
 
@@ -1657,6 +1765,21 @@ func (g *goGen) atomStr(a ir.Atom) string {
 		return "nil"
 	case ir.AVar:
 		name := a.Name
+		// Actor builtins as values
+		if g.usesConcurrencyBuiltins {
+			switch name {
+			case "self":
+				return "rexGetSelf()"
+			case "receive":
+				return "func(_ any) any { return <-rexGetSelf().ch }"
+			case "spawn":
+				return "func(f any) any { return rex_spawn(f) }"
+			case "send":
+				return "func(pid any) any { return func(msg any) any { return rex_send(pid, msg) } }"
+			case "call":
+				return "func(pid any) any { return func(fn any) any { return rex_call(pid, fn) } }"
+			}
+		}
 		// Check if it's a trait method — wrap as a closure calling the dispatch function
 		if dispatchName, ok := g.traitMethodNames[name]; ok {
 			return fmt.Sprintf("func(a any) any { return %s(a) }", dispatchName)
