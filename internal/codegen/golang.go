@@ -25,6 +25,7 @@ func EmitGo(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		traitImpls:   make(map[string][]goImplCase), // "Trait:Method" -> cases
 		usedBuiltins: make(map[string]bool),
 		locals:       make(map[string]bool),
+		knownTypes:   map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
 	}
 	return g.emit(prog)
 }
@@ -88,6 +89,7 @@ type goGen struct {
 
 	// trait method names → dispatch function names
 	traitMethodNames map[string]string // "myShow" → "dispatch_myshow_myShow"
+	knownTypes       map[string]bool   // types defined in the program (for filtering dispatch cases)
 
 	// track what features are used
 	usesConcurrencyBuiltins bool // spawn/send/receive/self/call
@@ -201,6 +203,7 @@ func (g *goGen) analyze(prog *ir.Program) {
 			}
 
 		case ir.DType:
+			g.knownTypes[d.Name] = true
 			if len(d.Fields) > 0 {
 				// Record type
 				ri := &goRecordInfo{name: d.Name}
@@ -707,10 +710,21 @@ func (g *goGen) emitTraitDispatchers() string {
 		traitName, methodName := parts[0], parts[1]
 		dispatchName := fmt.Sprintf("dispatch_%s_%s", strings.ToLower(traitName), methodName)
 
+		// Filter cases to only include types defined in the program
+		var filteredCases []goImplCase
+		for _, c := range cases {
+			if g.knownTypes[c.typeName] {
+				filteredCases = append(filteredCases, c)
+			}
+		}
+		if len(filteredCases) == 0 {
+			continue
+		}
+
 		fmt.Fprintf(&b, "func %s(args ...any) any {\n", dispatchName)
 		b.WriteString("\tv := args[0]\n")
 		b.WriteString("\tswitch v.(type) {\n")
-		for _, c := range cases {
+		for _, c := range filteredCases {
 			fmt.Fprintf(&b, "\tcase %s:\n", g.goTypeForDispatch(c.typeName))
 			fmt.Fprintf(&b, "\t\treturn %s(args...)\n", c.funcName)
 		}
@@ -849,6 +863,10 @@ func (g *goGen) emitDLetRec(d ir.DLetRec) error {
 }
 
 func (g *goGen) emitDImpl(d ir.DImpl) error {
+	// Skip impls for types not in the program
+	if !g.knownTypes[d.TargetTypeName] {
+		return nil
+	}
 	for _, m := range d.Methods {
 		funcName := fmt.Sprintf("impl_%s_%s_%s", d.TraitName, d.TargetTypeName, m.Name)
 

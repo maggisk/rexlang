@@ -21,6 +21,35 @@ func resolveUserModulePath(root, moduleName string) string {
 	return filepath.Join(root, path+".rex")
 }
 
+// loadUserModuleSource loads a user module with optional target overlay.
+func loadUserModuleSource(root, moduleName, target string) (string, error) {
+	modPath := strings.ReplaceAll(moduleName, ".", string(filepath.Separator))
+	basePath := filepath.Join(root, modPath+".rex")
+
+	if target != "" && target != "native" {
+		overlayPath := filepath.Join(root, modPath+"."+target+".rex")
+		baseData, baseErr := os.ReadFile(basePath)
+		overlayData, overlayErr := os.ReadFile(overlayPath)
+
+		if baseErr != nil && overlayErr != nil {
+			return "", baseErr
+		}
+		if baseErr != nil {
+			return string(overlayData), nil
+		}
+		if overlayErr != nil {
+			return string(baseData), nil
+		}
+		return string(baseData) + "\n" + string(overlayData), nil
+	}
+
+	data, err := os.ReadFile(basePath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // ---------------------------------------------------------------------------
 // TypeEnv — maps names to Scheme or metadata objects
 // ---------------------------------------------------------------------------
@@ -2190,6 +2219,9 @@ var (
 	srcRoot   string // absolute path to src/ directory (empty if not set)
 	srcRootMu sync.Mutex
 
+	target   string // compilation target ("native", "browser", etc.)
+	targetMu sync.Mutex
+
 	importStack   []string // for circular import detection
 	importStackMu sync.Mutex
 )
@@ -2210,6 +2242,19 @@ func getSrcRoot() string {
 // GetSrcRoot returns the current src/ directory root for user module resolution.
 func GetSrcRoot() string {
 	return getSrcRoot()
+}
+
+// SetTarget sets the compilation target (e.g. "native", "browser").
+func SetTarget(t string) {
+	targetMu.Lock()
+	target = t
+	targetMu.Unlock()
+}
+
+func getTarget() string {
+	targetMu.Lock()
+	defer targetMu.Unlock()
+	return target
 }
 
 func pushImportStack(name string) {
@@ -2294,7 +2339,7 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 			return nil, &types.TypeError{Msg: fmt.Sprintf("unknown namespace '%s' in '%s'", namespace, moduleName)}
 		}
 		var err error
-		src, err = stdlib.Source(name)
+		src, err = stdlib.SourceForTarget(name, getTarget())
 		if err != nil {
 			return nil, &types.TypeError{Msg: "unknown module: " + moduleName}
 		}
@@ -2305,12 +2350,13 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 		if root == "" {
 			return nil, &types.TypeError{Msg: fmt.Sprintf("user module import '%s' requires a src/ directory", moduleName)}
 		}
+		t := getTarget()
 		modPath := resolveUserModulePath(root, moduleName)
-		data, err := os.ReadFile(modPath)
+		var err error
+		src, err = loadUserModuleSource(root, moduleName, t)
 		if err != nil {
 			return nil, &types.TypeError{Msg: fmt.Sprintf("module not found: %s (looked for %s)", moduleName, modPath)}
 		}
-		src = string(data)
 	}
 
 	exprs, err := parser.Parse(src)

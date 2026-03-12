@@ -12,7 +12,13 @@ fi
 
 echo ""
 echo "=== Stdlib ==="
-if ! ./rex --test internal/stdlib/rexfiles/*.rex internal/stdlib/rexfiles/**/*.rex; then
+# Exclude .browser.rex files — they contain browser-only stubs that can't run natively
+stdlib_files=()
+for f in internal/stdlib/rexfiles/*.rex internal/stdlib/rexfiles/**/*.rex; do
+    case "$f" in *.browser.rex) continue ;; esac
+    stdlib_files+=("$f")
+done
+if ! ./rex --test "${stdlib_files[@]}"; then
     failed=1
 fi
 

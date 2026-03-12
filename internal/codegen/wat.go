@@ -912,6 +912,10 @@ func (g *watGen) analyzeTraits(prog *ir.Program) {
 		}
 		for _, m := range di.Methods {
 			implName := di.TraitName + "_" + di.TargetTypeName + "_" + m.Name
+			// Skip duplicate impls (e.g. Prelude impls included via ResolveImports)
+			if _, exists := g.implFuncs[implName]; exists {
+				continue
+			}
 			fi := g.analyzeImplMethod(implName, di.TraitName, di.TargetTypeName, m)
 			if fi != nil {
 				g.implFuncs[implName] = fi

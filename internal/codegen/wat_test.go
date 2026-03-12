@@ -24,7 +24,7 @@ func compileCode(t *testing.T, code string) string {
 		t.Fatalf("typecheck error: %v", err)
 	}
 	// Resolve imports: collect module type/trait/impl/function declarations
-	importInfo, err := ir.ResolveImports(exprs, "")
+	importInfo, err := ir.ResolveImports(exprs, "", "")
 	if err != nil {
 		t.Fatalf("resolve imports: %v", err)
 	}
@@ -79,6 +79,9 @@ func runWasm(t *testing.T, code string) int {
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
+			if len(out) > 0 {
+				t.Logf("wasmtime stderr: %s", out)
+			}
 		} else {
 			t.Fatalf("wasmtime: %v\n%s", err, out)
 		}

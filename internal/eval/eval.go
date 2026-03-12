@@ -823,6 +823,9 @@ var (
 	evalSrcRoot   string
 	evalSrcRootMu sync.Mutex
 
+	evalTarget   string
+	evalTargetMu sync.Mutex
+
 	evalImportStack   []string
 	evalImportStackMu sync.Mutex
 )
@@ -838,6 +841,19 @@ func getEvalSrcRoot() string {
 	evalSrcRootMu.Lock()
 	defer evalSrcRootMu.Unlock()
 	return evalSrcRoot
+}
+
+// SetTarget sets the compilation target (e.g. "native", "browser").
+func SetTarget(t string) {
+	evalTargetMu.Lock()
+	evalTarget = t
+	evalTargetMu.Unlock()
+}
+
+func getEvalTarget() string {
+	evalTargetMu.Lock()
+	defer evalTargetMu.Unlock()
+	return evalTarget
 }
 
 func evalPushImport(name string) {
@@ -879,6 +895,35 @@ func resolveUserModulePath(root, moduleName string) string {
 	return filepath.Join(root, path+".rex")
 }
 
+// loadUserModuleSource loads a user module with optional target overlay.
+func loadUserModuleSource(root, moduleName, target string) (string, error) {
+	modPath := strings.ReplaceAll(moduleName, ".", string(filepath.Separator))
+	basePath := filepath.Join(root, modPath+".rex")
+
+	if target != "" && target != "native" {
+		overlayPath := filepath.Join(root, modPath+"."+target+".rex")
+		baseData, baseErr := os.ReadFile(basePath)
+		overlayData, overlayErr := os.ReadFile(overlayPath)
+
+		if baseErr != nil && overlayErr != nil {
+			return "", baseErr
+		}
+		if baseErr != nil {
+			return string(overlayData), nil
+		}
+		if overlayErr != nil {
+			return string(baseData), nil
+		}
+		return string(baseData) + "\n" + string(overlayData), nil
+	}
+
+	data, err := os.ReadFile(basePath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 func loadModule(moduleName string, programArgs []string) (*moduleResult, error) {
 	evalModuleCacheMu.Lock()
 	if r, ok := evalModuleCache[moduleName]; ok {
@@ -905,7 +950,7 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 			return nil, runtimeErr("unknown namespace '%s' in '%s'", namespace, moduleName)
 		}
 		var err error
-		src, err = stdlib.Source(name)
+		src, err = stdlib.SourceForTarget(name, getEvalTarget())
 		if err != nil {
 			return nil, runtimeErr("unknown module: %s", moduleName)
 		}
@@ -916,12 +961,12 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 		if root == "" {
 			return nil, runtimeErr("user module import '%s' requires a src/ directory", moduleName)
 		}
-		modPath := resolveUserModulePath(root, moduleName)
-		data, err := os.ReadFile(modPath)
+		var err error
+		src, err = loadUserModuleSource(root, moduleName, getEvalTarget())
 		if err != nil {
+			modPath := resolveUserModulePath(root, moduleName)
 			return nil, runtimeErr("module not found: %s (looked for %s)", moduleName, modPath)
 		}
-		src = string(data)
 	}
 
 	exprs, parseErr := parser.Parse(src)

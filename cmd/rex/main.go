@@ -24,6 +24,9 @@ import (
 // safeMode is set by the --safe flag; it promotes warnings (todo usage) to errors.
 var safeMode bool
 
+// targetMode is set by the --target flag; defaults to "native".
+var targetMode = "native"
+
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
@@ -36,6 +39,8 @@ func main() {
 	for _, a := range args {
 		if a == "--safe" {
 			safeMode = true
+		} else if strings.HasPrefix(a, "--target=") {
+			targetMode = strings.TrimPrefix(a, "--target=")
 		} else {
 			filtered = append(filtered, a)
 		}
@@ -51,7 +56,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: rex --compile <file.rex>")
 			os.Exit(1)
 		}
-		compileFile(args[1])
+		if targetMode == "browser" {
+			compileJSFile(args[1])
+		} else {
+			compileFile(args[1])
+		}
 		return
 	}
 	if args[0] == "--compile-go" {
@@ -60,14 +69,6 @@ func main() {
 			os.Exit(1)
 		}
 		compileGoFile(args[1])
-		return
-	}
-	if args[0] == "--compile-js" {
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: rex --compile-js <file.rex>")
-			os.Exit(1)
-		}
-		compileJSFile(args[1])
 		return
 	}
 	if args[0] == "--types" {
@@ -190,6 +191,10 @@ func handleWarnings(path string, warnings []typechecker.Warning) {
 // setupSrcRoot detects a src/ directory in cwd, validates the entry file if needed,
 // and sets the srcRoot for both typechecker and eval.
 func setupSrcRoot(entryFile string) {
+	// Set target for typechecker and eval
+	typechecker.SetTarget(targetMode)
+	eval.SetTarget(targetMode)
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return
@@ -259,7 +264,7 @@ func compileFile(path string) {
 
 	// Resolve module imports: collect type/trait/impl/function declarations
 	// from imported modules so codegen has full program visibility.
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot())
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode)
 	if err != nil {
 		printErr("Import resolution error", err)
 		os.Exit(1)
@@ -349,7 +354,7 @@ func compileGoFile(path string) {
 	handleWarnings(path, warnings)
 
 	// Resolve module imports
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot())
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode)
 	if err != nil {
 		printErr("Import resolution error", err)
 		os.Exit(1)
@@ -455,7 +460,7 @@ func compileJSFile(path string) {
 	}
 	handleWarnings(path, warnings)
 
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot())
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode)
 	if err != nil {
 		printErr("Import resolution error", err)
 		os.Exit(1)
@@ -480,13 +485,20 @@ func compileJSFile(path string) {
 
 	base := strings.TrimSuffix(filepath.Base(path), ".rex")
 	jsFile := base + ".js"
+	htmlFile := base + ".html"
 
 	if err := os.WriteFile(jsFile, []byte(jsSrc), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing JS file: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Compiled %s → %s\n", path, jsFile)
+	htmlSrc := codegen.EmitBrowserHTML(jsFile)
+	if err := os.WriteFile(htmlFile, []byte(htmlSrc), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing HTML file: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Compiled %s → %s + %s\n", path, jsFile, htmlFile)
 }
 
 // ---------------------------------------------------------------------------

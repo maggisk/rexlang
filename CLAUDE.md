@@ -58,6 +58,9 @@ go build -o rex ./cmd/rex/
 ./rex --compile examples/hello.rex    # produces hello.wasm + hello.wat
 wasmtime hello.wasm                   # run with any WASI runtime
 
+# compile to JavaScript (browser target)
+./rex --compile --target=browser examples/hello.rex  # produces hello.js + hello.html
+
 # --safe flag: promote warnings (todo usage)to errors
 ./rex --safe examples/io.rex
 ./rex --safe --test examples/testing.rex
@@ -233,6 +236,9 @@ export opaque type Rng = | Rng Int
 - [x] Random — `Std:Random` with pure seed-based API (`rngMake`, `rngInt`, `rngFloat`, `rngBool`, `rngList`) and actor facade (`randomInt`, `randomFloat`, `randomBool`, `shuffle`); xorshift32 algorithm; opaque `Rng` type; one Go builtin (`systemSeed`)
 - [x] Bitwise — `Std:Bitwise` with `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shiftLeft`, `shiftRight`; all operate on `Int`; Go builtins
 - [x] DateTime — `Std:DateTime` with `Instant`/`Duration` opaque types, `DateTimeParts` record, `Weekday` ADT; pure Rex calendar math (Hinnant algorithm), formatting/parsing; 2 Go builtins (`dateTimeNow`, `dateTimeUtcOffset`)
+- [x] Js — `Std:Js` generic JS FFI primitives: `JsRef` opaque type, `jsGlobal`, `jsGet`, `jsSet`, `jsCall`, `jsNew`, `jsCallback`, `jsFrom*`/`jsTo*` conversions, `jsNull`; browser-only (overlay-only via `Js.browser.rex`); JS codegen replaces calls with inline JS
+- Html — `Std:Html` virtual DOM types (planned, previously prototyped on `feature/browser-tea` — see git history)
+- Browser — `Std:Browser` TEA framework (planned, previously prototyped on `feature/browser-tea` — see git history)
 
 ### Language ergonomics
 
@@ -298,19 +304,19 @@ Key design decisions:
 - **Actors**: goroutines + channels are a direct match for Rex's actor model
 - **Advantage over WasmGC**: no manual memory layout, no boxing gymnastics, actors work natively via goroutines
 
-### Compilation (JS backend — Node.js)
+### Compilation (JS backend — browser)
 
-Compile Rex to JavaScript, run with Node.js. Same pipeline as Go backend: `source → parse → typecheck → IR → JS codegen → .js file`. Flag: `--compile-js`.
+Compile Rex to JavaScript for browser deployment. Pipeline: `source → parse → typecheck → IR → JS codegen → .js + .html`. Flag: `--compile --target=browser`.
 
 Ordered by dependency — each step builds on the previous:
 
-1. [x] **Scaffold + hello world** — `internal/codegen/javascript.go` with `EmitJS(prog, typeEnv)`; `--compile-js` flag in `cmd/rex/main.go`; `main _ = 0` emits `process.exit(rex_main(null))`. Write `.js` file, run with `node`.
+1. [x] **Scaffold + hello world** — `internal/codegen/javascript.go` with `EmitJS(prog, typeEnv)`; `--compile --target=browser` in `cmd/rex/main.go`; `main _ = 0` emits `rex_main(null)`. Write `.js` + `.html` files.
 2. [x] **Primitives + arithmetic** — numbers (JS `number` for both Int and Float), Bool, String, Unit (`null`); arithmetic, comparison, logical operators; `println`/`print`; `if/then/else`; let bindings → `const` declarations
 3. [x] **Functions + closures** — top-level functions → JS functions; closures work naturally; currying via nested arrow functions; all values are JS dynamic types (no boxing needed)
 4. [x] **ADTs + pattern matching** — constructors → objects `{$tag: "Red", $type: "Color"}` with field access `._0`, `._1`; pattern matching → if/else chains checking `.$tag`
 5. [x] **Strings, lists, tuples** — strings → JS strings; lists → `{$tag: "Cons", head, tail}` / `null` for nil; tuples → arrays `[a, b]`; pattern matching on all three
 6. [x] **Records** — plain JS objects `{x: 10, y: 32}`; field access → `.field`; record update → spread `{...rec, field: val}`
-7. [x] **Tail call optimization** — not needed for basic recursion (Node.js stack is deep enough); trampoline can be added later
+7. [x] **Tail call optimization** — not needed for basic recursion (stack is deep enough); trampoline can be added later
 8. [x] **Traits** — dispatch functions with `typeof` + `.$tag`/`.$type` checks
 9. [x] **Stdlib** — pure Rex stdlib through same pipeline; IO builtins → `console.log`; module resolution reuses `ir.ResolveImports`
 10. [x] **Actors** — synchronous CPS-transformed `receive()`: `let msg = receive() in body` → `rex_receive_cps((msg) => { body })`. `spawn(f)` runs `f` which sets a `_resume` callback and returns. `send(pid, msg)` calls `pid._resume(msg)` synchronously. `call(pid, msgFn)` creates a reply pid and reads the reply from its buffer. No async, no `worker_threads` — pure synchronous direct function calls.
@@ -318,9 +324,14 @@ Ordered by dependency — each step builds on the previous:
 Key design decisions:
 - **No boxing needed**: JS is dynamically typed — everything is already `any`
 - **Closures**: arrow functions capture variables naturally; currying is trivial
-- **No compilation step**: emit `.js` and run directly with `node`
-- **Browser potential**: same generated code could run in browsers with minimal changes
+- **No compilation step**: emit `.js` and run directly in browser
 - **Actors**: synchronous CPS — `receive()` is CPS-transformed so `send` directly invokes the handler; no event loop or threads needed
+- **Target overlays**: `--target=browser` enables `.browser.rex` module overlays (e.g., `Js.browser.rex` loaded for `import Std:Js`)
+- **Js FFI**: `Std:Js` provides generic JS interop — `JsRef` opaque type; `jsGlobal`, `jsGet`, `jsSet`, `jsCall`, `jsNew`, `jsCallback`; `jsFrom*`/`jsTo*` conversions; `jsNull`. JS codegen intercepts calls by name (including `Std_Js__` prefix) and emits inline JS. Rex stubs use `error "browser-only builtin"` as placeholders.
+
+### Browser Framework (TEA + Virtual DOM) — planned
+
+Std:Html and Std:Browser were prototyped on `feature/browser-tea` (see git history) but removed for now. They will be rebuilt on top of the Std:Js FFI primitives.
 
 ### Before going public
 

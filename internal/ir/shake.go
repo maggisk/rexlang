@@ -5,6 +5,11 @@ package ir
 // Type declarations (DType), trait declarations (DTrait), impl declarations
 // (DImpl), and import metadata (DImport) are always kept.
 func Shake(prog *Program) *Program {
+	return ShakeFrom(prog, "main")
+}
+
+// ShakeFrom removes declarations not transitively reachable from the given root(s).
+func ShakeFrom(prog *Program, roots ...string) *Program {
 	// Collect all top-level function bodies for reference scanning
 	type funcBody struct {
 		expr  Expr  // for DLet
@@ -22,10 +27,13 @@ func Shake(prog *Program) *Program {
 		}
 	}
 
-	// BFS from "main" to find all reachable functions
+	// BFS from roots to find all reachable functions
 	reachable := make(map[string]bool)
-	queue := []string{"main"}
-	reachable["main"] = true
+	var queue []string
+	for _, root := range roots {
+		reachable[root] = true
+		queue = append(queue, root)
+	}
 
 	for len(queue) > 0 {
 		name := queue[0]

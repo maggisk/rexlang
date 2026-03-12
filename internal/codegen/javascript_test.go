@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/maggisk/rexlang/internal/ir"
@@ -22,7 +23,7 @@ func compileJSCode(t *testing.T, code string) string {
 	if err != nil {
 		t.Fatalf("typecheck error: %v", err)
 	}
-	importInfo, err := ir.ResolveImports(exprs, "")
+	importInfo, err := ir.ResolveImports(exprs, "", "")
 	if err != nil {
 		t.Fatalf("resolve imports: %v", err)
 	}
@@ -42,9 +43,14 @@ func compileJSCode(t *testing.T, code string) string {
 }
 
 // runJS compiles Rex source to JS and runs it with Node.js, returning the exit code and stdout.
+// The generated JS uses rex_main(null) without process.exit (browser target),
+// so we append process.exit for testability with node.
 func runJS(t *testing.T, code string) (int, string) {
 	t.Helper()
 	jsSrc := compileJSCode(t, code)
+
+	// Replace the browser-style entry point with a node-testable one
+	jsSrc = strings.Replace(jsSrc, "\nrex_main(null);\n", "\nprocess.exit(rex_main(null));\n", 1)
 
 	dir := t.TempDir()
 	jsFile := filepath.Join(dir, "main.js")
@@ -636,5 +642,31 @@ main _ =
 `)
 	if code != 0 {
 		t.Errorf("expected 0, got %d", code)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Browser HTML output
+// ---------------------------------------------------------------------------
+
+func TestJSBrowserHTMLOutput(t *testing.T) {
+	html := EmitBrowserHTML("counter.js")
+	if !strings.Contains(html, `<script src="counter.js">`) {
+		t.Error("HTML should include script tag for counter.js")
+	}
+	if !strings.Contains(html, `<div id="app">`) {
+		t.Error("HTML should include app div")
+	}
+}
+
+func TestJSNoProcessExit(t *testing.T) {
+	src := compileJSCode(t, `
+export main _ = 0
+`)
+	if strings.Contains(src, "process.exit") {
+		t.Error("JS output should not contain process.exit")
+	}
+	if strings.Contains(src, "process.stdout") {
+		t.Error("JS output should not reference process.stdout")
 	}
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/maggisk/rexlang/internal/types"
 )
 
-// EmitJS converts an IR program to JavaScript source code.
+// EmitJS converts an IR program to JavaScript source code (browser target).
 func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 	g := &jsGen{
 		buf:              &strings.Builder{},
@@ -25,6 +25,7 @@ func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		traitMethodNames: make(map[string]string),
 		usedBuiltins:     make(map[string]bool),
 		locals:           make(map[string]bool),
+		knownTypes:       map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
 	}
 	return g.emit(prog)
 }
@@ -82,6 +83,8 @@ type jsGen struct {
 
 	// track what features are used
 	usesConcurrency bool
+	usesJsFfi       bool              // browser: Std:Js FFI primitives
+	knownTypes      map[string]bool   // types defined in the program
 }
 
 func (g *jsGen) fresh() string {
@@ -139,8 +142,11 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 		}
 	}
 
+	// Emit trait dispatch functions (after all impls are collected)
+	g.emitAllDispatchers()
+
 	// Emit entry point
-	out.WriteString("\nprocess.exit(rex_main(null));\n")
+	out.WriteString("\nrex_main(null);\n")
 
 	return out.String(), nil
 }
@@ -150,6 +156,11 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 // ---------------------------------------------------------------------------
 
 func (g *jsGen) analyze(prog *ir.Program) {
+	// Register Prelude trait methods as builtins
+	g.traitMethodNames["show"] = "rex_display"
+	g.traitMethodNames["eq"] = "rex_eq"
+	g.traitMethodNames["compare"] = "rex_compare"
+
 	// First pass: collect trait method names from DImpl declarations
 	for _, d := range prog.Decls {
 		if di, ok := d.(ir.DImpl); ok {
@@ -175,6 +186,7 @@ func (g *jsGen) analyze(prog *ir.Program) {
 			}
 
 		case ir.DType:
+			g.knownTypes[d.Name] = true
 			if len(d.Fields) > 0 {
 				// Record type
 				ri := &jsRecordInfo{name: d.Name}
@@ -272,6 +284,22 @@ func (g *jsGen) scanExpr(expr ir.Expr) {
 	}
 }
 
+// jsFfiBuiltin checks if a name is a Std:Js FFI builtin (possibly module-prefixed).
+// Returns the short name (e.g. "jsGlobal") if it is, or "" if not.
+func jsFfiBuiltin(name string) string {
+	short := name
+	if strings.HasPrefix(name, "Std_Js__") {
+		short = name[len("Std_Js__"):]
+	}
+	switch short {
+	case "jsGlobal", "jsGet", "jsSet", "jsCall", "jsNew", "jsCallback",
+		"jsFromString", "jsFromInt", "jsFromFloat", "jsFromBool",
+		"jsToString", "jsToInt", "jsToFloat", "jsToBool", "jsNull":
+		return short
+	}
+	return ""
+}
+
 func (g *jsGen) scanAtom(a ir.Atom) {
 	if v, ok := a.(ir.AVar); ok {
 		switch v.Name {
@@ -279,6 +307,10 @@ func (g *jsGen) scanAtom(a ir.Atom) {
 			g.usedBuiltins[v.Name] = true
 		case "spawn", "send", "receive", "self", "call":
 			g.usesConcurrency = true
+		default:
+			if jsFfiBuiltin(v.Name) != "" {
+				g.usesJsFfi = true
+			}
 		}
 	}
 }
@@ -416,7 +448,8 @@ func (g *jsGen) emitRuntimeHelpers() string {
 
 	// Builtins
 	b.WriteString(`function rex_println(v) { console.log(rex_display(v)); return null; }
-function rex_print(v) { process.stdout.write(rex_display(v)); return null; }
+function rex_print(v) { console.log(rex_display(v)); return null; }`)
+	b.WriteString(`
 function rex_showInt(v) { return String(v); }
 function rex_showFloat(v) { return String(v); }
 function rex_not(v) { return !v; }
@@ -483,6 +516,59 @@ function rex_call(targetPid, msgFn) {
 }
 
 function rex_getSelf() { return _currentPid; }
+
+`)
+	}
+
+	// Js FFI runtime helpers
+	if g.usesJsFfi {
+		b.WriteString(`// Std:Js FFI helpers
+function rex_listToArray(lst) {
+  const arr = [];
+  while (lst !== null && lst.$tag === "Cons") { arr.push(lst.head); lst = lst.tail; }
+  return arr;
+}
+function rex_jsOk(v) { return {$tag: "Ok", $type: "Result", _0: v}; }
+function rex_jsErr(msg) { return {$tag: "Err", $type: "Result", _0: msg}; }
+function rex_jsGlobal(name) {
+  try { const v = globalThis[name]; if (v === undefined) return rex_jsErr("global not found: " + name); return rex_jsOk(v); }
+  catch(e) { return rex_jsErr(e.message); }
+}
+function rex_jsGet(prop, obj) {
+  try { return rex_jsOk(obj[prop]); }
+  catch(e) { return rex_jsErr(e.message); }
+}
+function rex_jsSet(prop, obj, val) {
+  try { obj[prop] = val; return rex_jsOk(null); }
+  catch(e) { return rex_jsErr(e.message); }
+}
+function rex_jsCall(method, args, obj) {
+  try { return rex_jsOk(obj[method](...rex_listToArray(args))); }
+  catch(e) { return rex_jsErr(e.message); }
+}
+function rex_jsNew(name, args) {
+  try { const C = globalThis[name]; if (!C) return rex_jsErr("constructor not found: " + name); return rex_jsOk(new C(...rex_listToArray(args))); }
+  catch(e) { return rex_jsErr(e.message); }
+}
+function rex_jsCallback(f) {
+  return (function() { return f(arguments[0] !== undefined ? arguments[0] : null); });
+}
+function rex_jsToString(v) {
+  if (typeof v === "string") return rex_jsOk(v);
+  return rex_jsErr("expected string, got " + typeof v);
+}
+function rex_jsToInt(v) {
+  if (typeof v === "number" && Number.isInteger(v)) return rex_jsOk(v);
+  return rex_jsErr("expected integer, got " + typeof v);
+}
+function rex_jsToFloat(v) {
+  if (typeof v === "number") return rex_jsOk(v);
+  return rex_jsErr("expected number, got " + typeof v);
+}
+function rex_jsToBool(v) {
+  if (typeof v === "boolean") return rex_jsOk(v);
+  return rex_jsErr("expected boolean, got " + typeof v);
+}
 
 `)
 	}
@@ -624,6 +710,10 @@ func (g *jsGen) emitDLetRec(d ir.DLetRec) error {
 }
 
 func (g *jsGen) emitDImpl(d ir.DImpl) error {
+	// Skip impls for types not in the program
+	if !g.knownTypes[d.TargetTypeName] {
+		return nil
+	}
 	for _, m := range d.Methods {
 		funcName := fmt.Sprintf("impl_%s_%s_%s", d.TraitName, d.TargetTypeName, m.Name)
 
@@ -663,18 +753,35 @@ func (g *jsGen) emitDImpl(d ir.DImpl) error {
 		g.indent = 0
 	}
 
-	// Emit/update dispatch function for each method
-	for _, m := range d.Methods {
-		key := d.TraitName + ":" + m.Name
-		dispatchName := g.traitMethodNames[m.Name]
-		if dispatchName == "" {
+	return nil
+}
+
+func (g *jsGen) emitAllDispatchers() {
+	// Collect all unique dispatch names and emit one function per method
+	emitted := make(map[string]bool)
+	for key := range g.traitImpls {
+		// key = "TraitName:methodName"
+		parts := strings.SplitN(key, ":", 2)
+		if len(parts) != 2 {
 			continue
 		}
-		cases := g.traitImpls[key]
-		g.emitDispatchFunction(dispatchName, cases)
+		methodName := parts[1]
+		dispatchName := g.traitMethodNames[methodName]
+		if dispatchName == "" || emitted[dispatchName] {
+			continue
+		}
+		emitted[dispatchName] = true
+		// Filter cases to only include types defined in the program
+		var filtered []jsImplCase
+		for _, c := range g.traitImpls[key] {
+			if g.knownTypes[c.typeName] {
+				filtered = append(filtered, c)
+			}
+		}
+		if len(filtered) > 0 {
+			g.emitDispatchFunction(dispatchName, filtered)
+		}
 	}
-
-	return nil
 }
 
 func (g *jsGen) emitDispatchFunction(name string, cases []jsImplCase) {
@@ -979,6 +1086,65 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _fn))")
 		return nil
+	}
+
+	// Std:Js FFI builtins (may be module-prefixed as Std_Js__*)
+	if short := jsFfiBuiltin(funcName); short != "" {
+		switch short {
+		case "jsGlobal":
+			g.buf.WriteString("rex_jsGlobal(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(")")
+			return nil
+		case "jsGet":
+			g.buf.WriteString("((_obj) => rex_jsGet(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(", _obj))")
+			return nil
+		case "jsSet":
+			g.buf.WriteString("((_obj) => ((_val) => rex_jsSet(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(", _obj, _val)))")
+			return nil
+		case "jsCall":
+			g.buf.WriteString("((_args) => ((_obj) => rex_jsCall(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(", _args, _obj)))")
+			return nil
+		case "jsNew":
+			g.buf.WriteString("((_args) => rex_jsNew(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(", _args))")
+			return nil
+		case "jsCallback":
+			g.buf.WriteString("rex_jsCallback(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(")")
+			return nil
+		case "jsFromString", "jsFromInt", "jsFromFloat", "jsFromBool":
+			g.emitAtom(c.Arg)
+			return nil
+		case "jsToString":
+			g.buf.WriteString("rex_jsToString(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(")")
+			return nil
+		case "jsToInt":
+			g.buf.WriteString("rex_jsToInt(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(")")
+			return nil
+		case "jsToFloat":
+			g.buf.WriteString("rex_jsToFloat(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(")")
+			return nil
+		case "jsToBool":
+			g.buf.WriteString("rex_jsToBool(")
+			g.emitAtom(c.Arg)
+			g.buf.WriteString(")")
+			return nil
+		}
 	}
 
 	// Trait method dispatch
@@ -1522,6 +1688,37 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 				return "((pid) => (fn) => rex_call(pid, fn))"
 			}
 		}
+		// Js FFI builtins as values
+		if g.usesJsFfi {
+			if short := jsFfiBuiltin(name); short != "" {
+				switch short {
+				case "jsGlobal":
+					return "((n) => rex_jsGlobal(n))"
+				case "jsGet":
+					return "((p) => (o) => rex_jsGet(p, o))"
+				case "jsSet":
+					return "((p) => (o) => (v) => rex_jsSet(p, o, v))"
+				case "jsCall":
+					return "((m) => (a) => (o) => rex_jsCall(m, a, o))"
+				case "jsNew":
+					return "((n) => (a) => rex_jsNew(n, a))"
+				case "jsCallback":
+					return "((f) => rex_jsCallback(f))"
+				case "jsFromString", "jsFromInt", "jsFromFloat", "jsFromBool":
+					return "((v) => v)"
+				case "jsToString":
+					return "((v) => rex_jsToString(v))"
+				case "jsToInt":
+					return "((v) => rex_jsToInt(v))"
+				case "jsToFloat":
+					return "((v) => rex_jsToFloat(v))"
+				case "jsToBool":
+					return "((v) => rex_jsToBool(v))"
+				case "jsNull":
+					return "null"
+				}
+			}
+		}
 		// Builtins as values
 		switch name {
 		case "println":
@@ -1549,6 +1746,10 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 				return fmt.Sprintf(`{$tag: %q, $type: %q}`, name, ci.typeName)
 			}
 			return g.ctorAsClosure(ci)
+		}
+		// Check if it's a known record constructor
+		if ri, ok := g.records[name]; ok {
+			return g.recordCtorAsClosure(ri)
 		}
 		// Check if it's a known top-level function
 		if fi, ok := g.funcs[name]; ok {
@@ -1579,6 +1780,26 @@ func (g *jsGen) ctorAsClosure(ci *jsCtorInfo) string {
 	fields = append(fields, fmt.Sprintf("$type: %q", ci.typeName))
 	for i, p := range params {
 		fields = append(fields, fmt.Sprintf("_%d: %s", i, p))
+	}
+	result := fmt.Sprintf("({%s})", strings.Join(fields, ", "))
+	for i := n - 1; i >= 0; i-- {
+		result = fmt.Sprintf("((%s) => %s)", params[i], result)
+	}
+	return result
+}
+
+func (g *jsGen) recordCtorAsClosure(ri *jsRecordInfo) string {
+	n := len(ri.fieldNames)
+	if n == 0 {
+		return fmt.Sprintf("({$type: %q})", ri.name)
+	}
+	params := make([]string, n)
+	for i := range params {
+		params[i] = fmt.Sprintf("a%d", i)
+	}
+	fields := []string{fmt.Sprintf("$type: %q", ri.name)}
+	for i, fname := range ri.fieldNames {
+		fields = append(fields, fmt.Sprintf("%s: %s", fname, params[i]))
 	}
 	result := fmt.Sprintf("({%s})", strings.Join(fields, ", "))
 	for i := n - 1; i >= 0; i-- {
@@ -1659,4 +1880,21 @@ func jsSanitize(name string) string {
 		}
 	}
 	return b.String()
+}
+
+// EmitBrowserHTML generates a minimal HTML wrapper for a browser JS app.
+func EmitBrowserHTML(jsFileName string) string {
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rex App</title>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="%s"></script>
+</body>
+</html>
+`, jsFileName)
 }
