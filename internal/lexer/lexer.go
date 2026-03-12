@@ -271,7 +271,20 @@ func Tokenize(source string) ([]Token, error) {
 				pos++
 			}
 			s := string(runes[start:pos])
-			if keywords[s] {
+			// Check for tagged template: ident`...` (no space between ident and backtick)
+			if !keywords[s] && s != "true" && s != "false" && pos < n && runes[pos] == '`' {
+				pos++ // skip opening backtick
+				parts, err := scanBacktickTemplate(runes, &pos, n, &line, &lineStart)
+				if err != nil {
+					return nil, lexErr(err.Error())
+				}
+				tokens = append(tokens, Token{
+					Kind:  TokTaggedInterp,
+					Value: TaggedInterpValue{Tag: s, Parts: parts},
+					Line:  tokLine,
+					Col:   tokCol,
+				})
+			} else if keywords[s] {
 				tokens = append(tokens, Token{Kind: s, Line: tokLine, Col: tokCol})
 			} else if s == "true" {
 				tokens = append(tokens, Token{Kind: TokBool, Value: true, Line: tokLine, Col: tokCol})
@@ -446,6 +459,10 @@ func skipInterp(runes []rune, pos *int, n int) error {
 			if err := skipString(runes, pos, n); err != nil {
 				return err
 			}
+		case '`':
+			if err := skipBacktickString(runes, pos, n); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -492,6 +509,97 @@ func validateUnderscores(s string) error {
 		}
 	}
 	return nil
+}
+
+// scanBacktickTemplate scans the body of a backtick template (pos is right after the opening '`').
+// Returns the parts (alternating literal strings and tokenized expressions).
+func scanBacktickTemplate(runes []rune, pos *int, n int, line *int, lineStart *int) ([]InterpPart, error) {
+	var buf []rune
+	var parts []InterpPart
+	for {
+		if *pos >= n {
+			return nil, fmt.Errorf("unterminated tagged template")
+		}
+		ch := runes[*pos]
+		*pos++
+		if ch == '`' {
+			break
+		}
+		if ch == '\\' {
+			if *pos >= n {
+				return nil, fmt.Errorf("unterminated escape in tagged template")
+			}
+			esc := runes[*pos]
+			*pos++
+			switch esc {
+			case 'n':
+				buf = append(buf, '\n')
+			case 'r':
+				buf = append(buf, '\r')
+			case 't':
+				buf = append(buf, '\t')
+			case '\\':
+				buf = append(buf, '\\')
+			case '`':
+				buf = append(buf, '`')
+			case '$':
+				buf = append(buf, '$')
+			default:
+				return nil, fmt.Errorf("unknown escape in tagged template: \\%c", esc)
+			}
+		} else if ch == '$' && *pos < n && runes[*pos] == '{' {
+			*pos++ // skip '{'
+			// Save accumulated literal
+			parts = append(parts, InterpPart{Literal: true, Str: string(buf)})
+			buf = nil
+			// Find matching '}' using skipInterp
+			exprStart := *pos
+			if err := skipInterp(runes, pos, n); err != nil {
+				return nil, err
+			}
+			exprSrc := string(runes[exprStart : *pos-1]) // exclude closing '}'
+			exprTokens, err := Tokenize(exprSrc)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, InterpPart{Literal: false, Tokens: exprTokens})
+		} else if ch == '\n' {
+			buf = append(buf, '\n')
+			*line++
+			*lineStart = *pos
+		} else {
+			buf = append(buf, ch)
+		}
+	}
+	// Trailing literal (always present — even if empty string)
+	parts = append(parts, InterpPart{Literal: true, Str: string(buf)})
+	return parts, nil
+}
+
+// skipBacktickString advances pos past a backtick template (pos is right after the opening '`').
+func skipBacktickString(runes []rune, pos *int, n int) error {
+	for {
+		if *pos >= n {
+			return fmt.Errorf("unterminated tagged template in interpolation")
+		}
+		ch := runes[*pos]
+		*pos++
+		switch ch {
+		case '`':
+			return nil
+		case '\\':
+			if *pos < n {
+				*pos++ // skip escaped char
+			}
+		case '$':
+			if *pos < n && runes[*pos] == '{' {
+				*pos++
+				if err := skipInterp(runes, pos, n); err != nil {
+					return err
+				}
+			}
+		}
+	}
 }
 
 // skipString advances pos past a string literal (pos is right after the opening '"').

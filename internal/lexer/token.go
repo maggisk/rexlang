@@ -8,7 +8,8 @@ const (
 	TokInt    = "int"
 	TokFloat  = "float"
 	TokString = "string"
-	TokInterp = "interp"
+	TokInterp       = "interp"
+	TokTaggedInterp = "taginterp"
 	TokBool   = "bool"
 	TokIdent  = "ident"
 	TokEOF    = "eof"
@@ -81,6 +82,12 @@ type InterpPart struct {
 	Literal bool    // true = plain string text
 	Str     string  // the text when Literal == true
 	Tokens  []Token // tokenized expression when Literal == false
+}
+
+// TaggedInterpValue holds the tag name and parts for a tagged template.
+type TaggedInterpValue struct {
+	Tag   string
+	Parts []InterpPart
 }
 
 func (t Token) String() string {

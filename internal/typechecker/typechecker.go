@@ -147,6 +147,8 @@ func exprLine(expr ast.Expr) int {
 		return e.Line
 	case ast.StringInterp:
 		return e.Line
+	case ast.TaggedTemplate:
+		return e.Line
 	case ast.TestDecl:
 		return e.Line
 	case ast.Assert:
@@ -438,6 +440,36 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 			}
 		}
 		return s, types.TString, nil
+	case ast.TaggedTemplate:
+		// Look up tag function in env
+		s := subst
+		tagScheme, ok := env[e.Tag]
+		if !ok {
+			return nil, nil, fmt.Errorf("unbound tagged template function: %s", e.Tag)
+		}
+		tagTy := tc.instantiate(tagScheme.(types.Scheme))
+		// Expected type: List String -> List a -> b
+		elemTv := tc.fresh()
+		retTv := tc.fresh()
+		expectedTy := types.TFun(types.TList(types.TString), types.TFun(types.TList(elemTv), retTv))
+		var err error
+		s, err = types.Unify(types.ApplySubst(s, tagTy), types.ApplySubst(s, expectedTy))
+		if err != nil {
+			return nil, nil, fmt.Errorf("tagged template function %s has wrong type: %v", e.Tag, err)
+		}
+		// Infer each interpolated value and unify with elemTv
+		for _, val := range e.Values {
+			var valTy types.Type
+			s, valTy, err = tc.infer(env, typeDefs, s, val)
+			if err != nil {
+				return nil, nil, err
+			}
+			s, err = types.Unify(types.ApplySubst(s, elemTv), types.ApplySubst(s, valTy))
+			if err != nil {
+				return nil, nil, fmt.Errorf("tagged template value type mismatch: %v", err)
+			}
+		}
+		return s, types.ApplySubst(s, retTv), nil
 	case ast.BoolLit:
 		return subst, types.TBool, nil
 	case ast.UnitLit:
@@ -3234,6 +3266,13 @@ func freeVarsRec(expr ast.Expr, bound map[string]bool, free map[string]bool) {
 	case ast.StringInterp:
 		for _, part := range e.Parts {
 			freeVarsRec(part, bound, free)
+		}
+	case ast.TaggedTemplate:
+		if !bound[e.Tag] {
+			free[e.Tag] = true
+		}
+		for _, val := range e.Values {
+			freeVarsRec(val, bound, free)
 		}
 	case ast.RecordCreate:
 		for _, f := range e.Fields {

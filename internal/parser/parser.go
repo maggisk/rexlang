@@ -104,6 +104,24 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 			}
 		}
 		return ast.StringInterp{Parts: exprParts, Line: tok.Line}, nil
+	case lexer.TokTaggedInterp:
+		p.advance()
+		tv := tok.Value.(lexer.TaggedInterpValue)
+		var strings []string
+		var values []ast.Expr
+		for _, part := range tv.Parts {
+			if part.Literal {
+				strings = append(strings, part.Str)
+			} else {
+				subParser := &parser{tokens: part.Tokens, pos: 0, caseArmCol: -1}
+				expr, err := subParser.parseExpr()
+				if err != nil {
+					return nil, err
+				}
+				values = append(values, expr)
+			}
+		}
+		return ast.TaggedTemplate{Tag: tv.Tag, Strings: strings, Values: values, Line: tok.Line}, nil
 	case lexer.TokBool:
 		p.advance()
 		return ast.BoolLit{Value: tok.Value.(bool)}, nil
@@ -275,7 +293,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 
 func isAtomStart(kind string) bool {
 	switch kind {
-	case lexer.TokInt, lexer.TokFloat, lexer.TokString, lexer.TokInterp, lexer.TokBool,
+	case lexer.TokInt, lexer.TokFloat, lexer.TokString, lexer.TokInterp, lexer.TokTaggedInterp, lexer.TokBool,
 		lexer.TokIdent, lexer.TokLParen, lexer.TokLBrack, lexer.TokLBrace:
 		return true
 	}

@@ -270,6 +270,14 @@ func renameRefs(expr ast.Expr, nameMap map[string]string) ast.Expr {
 			e.Parts[i] = renameRefs(part, nameMap)
 		}
 		return e
+	case ast.TaggedTemplate:
+		if mapped, ok := nameMap[e.Tag]; ok {
+			e.Tag = mapped
+		}
+		for i, val := range e.Values {
+			e.Values[i] = renameRefs(val, nameMap)
+		}
+		return e
 	case ast.RecordCreate:
 		for i, f := range e.Fields {
 			e.Fields[i].Value = renameRefs(f.Value, nameMap)

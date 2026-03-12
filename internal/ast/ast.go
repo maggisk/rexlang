@@ -201,6 +201,13 @@ type StringInterp struct {
 	Line  int
 }
 
+type TaggedTemplate struct {
+	Tag     string
+	Strings []string // literal string fragments (len = len(Values) + 1)
+	Values  []Expr   // interpolated expressions
+	Line    int
+}
+
 type ListLit struct {
 	Items []Expr
 	Line  int
@@ -304,7 +311,8 @@ func (Let) exprNode()            {}
 func (Fun) exprNode()            {}
 func (App) exprNode()            {}
 func (Match) exprNode()          {}
-func (StringInterp) exprNode()   {}
+func (StringInterp) exprNode()    {}
+func (TaggedTemplate) exprNode()  {}
 func (TypeDecl) exprNode()       {}
 func (ListLit) exprNode()        {}
 func (TupleLit) exprNode()       {}

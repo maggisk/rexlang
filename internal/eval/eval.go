@@ -414,6 +414,18 @@ func applyRecordUpdate(rec VRecord, path []string, value Value) (VRecord, error)
 // Evaluator
 // ---------------------------------------------------------------------------
 
+// evalApply applies a function value to an argument value.
+func evalApply(env Env, fn Value, arg Value) (Value, error) {
+	switch f := fn.(type) {
+	case VClosure:
+		return Eval(f.Env.Extend(f.Param, arg), f.Body)
+	case VBuiltin:
+		return f.Fn(arg)
+	default:
+		return nil, runtimeErr("cannot apply %T as function in tagged template", fn)
+	}
+}
+
 // Eval evaluates expr in env with a trampoline loop.
 func Eval(env Env, expr ast.Expr) (Value, error) {
 	for {
@@ -438,6 +450,34 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 				buf.WriteString(s)
 			}
 			return VString{V: buf.String()}, nil
+		case ast.TaggedTemplate:
+			// Look up tag function
+			tagFn, ok := env[e.Tag]
+			if !ok {
+				return nil, fmt.Errorf("unbound tagged template function: %s", e.Tag)
+			}
+			// Build list of string fragments
+			strItems := make([]Value, len(e.Strings))
+			for i, s := range e.Strings {
+				strItems[i] = VString{V: s}
+			}
+			stringsVal := VList{Items: strItems}
+			// Evaluate interpolated values
+			valItems := make([]Value, len(e.Values))
+			for i, valExpr := range e.Values {
+				v, err := Eval(env, valExpr)
+				if err != nil {
+					return nil, err
+				}
+				valItems[i] = v
+			}
+			valuesVal := VList{Items: valItems}
+			// Apply: tag strings values
+			partial, err := evalApply(env, tagFn, stringsVal)
+			if err != nil {
+				return nil, err
+			}
+			return evalApply(env, partial, valuesVal)
 		case ast.BoolLit:
 			return VBool{V: e.Value}, nil
 		case ast.UnitLit:

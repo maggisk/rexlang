@@ -243,6 +243,8 @@ func (l *Lowerer) lowerExpr(expr ast.Expr) (Expr, error) {
 	// --- String interpolation ---
 	case ast.StringInterp:
 		return l.normalizeStringInterp(e)
+	case ast.TaggedTemplate:
+		return l.normalizeTaggedTemplate(e)
 
 	// --- Records ---
 	case ast.RecordCreate:
@@ -471,6 +473,32 @@ func (l *Lowerer) normalizeTuple(e ast.TupleLit) (Expr, error) {
 func (l *Lowerer) normalizeStringInterp(e ast.StringInterp) (Expr, error) {
 	return l.normalizeAtoms(e.Parts, func(atoms []Atom) (Expr, error) {
 		return EComplex{C: CStringInterp{Parts: atoms}}, nil
+	})
+}
+
+func (l *Lowerer) normalizeTaggedTemplate(e ast.TaggedTemplate) (Expr, error) {
+	// Desugar to: tag ["s1", "s2", ...] [v1, v2, ...]
+	return l.normalizeAtoms(e.Values, func(valAtoms []Atom) (Expr, error) {
+		strAtoms := make([]Atom, len(e.Strings))
+		for i, s := range e.Strings {
+			strAtoms[i] = AString{Value: s}
+		}
+		strListName := l.fresh("strs")
+		valListName := l.fresh("vals")
+		partialName := l.fresh("tag")
+		return ELet{
+			Name: strListName,
+			Bind: CList{Items: strAtoms},
+			Body: ELet{
+				Name: valListName,
+				Bind: CList{Items: valAtoms},
+				Body: ELet{
+					Name: partialName,
+					Bind: CApp{Func: AVar{Name: e.Tag}, Arg: AVar{Name: strListName}},
+					Body: EComplex{C: CApp{Func: AVar{Name: partialName}, Arg: AVar{Name: valListName}}},
+				},
+			},
+		}, nil
 	})
 }
 

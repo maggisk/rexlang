@@ -587,6 +587,27 @@ test "intersperse" =
     assert ([1, 2, 3] |> intersperse 0 |> length == 5)
 
 
+-- | Interleave two lists, alternating elements from each.
+--
+--     interleave [1, 2, 3] [10, 20] == [1, 10, 2, 20, 3]
+--
+export
+interleave : [a] -> [a] -> [a]
+interleave xs ys =
+    match xs
+        when [] ->
+            ys
+        when [h|t] ->
+            h :: interleave ys t
+
+test "interleave" =
+    assert (interleave [1, 2, 3] [10, 20] == [1, 10, 2, 20, 3])
+    assert (interleave [] [1, 2] == [1, 2])
+    assert (interleave [1, 2] [] == [1, 2])
+    assert (interleave [] [] == [])
+    assert (interleave ["a", "b"] ["x"] == ["a", "x", "b"])
+
+
 -- # Slice
 
 
