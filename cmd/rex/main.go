@@ -9,12 +9,14 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/chzyer/readline"
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/codegen"
 	"github.com/maggisk/rexlang/internal/eval"
 	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/lexer"
+	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
 	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/typechecker"
@@ -26,6 +28,9 @@ var safeMode bool
 
 // targetMode is set by the --target flag; defaults to "native".
 var targetMode = "native"
+
+// packageRoots maps package names to their src/ directories (from rex.toml).
+var packageRoots map[string]string
 
 func main() {
 	args := os.Args[1:]
@@ -49,6 +54,14 @@ func main() {
 
 	if len(args) == 0 {
 		repl()
+		return
+	}
+	if args[0] == "init" {
+		runInit()
+		return
+	}
+	if args[0] == "install" {
+		runInstall(args[1:])
 		return
 	}
 	if args[0] == "--compile" {
@@ -189,7 +202,8 @@ func handleWarnings(path string, warnings []typechecker.Warning) {
 // ---------------------------------------------------------------------------
 
 // setupSrcRoot detects a src/ directory in cwd, validates the entry file if needed,
-// and sets the srcRoot for both typechecker and eval.
+// and sets the srcRoot for both typechecker and eval. Also detects rex.toml and
+// populates package roots.
 func setupSrcRoot(entryFile string) {
 	// Set target for typechecker and eval
 	typechecker.SetTarget(targetMode)
@@ -199,6 +213,21 @@ func setupSrcRoot(entryFile string) {
 	if err != nil {
 		return
 	}
+
+	// Detect rex.toml and set up package roots
+	projectRoot := manifest.FindProjectRoot(cwd)
+	if projectRoot != "" {
+		_, deps, err := manifest.Load(projectRoot)
+		if err == nil {
+			roots, err := manifest.PackageRoots(projectRoot, deps)
+			if err == nil {
+				packageRoots = roots
+				typechecker.SetPackageRoots(roots)
+				eval.SetPackageRoots(roots)
+			}
+		}
+	}
+
 	srcDir := filepath.Join(cwd, "src")
 	info, err := os.Stat(srcDir)
 	if err != nil || !info.IsDir() {
@@ -217,6 +246,262 @@ func setupSrcRoot(entryFile string) {
 	}
 	typechecker.SetSrcRoot(absSrc)
 	eval.SetSrcRoot(absSrc)
+}
+
+// ---------------------------------------------------------------------------
+// rex install
+// ---------------------------------------------------------------------------
+
+func runInit() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	manifestPath := filepath.Join(cwd, "rex.toml")
+	if _, err := os.Stat(manifestPath); err == nil {
+		fmt.Fprintln(os.Stderr, "rex.toml already exists")
+		os.Exit(1)
+	}
+	name := filepath.Base(cwd)
+	content := fmt.Sprintf("[package]\nname = %q\nversion = \"0.1.0\"\n", name)
+	if err := os.WriteFile(manifestPath, []byte(content), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Created rex.toml (package: %s)\n", name)
+}
+
+func runInstall(args []string) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(args) >= 1 {
+		target := args[0]
+		if isLocalPath(target) {
+			// rex install <path> — add a local path dependency
+			addPathDep(cwd, target)
+		} else if len(args) >= 2 {
+			// rex install <url> <ref> — add a git dependency
+			addAndInstallDep(cwd, target, args[1])
+		} else {
+			fmt.Fprintln(os.Stderr, "Usage: rex install <path>")
+			fmt.Fprintln(os.Stderr, "       rex install <git-url> <ref>")
+			fmt.Fprintln(os.Stderr, "       rex install")
+			os.Exit(1)
+		}
+		return
+	}
+
+	// rex install — fetch all deps from rex.toml
+	installAllDeps(cwd)
+}
+
+func isLocalPath(s string) bool {
+	return strings.HasPrefix(s, ".") || strings.HasPrefix(s, "/") || strings.Contains(s, string(filepath.Separator))
+}
+
+func addPathDep(projectRoot, path string) {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	// Check it exists and has src/
+	srcDir := filepath.Join(absPath, "src")
+	if _, err := os.Stat(srcDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s has no src/ directory\n", absPath)
+		os.Exit(1)
+	}
+
+	// Read package name from its rex.toml
+	pkgName := ""
+	if data, err := os.ReadFile(filepath.Join(absPath, "rex.toml")); err == nil {
+		var pm manifest.Manifest
+		if err := toml.Unmarshal(data, &pm); err == nil && pm.Package.Name != "" {
+			pkgName = pm.Package.Name
+		}
+	}
+	if pkgName == "" {
+		pkgName = filepath.Base(absPath)
+	}
+
+	// Make path relative to project root if possible
+	relPath, err := filepath.Rel(projectRoot, absPath)
+	if err != nil {
+		relPath = absPath
+	}
+
+	// Read or create rex.toml
+	manifestPath := filepath.Join(projectRoot, "rex.toml")
+	var m manifest.Manifest
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		toml.Unmarshal(data, &m)
+	}
+	if m.Deps == nil {
+		m.Deps = make(map[string]manifest.Dependency)
+	}
+	m.Deps[pkgName] = manifest.Dependency{Path: relPath}
+
+	f, err := os.Create(manifestPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing rex.toml: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	if err := toml.NewEncoder(f).Encode(m); err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding rex.toml: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Added %s = { path = \"%s\" }\n", pkgName, relPath)
+}
+
+func installAllDeps(projectRoot string) {
+	_, deps, err := manifest.Load(projectRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(deps) == 0 {
+		fmt.Println("No dependencies to install.")
+		return
+	}
+
+	for _, dep := range deps {
+		if dep.Path != "" {
+			fmt.Printf("  %s → %s (local)\n", dep.Name, dep.Path)
+			continue
+		}
+		installGitDep(projectRoot, dep.Name, dep.Git, dep.Ref)
+	}
+}
+
+func installGitDep(projectRoot, name, gitURL, ref string) {
+	destDir := filepath.Join(projectRoot, "rex_modules", name)
+
+	// Check if already installed at correct ref
+	if info, err := os.Stat(destDir); err == nil && info.IsDir() {
+		// Check the current ref
+		cmd := exec.Command("git", "-C", destDir, "describe", "--tags", "--exact-match", "HEAD")
+		if out, err := cmd.Output(); err == nil && strings.TrimSpace(string(out)) == ref {
+			fmt.Printf("  %s@%s (up to date)\n", name, ref)
+			return
+		}
+		// Check if it's a commit SHA
+		cmd = exec.Command("git", "-C", destDir, "rev-parse", "HEAD")
+		if out, err := cmd.Output(); err == nil && strings.HasPrefix(strings.TrimSpace(string(out)), ref) {
+			fmt.Printf("  %s@%s (up to date)\n", name, ref)
+			return
+		}
+		// Different version — remove and re-clone
+		os.RemoveAll(destDir)
+	}
+
+	fmt.Printf("  %s@%s ... ", name, ref)
+
+	// Clone at specific ref
+	if err := os.MkdirAll(filepath.Dir(destDir), 0755); err != nil {
+		fmt.Printf("error: %v\n", err)
+		os.Exit(1)
+	}
+	cmd := exec.Command("git", "clone", "--depth=1", "--branch", ref, gitURL, destDir)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Try as a commit SHA — need full clone then checkout
+		cmd = exec.Command("git", "clone", gitURL, destDir)
+		cmd.Stdout = nil
+		cmd.Stderr = nil
+		if out2, err := cmd.CombinedOutput(); err != nil {
+			fmt.Printf("error: git clone failed\n%s\n%s\n", out, out2)
+			os.Exit(1)
+		}
+		cmd = exec.Command("git", "-C", destDir, "checkout", ref)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			os.RemoveAll(destDir)
+			fmt.Printf("error: git checkout %s failed\n%s\n", ref, out)
+			os.Exit(1)
+		}
+	}
+	fmt.Println("ok")
+}
+
+func addAndInstallDep(projectRoot, gitURL, ref string) {
+	manifestPath := filepath.Join(projectRoot, "rex.toml")
+
+	// Clone to a temp dir to read the package's rex.toml for its name
+	tmpDir, err := os.MkdirTemp("", "rex-install-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cmd := exec.Command("git", "clone", "--depth=1", "--branch", ref, gitURL, tmpDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		// Try as commit SHA
+		cmd = exec.Command("git", "clone", gitURL, tmpDir)
+		os.RemoveAll(tmpDir)
+		os.MkdirAll(tmpDir, 0755)
+		if out2, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error cloning: %s\n%s\n", out, out2)
+			os.Exit(1)
+		}
+		cmd = exec.Command("git", "-C", tmpDir, "checkout", ref)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error checking out %s: %s\n", ref, out)
+			os.Exit(1)
+		}
+	}
+
+	// Read the package's name from its rex.toml
+	pkgName := ""
+	pkgManifestPath := filepath.Join(tmpDir, "rex.toml")
+	if data, err := os.ReadFile(pkgManifestPath); err == nil {
+		var pm manifest.Manifest
+		if err := toml.Unmarshal(data, &pm); err == nil && pm.Package.Name != "" {
+			pkgName = pm.Package.Name
+		}
+	}
+	if pkgName == "" {
+		// Fall back to deriving from URL
+		base := filepath.Base(gitURL)
+		pkgName = strings.TrimSuffix(base, ".git")
+		pkgName = strings.TrimPrefix(pkgName, "rex-")
+	}
+
+	// Read or create rex.toml
+	var m manifest.Manifest
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		toml.Unmarshal(data, &m)
+	}
+	if m.Deps == nil {
+		m.Deps = make(map[string]manifest.Dependency)
+	}
+	m.Deps[pkgName] = manifest.Dependency{Git: gitURL, Ref: ref}
+
+	// Write rex.toml
+	f, err := os.Create(manifestPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing rex.toml: %v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	enc := toml.NewEncoder(f)
+	if err := enc.Encode(m); err != nil {
+		fmt.Fprintf(os.Stderr, "Error encoding rex.toml: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Added %s = { git = \"%s\", ref = \"%s\" }\n", pkgName, gitURL, ref)
+
+	// Now install it
+	installGitDep(projectRoot, pkgName, gitURL, ref)
 }
 
 // ---------------------------------------------------------------------------
@@ -264,7 +549,7 @@ func compileFile(path string) {
 
 	// Resolve module imports: collect type/trait/impl/function declarations
 	// from imported modules so codegen has full program visibility.
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode)
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
 	if err != nil {
 		printErr("Import resolution error", err)
 		os.Exit(1)
@@ -354,7 +639,7 @@ func compileGoFile(path string) {
 	handleWarnings(path, warnings)
 
 	// Resolve module imports
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode)
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
 	if err != nil {
 		printErr("Import resolution error", err)
 		os.Exit(1)
@@ -460,7 +745,7 @@ func compileJSFile(path string) {
 	}
 	handleWarnings(path, warnings)
 
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode)
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
 	if err != nil {
 		printErr("Import resolution error", err)
 		os.Exit(1)

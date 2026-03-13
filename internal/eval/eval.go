@@ -863,6 +863,9 @@ var (
 	evalSrcRoot   string
 	evalSrcRootMu sync.Mutex
 
+	evalPackageRoots   map[string]string
+	evalPackageRootsMu sync.Mutex
+
 	evalTarget   string
 	evalTargetMu sync.Mutex
 
@@ -881,6 +884,19 @@ func getEvalSrcRoot() string {
 	evalSrcRootMu.Lock()
 	defer evalSrcRootMu.Unlock()
 	return evalSrcRoot
+}
+
+// SetPackageRoots sets the package name → src/ path mapping for package imports.
+func SetPackageRoots(roots map[string]string) {
+	evalPackageRootsMu.Lock()
+	evalPackageRoots = roots
+	evalPackageRootsMu.Unlock()
+}
+
+func getEvalPackageRoots() map[string]string {
+	evalPackageRootsMu.Lock()
+	defer evalPackageRootsMu.Unlock()
+	return evalPackageRoots
 }
 
 // SetTarget sets the compilation target (e.g. "native", "browser").
@@ -986,15 +1002,27 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 		// Namespaced module (Std:List, etc.)
 		parts := strings.SplitN(moduleName, ":", 2)
 		namespace, name := parts[0], parts[1]
-		if namespace != "Std" {
-			return nil, runtimeErr("unknown namespace '%s' in '%s'", namespace, moduleName)
+		if namespace == "Std" {
+			var err error
+			src, err = stdlib.SourceForTarget(name, getEvalTarget())
+			if err != nil {
+				return nil, runtimeErr("unknown module: %s", moduleName)
+			}
+			moduleBuiltins = BuiltinsForModule(name, programArgs)
+		} else {
+			// Package import — resolve from package roots
+			pkgRoots := getEvalPackageRoots()
+			pkgSrc, ok := pkgRoots[namespace]
+			if !ok {
+				return nil, runtimeErr("unknown package '%s' in '%s' (not in rex.toml?)", namespace, moduleName)
+			}
+			var err error
+			src, err = loadUserModuleSource(pkgSrc, name, getEvalTarget())
+			if err != nil {
+				modPath := resolveUserModulePath(pkgSrc, name)
+				return nil, runtimeErr("module not found: %s (looked for %s)", moduleName, modPath)
+			}
 		}
-		var err error
-		src, err = stdlib.SourceForTarget(name, getEvalTarget())
-		if err != nil {
-			return nil, runtimeErr("unknown module: %s", moduleName)
-		}
-		moduleBuiltins = BuiltinsForModule(name, programArgs)
 	} else {
 		// User module — resolve from src/
 		root := getEvalSrcRoot()
@@ -1529,4 +1557,7 @@ func ResetCaches() {
 	evalSrcRootMu.Lock()
 	evalSrcRoot = ""
 	evalSrcRootMu.Unlock()
+	evalPackageRootsMu.Lock()
+	evalPackageRoots = nil
+	evalPackageRootsMu.Unlock()
 }

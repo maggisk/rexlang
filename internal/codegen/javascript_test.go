@@ -23,7 +23,7 @@ func compileJSCode(t *testing.T, code string) string {
 	if err != nil {
 		t.Fatalf("typecheck error: %v", err)
 	}
-	importInfo, err := ir.ResolveImports(exprs, "", "")
+	importInfo, err := ir.ResolveImports(exprs, "", "", nil)
 	if err != nil {
 		t.Fatalf("resolve imports: %v", err)
 	}

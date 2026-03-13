@@ -2251,6 +2251,9 @@ var (
 	srcRoot   string // absolute path to src/ directory (empty if not set)
 	srcRootMu sync.Mutex
 
+	packageRoots   map[string]string // package name → abs path to package src/
+	packageRootsMu sync.Mutex
+
 	target   string // compilation target ("native", "browser", etc.)
 	targetMu sync.Mutex
 
@@ -2274,6 +2277,19 @@ func getSrcRoot() string {
 // GetSrcRoot returns the current src/ directory root for user module resolution.
 func GetSrcRoot() string {
 	return getSrcRoot()
+}
+
+// SetPackageRoots sets the package name → src/ path mapping for package imports.
+func SetPackageRoots(roots map[string]string) {
+	packageRootsMu.Lock()
+	packageRoots = roots
+	packageRootsMu.Unlock()
+}
+
+func getPackageRoots() map[string]string {
+	packageRootsMu.Lock()
+	defer packageRootsMu.Unlock()
+	return packageRoots
 }
 
 // SetTarget sets the compilation target (e.g. "native", "browser").
@@ -2367,15 +2383,27 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 		// Namespaced module (Std:List, etc.)
 		parts := strings.SplitN(moduleName, ":", 2)
 		namespace, name := parts[0], parts[1]
-		if namespace != "Std" {
-			return nil, &types.TypeError{Msg: fmt.Sprintf("unknown namespace '%s' in '%s'", namespace, moduleName)}
+		if namespace == "Std" {
+			var err error
+			src, err = stdlib.SourceForTarget(name, getTarget())
+			if err != nil {
+				return nil, &types.TypeError{Msg: "unknown module: " + moduleName}
+			}
+			extraEnv = typeEnvForModule(name)
+		} else {
+			// Package import — resolve from package roots
+			pkgRoots := getPackageRoots()
+			pkgSrc, ok := pkgRoots[namespace]
+			if !ok {
+				return nil, &types.TypeError{Msg: fmt.Sprintf("unknown package '%s' in '%s' (not in rex.toml?)", namespace, moduleName)}
+			}
+			var err error
+			src, err = loadUserModuleSource(pkgSrc, name, getTarget())
+			if err != nil {
+				modPath := resolveUserModulePath(pkgSrc, name)
+				return nil, &types.TypeError{Msg: fmt.Sprintf("module not found: %s (looked for %s)", moduleName, modPath)}
+			}
 		}
-		var err error
-		src, err = stdlib.SourceForTarget(name, getTarget())
-		if err != nil {
-			return nil, &types.TypeError{Msg: "unknown module: " + moduleName}
-		}
-		extraEnv = typeEnvForModule(name)
 	} else {
 		// User module — resolve from src/
 		root := getSrcRoot()

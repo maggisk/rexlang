@@ -35,13 +35,14 @@ func ModulePrefix(module string) string {
 // Returns them in dependency order (deepest imports first), with function
 // names prefixed by module path to avoid collisions. Also returns a map
 // of imported names to their prefixed equivalents.
-func ResolveImports(exprs []ast.Expr, srcRoot string, target string) (*ImportInfo, error) {
+func ResolveImports(exprs []ast.Expr, srcRoot string, target string, packageRoots map[string]string) (*ImportInfo, error) {
 	r := &resolver{
-		visited:     make(map[string]bool),
-		srcRoot:     srcRoot,
-		target:      target,
-		aliases:     make(map[string]string),
-		modTopNames: make(map[string]map[string]bool),
+		visited:      make(map[string]bool),
+		srcRoot:      srcRoot,
+		target:       target,
+		packageRoots: packageRoots,
+		aliases:      make(map[string]string),
+		modTopNames:  make(map[string]map[string]bool),
 	}
 	// Always include Prelude types (Ordering) and trait declarations.
 	// Impl blocks and function bodies are handled by codegen from the type env.
@@ -73,8 +74,9 @@ type resolver struct {
 	aliases      map[string]string            // user-visible name → prefixed name
 	modTopNames  map[string]map[string]bool    // module → set of defined function names
 	srcRoot      string
-	target       string // compilation target ("native", "browser", etc.)
-	stack        []string // for circular import detection
+	packageRoots map[string]string // package name → abs path to package src/
+	target       string            // compilation target ("native", "browser", etc.)
+	stack        []string          // for circular import detection
 }
 
 func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
@@ -326,10 +328,36 @@ func (r *resolver) loadSource(module string) (string, error) {
 	if strings.Contains(module, ":") {
 		parts := strings.SplitN(module, ":", 2)
 		namespace, name := parts[0], parts[1]
-		if namespace != "Std" {
-			return "", fmt.Errorf("unknown namespace '%s'", namespace)
+		if namespace == "Std" {
+			return stdlib.SourceForTarget(name, r.target)
 		}
-		return stdlib.SourceForTarget(name, r.target)
+		// Package import
+		pkgSrc, ok := r.packageRoots[namespace]
+		if !ok {
+			return "", fmt.Errorf("unknown package '%s' in '%s' (not in rex.toml?)", namespace, namespace+":"+name)
+		}
+		modPath := strings.ReplaceAll(name, ".", "/")
+		basePath := pkgSrc + "/" + modPath + ".rex"
+		if r.target != "" && r.target != "native" {
+			overlayPath := pkgSrc + "/" + modPath + "." + r.target + ".rex"
+			baseData, baseErr := os.ReadFile(basePath)
+			overlayData, overlayErr := os.ReadFile(overlayPath)
+			if baseErr != nil && overlayErr != nil {
+				return "", baseErr
+			}
+			if baseErr != nil {
+				return string(overlayData), nil
+			}
+			if overlayErr != nil {
+				return string(baseData), nil
+			}
+			return string(baseData) + "\n" + string(overlayData), nil
+		}
+		data, err := os.ReadFile(basePath)
+		if err != nil {
+			return "", err
+		}
+		return string(data), nil
 	}
 	// User module — resolve from srcRoot
 	if r.srcRoot == "" {

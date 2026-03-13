@@ -24,7 +24,7 @@ func compileCode(t *testing.T, code string) string {
 		t.Fatalf("typecheck error: %v", err)
 	}
 	// Resolve imports: collect module type/trait/impl/function declarations
-	importInfo, err := ir.ResolveImports(exprs, "", "")
+	importInfo, err := ir.ResolveImports(exprs, "", "", nil)
 	if err != nil {
 		t.Fatalf("resolve imports: %v", err)
 	}
