@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"net"
+	"net/http"
 	"os"
 	"runtime"
 	"sort"
@@ -998,6 +999,10 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 		for k, v := range DateTimeBuiltins() {
 			result[k] = v
 		}
+	case "Http.Server":
+		for k, v := range HttpServerBuiltins() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -1098,6 +1103,98 @@ func DateTimeBuiltins() map[string]Value {
 		"dateTimeUtcOffset": makeBuiltin("dateTimeUtcOffset", func(_ Value) (Value, error) {
 			_, offset := time.Now().Zone()
 			return VInt{V: offset / 60}, nil
+		}),
+	}
+}
+
+// HttpServerBuiltins returns the HTTP server builtin.
+func HttpServerBuiltins() map[string]Value {
+	return map[string]Value{
+		// httpServe : Int -> (Request -> Response) -> Result () String
+		"httpServe": curried2("httpServe", func(portV, handlerV Value) (Value, error) {
+			port, err := AsInt(portV)
+			if err != nil {
+				return nil, err
+			}
+
+			mux := http.NewServeMux()
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				// Build headers as [(String, String)]
+				headerItems := make([]Value, 0, len(r.Header))
+				for k, vals := range r.Header {
+					for _, v := range vals {
+						headerItems = append(headerItems, VTuple{Items: []Value{VString{V: k}, VString{V: v}}})
+					}
+				}
+
+				// Build query params as [(String, String)]
+				queryItems := make([]Value, 0, len(r.URL.Query()))
+				for k, vals := range r.URL.Query() {
+					for _, v := range vals {
+						queryItems = append(queryItems, VTuple{Items: []Value{VString{V: k}, VString{V: v}}})
+					}
+				}
+
+				// Read body
+				bodyBytes, _ := io.ReadAll(r.Body)
+
+				reqRecord := VRecord{
+					TypeName: "Request",
+					Fields: map[string]Value{
+						"method":  VString{V: r.Method},
+						"path":    VString{V: r.URL.Path},
+						"headers": VList{Items: headerItems},
+						"body":    VString{V: string(bodyBytes)},
+						"query":   VList{Items: queryItems},
+					},
+				}
+
+				respV, err := ApplyValue(handlerV, reqRecord)
+				if err != nil {
+					w.WriteHeader(500)
+					w.Write([]byte("Internal Server Error: " + err.Error()))
+					return
+				}
+
+				resp, ok := respV.(VRecord)
+				if !ok {
+					w.WriteHeader(500)
+					w.Write([]byte("handler did not return a Response record"))
+					return
+				}
+
+				// Write response headers
+				if hdrs, ok := resp.Fields["headers"].(VList); ok {
+					for _, item := range hdrs.Items {
+						if tup, ok := item.(VTuple); ok && len(tup.Items) == 2 {
+							if name, ok := tup.Items[0].(VString); ok {
+								if val, ok := tup.Items[1].(VString); ok {
+									w.Header().Set(name.V, val.V)
+								}
+							}
+						}
+					}
+				}
+
+				// Write status code
+				statusCode := 200
+				if s, ok := resp.Fields["status"].(VInt); ok {
+					statusCode = s.V
+				}
+				w.WriteHeader(statusCode)
+
+				// Write body
+				if body, ok := resp.Fields["body"].(VString); ok {
+					w.Write([]byte(body.V))
+				}
+			})
+
+			addr := fmt.Sprintf(":%d", port)
+			fmt.Printf("Listening on http://localhost:%d\n", port)
+			if listenErr := http.ListenAndServe(addr, mux); listenErr != nil {
+				return VCtor{Name: "Err", Args: []Value{VString{V: listenErr.Error()}}}, nil
+			}
+			return VCtor{Name: "Ok", Args: []Value{VUnit{}}}, nil
 		}),
 	}
 }

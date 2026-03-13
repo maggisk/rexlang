@@ -1072,14 +1072,19 @@ func sortStrings(s []string) {
 // stdlibModuleForPath detects if path is inside the embedded stdlib.
 // Returns the module name (e.g. "List") or empty string.
 func stdlibModuleForPath(absPath string) string {
-	base := filepath.Base(absPath)
-	if !strings.HasSuffix(base, ".rex") {
+	if !strings.HasSuffix(absPath, ".rex") {
 		return ""
 	}
-	name := strings.TrimSuffix(base, ".rex")
-	// Check if this module exists in stdlib
-	if _, err := stdlib.Source(name); err == nil {
-		return name
+	// Try the base name first (e.g., "List" from "List.rex")
+	base := strings.TrimSuffix(filepath.Base(absPath), ".rex")
+	if _, err := stdlib.Source(base); err == nil {
+		return base
+	}
+	// Try parent.base for subdirectory modules (e.g., "Http.Server" from "Http/Server.rex")
+	dir := filepath.Base(filepath.Dir(absPath))
+	dotted := dir + "." + base
+	if _, err := stdlib.Source(dotted); err == nil {
+		return dotted
 	}
 	return ""
 }

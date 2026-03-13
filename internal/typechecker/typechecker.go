@@ -2759,6 +2759,10 @@ func typeEnvForModule(name string) TypeEnv {
 		for k, v := range dateTimeTypeEnv() {
 			result[k] = v
 		}
+	case "Http.Server":
+		for k, v := range httpServerTypeEnv() {
+			result[k] = v
+		}
 	}
 	return result
 }
@@ -2827,6 +2831,21 @@ func dateTimeTypeEnv() TypeEnv {
 		"dateTimeNow": types.Scheme{Ty: types.TFun(types.TUnit, types.TInt)},
 		// dateTimeUtcOffset : () -> Int
 		"dateTimeUtcOffset": types.Scheme{Ty: types.TFun(types.TUnit, types.TInt)},
+	}
+}
+
+func httpServerTypeEnv() TypeEnv {
+	// Request and Response are records defined in Http/Server.rex.
+	// The typechecker resolves them from the module's own type declarations.
+	// httpServe : Int -> (Request -> Response) -> Result () String
+	reqType := types.TCon{Name: "Request"}
+	respType := types.TCon{Name: "Response"}
+	return TypeEnv{
+		"httpServe": types.Scheme{
+			Ty: types.TFun(types.TInt,
+				types.TFun(types.TFun(reqType, respType),
+					types.TResult(types.TUnit, types.TString))),
+		},
 	}
 }
 
