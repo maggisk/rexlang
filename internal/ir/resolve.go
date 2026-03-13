@@ -151,6 +151,23 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 			modNameMap[name] = prefix + name
 		}
 
+		// Also resolve this module's own imports: map imported names to
+		// their prefixed counterparts so that references like `map` from
+		// `import Std:List (map)` become `Std_List__map` in the body.
+		for _, me := range modExprs {
+			innerImp, ok := me.(ast.Import)
+			if !ok {
+				continue
+			}
+			innerPrefix := ModulePrefix(innerImp.Module)
+			innerNames := r.modTopNames[innerImp.Module]
+			for _, name := range innerImp.Names {
+				if innerNames[name] {
+					modNameMap[name] = innerPrefix + name
+				}
+			}
+		}
+
 		// Extract declarations, prefixing function names to avoid collisions.
 		// Type declarations and constructors keep their original names.
 		for _, me := range modExprs {

@@ -83,7 +83,7 @@ type jsGen struct {
 
 	// track what features are used
 	usesConcurrency bool
-	usesJsFfi       bool              // browser: Std:Js FFI primitives
+	usesJsFfi       bool // browser: Std:Js FFI primitives
 	knownTypes      map[string]bool   // types defined in the program
 }
 
@@ -458,6 +458,44 @@ function rex_todo(msg) { throw new Error("TODO: " + (typeof msg === "string" ? m
 
 `)
 
+	// String builtins
+	b.WriteString(`function rex_stringLength(s) { return [...s].length; }
+function rex_toUpper(s) { return s.toUpperCase(); }
+function rex_toLower(s) { return s.toLowerCase(); }
+function rex_trim(s) { return s.trim(); }
+function rex_trimLeft(s) { return s.trimStart(); }
+function rex_trimRight(s) { return s.trimEnd(); }
+function rex_stringReverse(s) { return [...s].reverse().join(""); }
+function rex_split(sep, s) { return s.split(sep).reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
+function rex_join(sep, lst) {
+  const items = [];
+  let cur = lst;
+  while (cur !== null && cur.$tag === "Cons") { items.push(cur.head); cur = cur.tail; }
+  return items.join(sep);
+}
+function rex_contains(sub, s) { return s.includes(sub); }
+function rex_startsWith(pfx, s) { return s.startsWith(pfx); }
+function rex_endsWith(sfx, s) { return s.endsWith(sfx); }
+function rex_replace(from, to, s) { return s.split(from).join(to); }
+function rex_substring(start, end, s) { return [...s].slice(start, end).join(""); }
+function rex_repeat(n, s) { return s.repeat(n); }
+function rex_charAt(i, s) { const chars = [...s]; return i >= 0 && i < chars.length ? {$tag: "Just", _0: chars[i], $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }
+function rex_indexOf(sub, s) { const i = s.indexOf(sub); return i >= 0 ? {$tag: "Just", _0: i, $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }
+function rex_padLeft(n, ch, s) { return s.padStart(n, ch); }
+function rex_padRight(n, ch, s) { return s.padEnd(n, ch); }
+function rex_words(s) { const ws = s.trim().split(/\s+/).filter(x => x); return ws.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
+function rex_lines(s) { const ls = s.split(/\r?\n/); return ls.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
+function rex_charCode(s) { return s.codePointAt(0) || 0; }
+function rex_fromCharCode(n) { return String.fromCodePoint(n); }
+function rex_stringParseInt(s) { const n = parseInt(s, 10); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }
+function rex_stringParseFloat(s) { const n = parseFloat(s); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }
+function rex_stringToList(s) { return [...s].reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
+function rex_stringFromList(lst) { const chars = []; let cur = lst; while (cur !== null && cur.$tag === "Cons") { chars.push(cur.head); cur = cur.tail; } return chars.join(""); }
+function rex_toFloat(n) { return n; }
+
+`)
+
+
 	// Concurrency runtime — synchronous CPS actors
 	if g.usesConcurrency {
 		b.WriteString(`// Actor runtime — direct function calls via CPS-transformed receive().
@@ -572,6 +610,8 @@ function rex_jsToBool(v) {
 
 `)
 	}
+
+	// (Virtual DOM runtime is now implemented in Html.browser.rex overlay)
 
 	return b.String()
 }
@@ -1012,11 +1052,141 @@ func (g *jsGen) emitCExprInline(c ir.CExpr) error {
 // Application
 // ---------------------------------------------------------------------------
 
+// emitStringBuiltin handles string/math builtins that might be shadowed by user code.
+// Returns true if the builtin was emitted, false if funcName is not a known builtin.
+func (g *jsGen) emitStringBuiltin(funcName string, c ir.CApp) bool {
+	switch funcName {
+	// 1-arg string builtins
+	case "length":
+		g.buf.WriteString("rex_stringLength(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "toUpper":
+		g.buf.WriteString("rex_toUpper(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "toLower":
+		g.buf.WriteString("rex_toLower(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "trim":
+		g.buf.WriteString("rex_trim(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "trimLeft":
+		g.buf.WriteString("rex_trimLeft(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "trimRight":
+		g.buf.WriteString("rex_trimRight(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "reverse":
+		g.buf.WriteString("rex_stringReverse(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "words":
+		g.buf.WriteString("rex_words(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "lines":
+		g.buf.WriteString("rex_lines(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "charCode":
+		g.buf.WriteString("rex_charCode(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "fromCharCode":
+		g.buf.WriteString("rex_fromCharCode(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "parseInt":
+		g.buf.WriteString("rex_stringParseInt(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "parseFloat":
+		g.buf.WriteString("rex_stringParseFloat(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "toList":
+		g.buf.WriteString("rex_stringToList(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "fromList":
+		g.buf.WriteString("rex_stringFromList(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	case "toFloat":
+		g.buf.WriteString("rex_toFloat(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(")")
+	// 2-arg curried string builtins
+	case "split":
+		g.buf.WriteString("((_s) => rex_split(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _s))")
+	case "join":
+		g.buf.WriteString("((_lst) => rex_join(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _lst))")
+	case "contains":
+		g.buf.WriteString("((_s) => rex_contains(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _s))")
+	case "startsWith":
+		g.buf.WriteString("((_s) => rex_startsWith(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _s))")
+	case "endsWith":
+		g.buf.WriteString("((_s) => rex_endsWith(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _s))")
+	case "indexOf":
+		g.buf.WriteString("((_s) => rex_indexOf(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _s))")
+	case "charAt":
+		g.buf.WriteString("((_s) => rex_charAt(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _s))")
+	case "repeat":
+		g.buf.WriteString("((_s) => rex_repeat(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _s))")
+	case "substring":
+		g.buf.WriteString("((_end) => ((_s) => rex_substring(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _end, _s)))")
+	// 3-arg curried string builtins
+	case "replace":
+		g.buf.WriteString("((_to) => ((_s) => rex_replace(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _to, _s)))")
+	case "padLeft":
+		g.buf.WriteString("((_ch) => ((_s) => rex_padLeft(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _ch, _s)))")
+	case "padRight":
+		g.buf.WriteString("((_ch) => ((_s) => rex_padRight(")
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(", _ch, _s)))")
+	default:
+		return false
+	}
+	return true
+}
+
 func (g *jsGen) emitApp(c ir.CApp) error {
 	funcName := ""
 	if v, ok := c.Func.(ir.AVar); ok {
 		funcName = v.Name
 	}
+
+	// Check if name is a user-defined function or local (shadows builtins)
+	_, isUserFunc := g.funcs[funcName]
+	isLocal := g.locals[funcName]
+	isShadowed := isUserFunc || isLocal
 
 	// Known builtins
 	switch funcName {
@@ -1063,6 +1233,17 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
+	}
+
+	// String/math builtins — only match if not shadowed by user-defined function
+	if !isShadowed {
+		if emitted := g.emitStringBuiltin(funcName, c); emitted {
+			return nil
+		}
+	}
+
+	// Actor builtins
+	switch funcName {
 	case "spawn":
 		g.buf.WriteString("rex_spawn(")
 		g.emitAtom(c.Arg)
@@ -1759,6 +1940,65 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 				}
 				return jsFuncName(name)
 			}
+		}
+		// String/math builtins as values (after user-defined names)
+		switch name {
+		case "length":
+			return "((s) => rex_stringLength(s))"
+		case "toUpper":
+			return "((s) => rex_toUpper(s))"
+		case "toLower":
+			return "((s) => rex_toLower(s))"
+		case "trim":
+			return "((s) => rex_trim(s))"
+		case "trimLeft":
+			return "((s) => rex_trimLeft(s))"
+		case "trimRight":
+			return "((s) => rex_trimRight(s))"
+		case "reverse":
+			return "((s) => rex_stringReverse(s))"
+		case "words":
+			return "((s) => rex_words(s))"
+		case "lines":
+			return "((s) => rex_lines(s))"
+		case "charCode":
+			return "((s) => rex_charCode(s))"
+		case "fromCharCode":
+			return "((n) => rex_fromCharCode(n))"
+		case "parseInt":
+			return "((s) => rex_stringParseInt(s))"
+		case "parseFloat":
+			return "((s) => rex_stringParseFloat(s))"
+		case "toList":
+			return "((s) => rex_stringToList(s))"
+		case "fromList":
+			return "((lst) => rex_stringFromList(lst))"
+		case "toFloat":
+			return "((n) => rex_toFloat(n))"
+		case "split":
+			return "((sep) => (s) => rex_split(sep, s))"
+		case "join":
+			return "((sep) => (lst) => rex_join(sep, lst))"
+		case "contains":
+			return "((sub) => (s) => rex_contains(sub, s))"
+		case "startsWith":
+			return "((pfx) => (s) => rex_startsWith(pfx, s))"
+		case "endsWith":
+			return "((sfx) => (s) => rex_endsWith(sfx, s))"
+		case "indexOf":
+			return "((sub) => (s) => rex_indexOf(sub, s))"
+		case "charAt":
+			return "((i) => (s) => rex_charAt(i, s))"
+		case "repeat":
+			return "((n) => (s) => rex_repeat(n, s))"
+		case "substring":
+			return "((start) => (end) => (s) => rex_substring(start, end, s))"
+		case "replace":
+			return "((from) => (to) => (s) => rex_replace(from, to, s))"
+		case "padLeft":
+			return "((n) => (ch) => (s) => rex_padLeft(n, ch, s))"
+		case "padRight":
+			return "((n) => (ch) => (s) => rex_padRight(n, ch, s))"
 		}
 		return jsVarName(name)
 	}
