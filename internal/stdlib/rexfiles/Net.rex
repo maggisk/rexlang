@@ -1,7 +1,19 @@
 import Std:Result (Ok, Err)
 import Std:IO (println)
 
-export tcpListen, tcpAccept, tcpConnect, tcpRead, tcpWrite, tcpClose, tcpCloseListener
+export external tcpListen : Int -> Result (Listener, Int) String
+
+export external tcpAccept : Listener -> Result Conn String
+
+export external tcpConnect : String -> Int -> Result Conn String
+
+export external tcpRead : Conn -> Result String String
+
+export external tcpWrite : Conn -> String -> Result () String
+
+export external tcpClose : Conn -> Result () String
+
+export external tcpCloseListener : Listener -> Result () String
 
 
 unwrap result =

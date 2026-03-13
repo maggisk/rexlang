@@ -1313,6 +1313,8 @@ func (p *parser) parseExport() (ast.Expr, error) {
 			return e, nil
 		}
 		return expr, nil
+	case p.peek().Kind == lexer.TokExternal:
+		return p.parseExternal(true)
 	case p.peek().Kind == lexer.TokOpaque:
 		p.advance() // consume 'opaque'
 		if p.peek().Kind != lexer.TokType {
@@ -1370,6 +1372,23 @@ func (p *parser) parseExport() (ast.Expr, error) {
 		}
 		return ast.Export{Names: names}, nil
 	}
+}
+
+func (p *parser) parseExternal(exported bool) (ast.Expr, error) {
+	p.advance() // consume 'external'
+	// Expect: name : TypeSig
+	name, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	if err := p.expect(lexer.TokColon); err != nil {
+		return nil, err
+	}
+	ty, err := p.parseTypeSig()
+	if err != nil {
+		return nil, err
+	}
+	return ast.ExternalDecl{Name: name, Type: ty, Exported: exported}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1774,6 +1793,8 @@ func (p *parser) parseExpr() (ast.Expr, error) {
 		return p.parseImport()
 	case lexer.TokExport:
 		return p.parseExport()
+	case lexer.TokExternal:
+		return p.parseExternal(false)
 	case lexer.TokTrait:
 		return p.parseTraitDecl()
 	case lexer.TokImpl:

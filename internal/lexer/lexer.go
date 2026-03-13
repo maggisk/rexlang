@@ -21,7 +21,7 @@ var keywords = map[string]bool{
 	"let": true, "rec": true, "and": true, "in": true,
 	"if": true, "then": true, "else": true,
 	"match": true, "when": true, "type": true, "import": true,
-	"export": true, "as": true, "trait": true, "impl": true,
+	"export": true, "external": true, "as": true, "trait": true, "impl": true,
 	"where": true, "test": true, "assert": true, "alias": true, "opaque": true,
 }
 

@@ -28,6 +28,7 @@ const (
 	TokType      = "type"
 	TokImport    = "import"
 	TokExport    = "export"
+	TokExternal  = "external"
 	TokAs        = "as"
 	TokTrait     = "trait"
 	TokImpl      = "impl"

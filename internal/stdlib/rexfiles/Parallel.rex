@@ -1,4 +1,7 @@
-export numCPU
+export external numCPU : Int
+
+test "numCPU is positive" =
+    assert (numCPU > 0)
 
 import Std:List (map, length, take, drop, concat)
 import Std:Process (spawn, send, receive, call)
@@ -18,6 +21,14 @@ pmap f lst =
     ) lst
     in
     pids |> map (\pid -> call pid (\me -> me))
+
+test "pmap preserves order" =
+    let result = pmap (\x -> x * 2) [1, 2, 3, 4, 5]
+    assert (result == [2, 4, 6, 8, 10])
+
+test "pmap on empty list" =
+    let result = pmap (\x -> x + 1) []
+    assert (result == [])
 
 
 -- | Apply a function to each element in parallel, using at most n workers.
@@ -49,15 +60,6 @@ pmapN n f lst =
     in
     pids |> map (\pid -> call pid (\me -> me)) |> concat
 
-
-test "pmap preserves order" =
-    let result = pmap (\x -> x * 2) [1, 2, 3, 4, 5]
-    assert (result == [2, 4, 6, 8, 10])
-
-test "pmap on empty list" =
-    let result = pmap (\x -> x + 1) []
-    assert (result == [])
-
 test "pmapN preserves order" =
     let result = pmapN 2 (\x -> x * 10) [1, 2, 3, 4, 5]
     assert (result == [10, 20, 30, 40, 50])
@@ -69,6 +71,3 @@ test "pmapN on empty list" =
 test "pmapN with 1 worker" =
     let result = pmapN 1 (\x -> x * x) [1, 2, 3]
     assert (result == [1, 4, 9])
-
-test "numCPU is positive" =
-    assert (numCPU > 0)

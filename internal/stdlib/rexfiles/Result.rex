@@ -11,6 +11,10 @@ impl Show (Result a b) where
             when Err e ->
                 "Err " ++ show e
 
+test "show" =
+    assert (show (Ok 42) == "Ok 42")
+    assert (show (Err "oops") == "Err oops")
+
 impl Eq (Result a b) where
     eq x y =
         match (x, y)
@@ -21,11 +25,26 @@ impl Eq (Result a b) where
             when _ ->
                 false
 
+test "eq" =
+    assert (eq (Ok 1) (Ok 1))
+    assert (eq (Ok 1) (Ok 2) |> not)
+    assert (eq (Err "a") (Err "a"))
+    assert (eq (Ok 1) (Err 1) |> not)
+
 
 -- # Recovery
 
 
-export try
+export external try : (() -> a) -> Result a RuntimeError
+
+test "try catches division by zero" =
+    assert (try (\_ -> 10 / 0) == Err DivisionByZero)
+
+test "try catches modulo by zero" =
+    assert (try (\_ -> 10 % 0) == Err ModuloByZero)
+
+test "try returns Ok on success" =
+    assert (try (\_ -> 10 / 2) == Ok 5)
 
 
 -- # Query
@@ -151,23 +170,3 @@ test "andThen" =
     assert (Ok 5 |> andThen (\x -> Ok (x * 2)) |> withDefault 0 == 10)
     assert (Err "oops" |> andThen (\x -> Ok (x * 2)) |> isErr)
     assert (Ok 5 |> andThen (\_ -> Err "nope") |> isErr)
-
-
-test "try catches division by zero" =
-    assert (try (\_ -> 10 / 0) == Err DivisionByZero)
-
-test "try catches modulo by zero" =
-    assert (try (\_ -> 10 % 0) == Err ModuloByZero)
-
-test "try returns Ok on success" =
-    assert (try (\_ -> 10 / 2) == Ok 5)
-
-test "show" =
-    assert (show (Ok 42) == "Ok 42")
-    assert (show (Err "oops") == "Err oops")
-
-test "eq" =
-    assert (eq (Ok 1) (Ok 1))
-    assert (eq (Ok 1) (Ok 2) |> not)
-    assert (eq (Err "a") (Err "a"))
-    assert (eq (Ok 1) (Err 1) |> not)

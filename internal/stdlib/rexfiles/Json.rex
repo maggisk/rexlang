@@ -3,6 +3,11 @@ import Std:Maybe (Just, Nothing)
 import Std:List (intersperse, map, foldl)
 
 
+-- # Builtins
+
+external jsonParse : String -> Result Json String
+
+
 -- # Types
 
 

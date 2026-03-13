@@ -4,6 +4,11 @@ import Std:Process (spawn, send, receive, call)
 import Std:List (map, length, take, drop, concat, reverse)
 
 
+-- # Builtins
+
+external systemSeed : () -> Int
+
+
 -- # Pure RNG API
 
 -- Opaque RNG state — consumers can't see it's just an Int

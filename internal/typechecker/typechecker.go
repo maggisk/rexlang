@@ -1808,6 +1808,21 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		newEnv["__ctor_families__"] = ctorFamilies
 		return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: newEnv, TypeDefs: newTypeDefs}, nil
 
+	case ast.ExternalDecl:
+		resolved, err := tc.resolveTypeSig(e.Type, typeDefs)
+		if err != nil {
+			return InferToplevelResult{}, err
+		}
+		var extConstraints []types.Constraint
+		if tc2, ok := e.Type.(ast.TyConstrained); ok {
+			for _, c := range tc2.Constraints {
+				extConstraints = append(extConstraints, types.Constraint{Trait: c.Trait, Var: c.Var})
+			}
+		}
+		gen := types.Generalize(env, resolved, extConstraints)
+		newEnv := env.extend(e.Name, gen)
+		return InferToplevelResult{Subst: subst, Ty: types.TUnit, Env: newEnv, TypeDefs: typeDefs}, nil
+
 	case ast.TypeAnnotation:
 		resolved, err := tc.resolveTypeSig(e.Type, typeDefs)
 		if err != nil {
@@ -2500,6 +2515,10 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 						exports[m.Name] = true
 					}
 				}
+			case ast.ExternalDecl:
+				if e.Exported {
+					exports[e.Name] = true
+				}
 			}
 			res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 			if err != nil {
@@ -2570,130 +2589,6 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 // Initial type environments
 // ---------------------------------------------------------------------------
 
-func mathTypeEnv() TypeEnv {
-	return TypeEnv{
-		"toFloat":  types.Scheme{Ty: types.TFun(types.TInt, types.TFloat)},
-		"round":    types.Scheme{Ty: types.TFun(types.TFloat, types.TInt)},
-		"floor":    types.Scheme{Ty: types.TFun(types.TFloat, types.TInt)},
-		"ceiling":  types.Scheme{Ty: types.TFun(types.TFloat, types.TInt)},
-		"truncate": types.Scheme{Ty: types.TFun(types.TFloat, types.TInt)},
-		"sqrt":     types.Scheme{Ty: types.TFun(types.TFloat, types.TFloat)},
-		"abs":      types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TVar{Name: "a"}, types.TVar{Name: "a"})},
-		"min":      types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TVar{Name: "a"}, types.TFun(types.TVar{Name: "a"}, types.TVar{Name: "a"}))},
-		"max":      types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TVar{Name: "a"}, types.TFun(types.TVar{Name: "a"}, types.TVar{Name: "a"}))},
-		"pow":      types.Scheme{Ty: types.TFun(types.TFloat, types.TFun(types.TFloat, types.TFloat))},
-		"sin":      types.Scheme{Ty: types.TFun(types.TFloat, types.TFloat)},
-		"cos":      types.Scheme{Ty: types.TFun(types.TFloat, types.TFloat)},
-		"tan":      types.Scheme{Ty: types.TFun(types.TFloat, types.TFloat)},
-		"asin":     types.Scheme{Ty: types.TFun(types.TFloat, types.TFloat)},
-		"acos":     types.Scheme{Ty: types.TFun(types.TFloat, types.TFloat)},
-		"atan":     types.Scheme{Ty: types.TFun(types.TFloat, types.TFloat)},
-		"atan2":    types.Scheme{Ty: types.TFun(types.TFloat, types.TFun(types.TFloat, types.TFloat))},
-		"log":      types.Scheme{Ty: types.TFun(types.TFloat, types.TFloat)},
-		"exp":      types.Scheme{Ty: types.TFun(types.TFloat, types.TFloat)},
-		"pi":       types.Scheme{Ty: types.TFloat},
-		"e":        types.Scheme{Ty: types.TFloat},
-	}
-}
-
-func stringTypeEnv() TypeEnv {
-	return TypeEnv{
-		"length":       types.Scheme{Ty: types.TFun(types.TString, types.TInt)},
-		"toUpper":      types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-		"toLower":      types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-		"trim":         types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-		"split":        types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TList(types.TString)))},
-		"join":         types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TList(types.TString), types.TString))},
-		"toString":     types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TVar{Name: "a"}, types.TString)},
-		"contains":     types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TBool))},
-		"startsWith":   types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TBool))},
-		"endsWith":     types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TBool))},
-		"charAt":       types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TMaybe(types.TString)))},
-		"substring":    types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TFun(types.TString, types.TString)))},
-		"indexOf":      types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TMaybe(types.TInt)))},
-		"replace":      types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
-		"take":         types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TString))},
-		"drop":         types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TString))},
-		"repeat":       types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TString))},
-		"padLeft":      types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
-		"padRight":     types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TString, types.TFun(types.TString, types.TString)))},
-		"words":        types.Scheme{Ty: types.TFun(types.TString, types.TList(types.TString))},
-		"lines":        types.Scheme{Ty: types.TFun(types.TString, types.TList(types.TString))},
-		"charCode":     types.Scheme{Ty: types.TFun(types.TString, types.TInt)},
-		"fromCharCode": types.Scheme{Ty: types.TFun(types.TInt, types.TString)},
-		"parseInt":     types.Scheme{Ty: types.TFun(types.TString, types.TMaybe(types.TInt))},
-		"parseFloat":   types.Scheme{Ty: types.TFun(types.TString, types.TMaybe(types.TFloat))},
-		"reverse":      types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-		"toList":       types.Scheme{Ty: types.TFun(types.TString, types.TList(types.TString))},
-		"fromList":     types.Scheme{Ty: types.TFun(types.TList(types.TString), types.TString)},
-		"trimLeft":     types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-		"trimRight":    types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-	}
-}
-
-func listTypeEnv() TypeEnv {
-	a := types.TVar{Name: "a"}
-	ordering := types.TCon{Name: "Ordering", Args: nil}
-	return TypeEnv{
-		"sortWith": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TFun(a, types.TFun(a, ordering)), types.TFun(types.TList(a), types.TList(a)))},
-	}
-}
-
-func ioTypeEnv() TypeEnv {
-	return TypeEnv{
-		"print":      types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TVar{Name: "a"}, types.TVar{Name: "a"})},
-		"println":    types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TVar{Name: "a"}, types.TVar{Name: "a"})},
-		"readLine":   types.Scheme{Ty: types.TFun(types.TString, types.TString)},
-		"readFile":   types.Scheme{Ty: types.TFun(types.TString, types.TResult(types.TString, types.TString))},
-		"writeFile":  types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TResult(types.TUnit, types.TString)))},
-		"appendFile": types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TResult(types.TUnit, types.TString)))},
-		"fileExists": types.Scheme{Ty: types.TFun(types.TString, types.TBool)},
-		"listDir":    types.Scheme{Ty: types.TFun(types.TString, types.TResult(types.TList(types.TString), types.TString))},
-	}
-}
-
-func envTypeEnv() TypeEnv {
-	return TypeEnv{
-		"getEnv":   types.Scheme{Ty: types.TFun(types.TString, types.TMaybe(types.TString))},
-		"getEnvOr": types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TString, types.TString))},
-		"args":     types.Scheme{Ty: types.TList(types.TString)},
-	}
-}
-
-func resultTypeEnv() TypeEnv {
-	a := types.TVar{Name: "a"}
-	tRuntimeError := types.TCon{Name: "RuntimeError", Args: nil}
-	return TypeEnv{
-		// try : (() -> a) -> Result a RuntimeError
-		"try": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TFun(types.TUnit, a), types.TResult(a, tRuntimeError))},
-	}
-}
-
-func jsonTypeEnv() TypeEnv {
-	tJson := types.TCon{Name: "Json", Args: nil}
-	return TypeEnv{
-		"jsonParse": types.Scheme{Ty: types.TFun(types.TString, types.TResult(tJson, types.TString))},
-	}
-}
-
-// InitialTypeEnv returns the type environment with only globally available builtins.
-func processTypeEnv() TypeEnv {
-	a := types.TVar{Name: "a"}
-	b := types.TVar{Name: "b"}
-	return TypeEnv{
-		// spawn : (() -> b) -> Pid a
-		"spawn": types.Scheme{Vars: []string{"a", "b"}, Ty: types.TFun(types.TFun(types.TUnit, b), types.TPid(a))},
-		// send : Pid a -> a -> ()
-		"send": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TPid(a), types.TFun(a, types.TUnit))},
-		// receive : () -> a
-		"receive": types.Scheme{Vars: []string{"a"}, Ty: types.TFun(types.TUnit, a)},
-		// self : Pid a
-		"self": types.Scheme{Vars: []string{"a"}, Ty: types.TPid(a)},
-		// call : Pid b -> (Pid a -> b) -> a
-		"call": types.Scheme{Vars: []string{"a", "b"}, Ty: types.TFun(types.TPid(b), types.TFun(types.TFun(types.TPid(a), b), a))},
-	}
-}
-
 func InitialTypeEnv() TypeEnv {
 	return TypeEnv{
 		"not":       types.Scheme{Ty: types.TFun(types.TBool, types.TBool)},
@@ -2705,66 +2600,9 @@ func InitialTypeEnv() TypeEnv {
 }
 
 func typeEnvForModule(name string) TypeEnv {
-	result := InitialTypeEnv()
-	switch name {
-	case "List":
-		for k, v := range listTypeEnv() {
-			result[k] = v
-		}
-	case "Math":
-		for k, v := range mathTypeEnv() {
-			result[k] = v
-		}
-	case "String":
-		for k, v := range stringTypeEnv() {
-			result[k] = v
-		}
-	case "IO":
-		for k, v := range ioTypeEnv() {
-			result[k] = v
-		}
-	case "Env":
-		for k, v := range envTypeEnv() {
-			result[k] = v
-		}
-	case "Result":
-		for k, v := range resultTypeEnv() {
-			result[k] = v
-		}
-	case "Json":
-		for k, v := range jsonTypeEnv() {
-			result[k] = v
-		}
-	case "Process":
-		for k, v := range processTypeEnv() {
-			result[k] = v
-		}
-	case "Parallel":
-		for k, v := range parallelTypeEnv() {
-			result[k] = v
-		}
-	case "Net":
-		for k, v := range netTypeEnv() {
-			result[k] = v
-		}
-	case "Random":
-		for k, v := range randomTypeEnv() {
-			result[k] = v
-		}
-	case "Bitwise":
-		for k, v := range bitwiseTypeEnv() {
-			result[k] = v
-		}
-	case "DateTime":
-		for k, v := range dateTimeTypeEnv() {
-			result[k] = v
-		}
-	case "Http.Server":
-		for k, v := range httpServerTypeEnv() {
-			result[k] = v
-		}
-	}
-	return result
+	// All module-specific builtin types are now declared via `external` in their .rex files.
+	// Only InitialTypeEnv (core builtins: not, error, todo, showInt, showFloat) is needed.
+	return InitialTypeEnv()
 }
 
 // typeDefsForModule returns extra type definitions needed by specific modules.
@@ -2781,72 +2619,6 @@ func typeDefsForModule(name string) map[string]types.Type {
 		}
 	}
 	return nil
-}
-
-func netTypeEnv() TypeEnv {
-	return TypeEnv{
-		// tcpListen : Int -> Result (Listener, Int) String
-		"tcpListen": types.Scheme{Ty: types.TFun(types.TInt, types.TResult(types.TTuple([]types.Type{types.TListener, types.TInt}), types.TString))},
-		// tcpAccept : Listener -> Result Conn String
-		"tcpAccept": types.Scheme{Ty: types.TFun(types.TListener, types.TResult(types.TConn, types.TString))},
-		// tcpConnect : String -> Int -> Result Conn String
-		"tcpConnect": types.Scheme{Ty: types.TFun(types.TString, types.TFun(types.TInt, types.TResult(types.TConn, types.TString)))},
-		// tcpRead : Conn -> Result String String
-		"tcpRead": types.Scheme{Ty: types.TFun(types.TConn, types.TResult(types.TString, types.TString))},
-		// tcpWrite : Conn -> String -> Result () String
-		"tcpWrite": types.Scheme{Ty: types.TFun(types.TConn, types.TFun(types.TString, types.TResult(types.TUnit, types.TString)))},
-		// tcpClose : Conn -> Result () String
-		"tcpClose": types.Scheme{Ty: types.TFun(types.TConn, types.TResult(types.TUnit, types.TString))},
-		// tcpCloseListener : Listener -> Result () String
-		"tcpCloseListener": types.Scheme{Ty: types.TFun(types.TListener, types.TResult(types.TUnit, types.TString))},
-	}
-}
-
-func parallelTypeEnv() TypeEnv {
-	return TypeEnv{
-		"numCPU": types.Scheme{Ty: types.TInt},
-	}
-}
-
-func bitwiseTypeEnv() TypeEnv {
-	return TypeEnv{
-		"bitAnd":     types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
-		"bitOr":      types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
-		"bitXor":     types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
-		"bitNot":     types.Scheme{Ty: types.TFun(types.TInt, types.TInt)},
-		"shiftLeft":  types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
-		"shiftRight": types.Scheme{Ty: types.TFun(types.TInt, types.TFun(types.TInt, types.TInt))},
-	}
-}
-
-func randomTypeEnv() TypeEnv {
-	return TypeEnv{
-		"systemSeed": types.Scheme{Ty: types.TFun(types.TUnit, types.TInt)},
-	}
-}
-
-func dateTimeTypeEnv() TypeEnv {
-	return TypeEnv{
-		// dateTimeNow : () -> Int
-		"dateTimeNow": types.Scheme{Ty: types.TFun(types.TUnit, types.TInt)},
-		// dateTimeUtcOffset : () -> Int
-		"dateTimeUtcOffset": types.Scheme{Ty: types.TFun(types.TUnit, types.TInt)},
-	}
-}
-
-func httpServerTypeEnv() TypeEnv {
-	// Request and Response are records defined in Http/Server.rex.
-	// The typechecker resolves them from the module's own type declarations.
-	// httpServe : Int -> (Request -> Response) -> Result () String
-	reqType := types.TCon{Name: "Request"}
-	respType := types.TCon{Name: "Response"}
-	return TypeEnv{
-		"httpServe": types.Scheme{
-			Ty: types.TFun(types.TInt,
-				types.TFun(types.TFun(reqType, respType),
-					types.TResult(types.TUnit, types.TString))),
-		},
-	}
 }
 
 // TypeEnvForModule is the exported version of typeEnvForModule.
@@ -3002,6 +2774,8 @@ func ReorderToplevel(exprs []ast.Expr) ([]ast.Expr, error) {
 			} else {
 				slots = append(slots, slot{kind: slotFixed, expr: e})
 			}
+		case ast.ExternalDecl:
+			slots = append(slots, slot{kind: slotFixed, expr: e})
 		case ast.Let:
 			if e.InExpr == nil {
 				var ann *ast.TypeAnnotation

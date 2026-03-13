@@ -1,4 +1,46 @@
-export abs, min, max, sin, cos, tan, asin, acos, atan, atan2, log, exp, pow, sqrt, pi, e, toFloat, round, floor, ceiling, truncate
+-- # Builtins
+
+export external toFloat : Int -> Float
+
+export external round : Float -> Int
+
+export external floor : Float -> Int
+
+export external ceiling : Float -> Int
+
+export external truncate : Float -> Int
+
+export external sqrt : Float -> Float
+
+export external abs : a -> a
+
+export external min : a -> a -> a
+
+export external max : a -> a -> a
+
+export external pow : Float -> Float -> Float
+
+export external sin : Float -> Float
+
+export external cos : Float -> Float
+
+export external tan : Float -> Float
+
+export external asin : Float -> Float
+
+export external acos : Float -> Float
+
+export external atan : Float -> Float
+
+export external atan2 : Float -> Float -> Float
+
+export external log : Float -> Float
+
+export external exp : Float -> Float
+
+export external pi : Float
+
+export external e : Float
 
 
 -- # Derived

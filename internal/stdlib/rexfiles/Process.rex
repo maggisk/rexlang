@@ -1,5 +1,12 @@
-export spawn, send, receive, self, call
+export external spawn : (() -> b) -> Pid a
 
+export external send : Pid a -> a -> ()
+
+export external receive : () -> a
+
+export external self : Pid a
+
+export external call : Pid b -> (Pid a -> b) -> a
 
 test "spawn and call" =
     let pid = spawn \_ ->

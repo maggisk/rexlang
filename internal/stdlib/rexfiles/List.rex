@@ -825,7 +825,7 @@ test "uniqueBy" =
 -- # Sort
 
 
--- sortWith is a builtin
+export external sortWith : (a -> a -> Ordering) -> [a] -> [a]
 
 test "sortWith" =
     assert ([5, 3, 1, 4, 2] |> sortWith (\a b -> compare a b) == [1, 2, 3, 4, 5])

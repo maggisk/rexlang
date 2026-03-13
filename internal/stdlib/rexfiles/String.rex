@@ -1,7 +1,210 @@
-export length, toUpper, toLower, trim, split, join, toString, contains, startsWith, endsWith, charAt, substring, indexOf, replace, take, drop, repeat, padLeft, padRight, words, lines, charCode, fromCharCode, parseInt, parseFloat, reverse, toList, fromList, trimLeft, trimRight
-
 import Std:List (map, filter, foldl)
 import Std:Maybe (Just, Nothing)
+
+
+-- # Builtins
+
+export external length : String -> Int
+
+test "length" =
+    assert (length "hello" == 5)
+    assert (length "" == 0)
+
+
+export external toUpper : String -> String
+
+test "toUpper" =
+    assert ("hello" |> toUpper == "HELLO")
+
+
+export external toLower : String -> String
+
+test "toLower" =
+    assert ("HELLO" |> toLower == "hello")
+
+
+export external trim : String -> String
+
+test "trim" =
+    assert ("  hello  " |> trim == "hello")
+
+
+export external trimLeft : String -> String
+
+test "trimLeft" =
+    assert (trimLeft "  hello  " == "hello  ")
+    assert (trimLeft "" == "")
+
+
+export external trimRight : String -> String
+
+test "trimRight" =
+    assert (trimRight "  hello  " == "  hello")
+    assert (trimRight "" == "")
+
+
+export external split : String -> String -> [String]
+
+test "split" =
+    assert (split "," "a,b,c" == ["a", "b", "c"])
+
+
+export external join : String -> [String] -> String
+
+test "join" =
+    assert (join "-" ["a", "b", "c"] == "a-b-c")
+
+
+export external toString : a -> String
+
+test "toString" =
+    assert (toString 42 == "42")
+    assert (toString true == "true")
+
+
+export external contains : String -> String -> Bool
+
+test "contains" =
+    assert (contains "ell" "hello")
+    assert ("hello" |> contains "xyz" |> not)
+
+
+export external startsWith : String -> String -> Bool
+
+test "startsWith" =
+    assert (startsWith "hel" "hello")
+    assert ("hello" |> startsWith "bye" |> not)
+
+
+export external endsWith : String -> String -> Bool
+
+test "endsWith" =
+    assert (endsWith "llo" "hello")
+    assert ("hello" |> endsWith "bye" |> not)
+
+
+export external charAt : Int -> String -> Maybe String
+
+test "charAt" =
+    assert (charAt 0 "hello" == Just "h")
+    assert (charAt 4 "hello" == Just "o")
+    assert (charAt 10 "hello" == Nothing)
+
+
+export external substring : Int -> Int -> String -> String
+
+test "substring" =
+    assert (substring 1 4 "hello" == "ell")
+
+
+export external indexOf : String -> String -> Maybe Int
+
+test "indexOf" =
+    assert (indexOf "ll" "hello" == Just 2)
+    assert (indexOf "xyz" "hello" == Nothing)
+
+
+export external replace : String -> String -> String -> String
+
+test "replace" =
+    assert ("hello" |> replace "l" "r" == "herro")
+
+
+export external take : Int -> String -> String
+
+test "take" =
+    assert (take 3 "hello" == "hel")
+    assert (take 0 "hello" == "")
+    assert (take 10 "hi" == "hi")
+    assert (take 3 "" == "")
+
+
+export external drop : Int -> String -> String
+
+test "drop" =
+    assert (drop 3 "hello" == "lo")
+    assert (drop 0 "hello" == "hello")
+    assert (drop 10 "hi" == "")
+    assert (drop 3 "" == "")
+
+
+export external repeat : Int -> String -> String
+
+test "repeat" =
+    assert (repeat 3 "ab" == "ababab")
+    assert (repeat 0 "ab" == "")
+
+
+export external padLeft : Int -> String -> String -> String
+
+test "padLeft" =
+    assert (padLeft 5 "0" "42" == "00042")
+
+
+export external padRight : Int -> String -> String -> String
+
+test "padRight" =
+    assert (padRight 5 "." "hi" == "hi...")
+
+
+export external words : String -> [String]
+
+test "words" =
+    assert (words "hello world" == ["hello", "world"])
+
+
+export external lines : String -> [String]
+
+test "lines" =
+    assert (lines "a\nb\nc" == ["a", "b", "c"])
+
+
+export external charCode : String -> Int
+
+test "charCode" =
+    assert (charCode "A" == 65)
+
+
+export external fromCharCode : Int -> String
+
+test "fromCharCode" =
+    assert (fromCharCode 65 == "A")
+
+
+export external parseInt : String -> Maybe Int
+
+test "parseInt" =
+    assert (parseInt "42" == Just 42)
+    assert (parseInt "abc" == Nothing)
+
+
+export external parseFloat : String -> Maybe Float
+
+test "parseFloat" =
+    assert (parseFloat "3.14" == Just 3.14)
+    assert (parseFloat "abc" == Nothing)
+
+
+export external reverse : String -> String
+
+test "reverse" =
+    assert ("hello" |> reverse == "olleh")
+    assert (reverse "" == "")
+    assert (reverse "a" == "a")
+
+
+export external toList : String -> [String]
+
+test "toList" =
+    assert (toList "abc" == ["a", "b", "c"])
+    assert (toList "" == [])
+
+
+export external fromList : [String] -> String
+
+test "fromList" =
+    assert (fromList ["a", "b", "c"] == "abc")
+    assert (fromList [] == "")
 
 
 -- # Query
@@ -21,218 +224,6 @@ test "isEmpty" =
     assert (isEmpty "")
     assert ("x" |> isEmpty |> not)
     assert (" " |> isEmpty |> not)
-
-
--- length is a builtin
-
-test "length" =
-    assert (length "hello" == 5)
-    assert (length "" == 0)
-
-
--- contains is a builtin
-
-test "contains" =
-    assert (contains "ell" "hello")
-    assert ("hello" |> contains "xyz" |> not)
-
-
--- startsWith is a builtin
-
-test "startsWith" =
-    assert (startsWith "hel" "hello")
-    assert ("hello" |> startsWith "bye" |> not)
-
-
--- endsWith is a builtin
-
-test "endsWith" =
-    assert (endsWith "llo" "hello")
-    assert ("hello" |> endsWith "bye" |> not)
-
-
--- charAt is a builtin
-
-test "charAt" =
-    assert (charAt 0 "hello" == Just "h")
-    assert (charAt 4 "hello" == Just "o")
-    assert (charAt 10 "hello" == Nothing)
-
-
--- indexOf is a builtin
-
-test "indexOf" =
-    assert (indexOf "ll" "hello" == Just 2)
-    assert (indexOf "xyz" "hello" == Nothing)
-
-
--- # Transform
-
-
--- toUpper is a builtin
-
-test "toUpper" =
-    assert ("hello" |> toUpper == "HELLO")
-
-
--- toLower is a builtin
-
-test "toLower" =
-    assert ("HELLO" |> toLower == "hello")
-
-
--- trim is a builtin
-
-test "trim" =
-    assert ("  hello  " |> trim == "hello")
-
-
--- trimLeft is a builtin
-
-test "trimLeft" =
-    assert (trimLeft "  hello  " == "hello  ")
-    assert (trimLeft "" == "")
-
-
--- trimRight is a builtin
-
-test "trimRight" =
-    assert (trimRight "  hello  " == "  hello")
-    assert (trimRight "" == "")
-
-
--- reverse is a builtin
-
-test "reverse" =
-    assert ("hello" |> reverse == "olleh")
-    assert (reverse "" == "")
-    assert (reverse "a" == "a")
-
-
--- replace is a builtin
-
-test "replace" =
-    assert ("hello" |> replace "l" "r" == "herro")
-
-
--- take is a builtin
-
-test "take" =
-    assert (take 3 "hello" == "hel")
-    assert (take 0 "hello" == "")
-    assert (take 10 "hi" == "hi")
-    assert (take 3 "" == "")
-
-
--- drop is a builtin
-
-test "drop" =
-    assert (drop 3 "hello" == "lo")
-    assert (drop 0 "hello" == "hello")
-    assert (drop 10 "hi" == "")
-    assert (drop 3 "" == "")
-
-
--- substring is a builtin
-
-test "substring" =
-    assert (substring 1 4 "hello" == "ell")
-
-
--- repeat is a builtin
-
-test "repeat" =
-    assert (repeat 3 "ab" == "ababab")
-    assert (repeat 0 "ab" == "")
-
-
--- padLeft is a builtin
-
-test "padLeft" =
-    assert (padLeft 5 "0" "42" == "00042")
-
-
--- padRight is a builtin
-
-test "padRight" =
-    assert (padRight 5 "." "hi" == "hi...")
-
-
--- # Split & Join
-
-
--- split is a builtin
-
-test "split" =
-    assert (split "," "a,b,c" == ["a", "b", "c"])
-
-
--- join is a builtin
-
-test "join" =
-    assert (join "-" ["a", "b", "c"] == "a-b-c")
-
-
--- words is a builtin
-
-test "words" =
-    assert (words "hello world" == ["hello", "world"])
-
-
--- lines is a builtin
-
-test "lines" =
-    assert (lines "a\nb\nc" == ["a", "b", "c"])
-
-
--- # Convert
-
-
--- toString is a builtin
-
-test "toString" =
-    assert (toString 42 == "42")
-    assert (toString true == "true")
-
-
--- toList is a builtin
-
-test "toList" =
-    assert (toList "abc" == ["a", "b", "c"])
-    assert (toList "" == [])
-
-
--- fromList is a builtin
-
-test "fromList" =
-    assert (fromList ["a", "b", "c"] == "abc")
-    assert (fromList [] == "")
-
-
--- charCode is a builtin
-
-test "charCode" =
-    assert (charCode "A" == 65)
-
-
--- fromCharCode is a builtin
-
-test "fromCharCode" =
-    assert (fromCharCode 65 == "A")
-
-
--- parseInt is a builtin
-
-test "parseInt" =
-    assert (parseInt "42" == Just 42)
-    assert (parseInt "abc" == Nothing)
-
-
--- parseFloat is a builtin
-
-test "parseFloat" =
-    assert (parseFloat "3.14" == Just 3.14)
-    assert (parseFloat "abc" == Nothing)
 
 
 -- # Dedent

@@ -3,6 +3,13 @@ import Std:Maybe (Just, Nothing)
 import Std:String (padLeft, substring, parseInt, length)
 
 
+-- # Builtins
+
+external dateTimeNow : () -> Int
+
+external dateTimeUtcOffset : () -> Int
+
+
 -- # Types
 
 -- | Absolute point in time (epoch milliseconds).

@@ -29,6 +29,8 @@ export type Response =
 -- # Server
 
 
+export external httpServe : Int -> (Request -> Response) -> Result () String
+
 export
 serve : Int -> (Request -> Response) -> Result () String
 serve = httpServe

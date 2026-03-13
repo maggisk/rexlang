@@ -297,6 +297,14 @@ type TypeAnnotation struct {
 	Type TySyntax
 }
 
+// External declarations — functions implemented in a host language (Go, JS).
+// The type is checked, but no Rex body exists.
+type ExternalDecl struct {
+	Name     string
+	Type     TySyntax
+	Exported bool
+}
+
 // Implement exprNode for all expression types
 func (IntLit) exprNode()         {}
 func (FloatLit) exprNode()       {}
@@ -326,6 +334,7 @@ func (ImplDecl) exprNode()       {}
 func (TestDecl) exprNode()       {}
 func (Assert) exprNode()         {}
 func (TypeAnnotation) exprNode() {}
+func (ExternalDecl) exprNode()   {}
 func (RecordCreate) exprNode()   {}
 func (FieldAccess) exprNode()    {}
 func (RecordUpdate) exprNode()   {}

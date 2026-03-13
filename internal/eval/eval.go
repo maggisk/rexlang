@@ -1082,6 +1082,10 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 						exports[e.Name] = true
 					}
 				}
+			case ast.ExternalDecl:
+				if e.Exported {
+					exports[e.Name] = true
+				}
 			case ast.TraitDecl:
 				if e.Exported {
 					for _, m := range e.Methods {
@@ -1299,6 +1303,14 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 	case ast.TypeAnnotation:
 		return VUnit{}, env, nil
 
+	case ast.ExternalDecl:
+		// The builtin should already be in env (injected by BuiltinsForModule).
+		// If not, it's only available via compilation.
+		if _, ok := env[e.Name]; !ok {
+			return nil, nil, runtimeErr("external function '%s' is not available in the interpreter (compile to use)", e.Name)
+		}
+		return VUnit{}, env, nil
+
 	case ast.LetRec:
 		if e.InExpr == nil {
 			sharedEnv := env.Clone()
@@ -1393,7 +1405,7 @@ func ValidateToplevel(exprs []ast.Expr) error {
 		switch expr.(type) {
 		case ast.Let, ast.LetPat, ast.LetRec, ast.TypeDecl,
 			ast.TraitDecl, ast.ImplDecl, ast.Import, ast.Export,
-			ast.TestDecl, ast.TypeAnnotation:
+			ast.TestDecl, ast.TypeAnnotation, ast.ExternalDecl:
 			// OK
 		default:
 			return fmt.Errorf("bare expression at top level — only declarations (name = ..., type, trait, impl, import, export, test) are allowed")
