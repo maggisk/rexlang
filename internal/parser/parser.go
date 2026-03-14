@@ -156,11 +156,37 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 		}
 		if p.peek().Kind == lexer.TokDot {
 			if isUppercase(name) {
-				// Module access: M.foo
+				// Module access: M.foo or M.Type { ... } (qualified record create)
 				p.advance()
 				field, err := p.expectIdent()
 				if err != nil {
 					return nil, err
+				}
+				// Qualified record create: M.RecordType { field = val, ... }
+				if isUppercase(field) && p.peek().Kind == lexer.TokLBrace {
+					p.advance() // consume '{'
+					var fields []ast.RecordFieldExpr
+					for p.peek().Kind != lexer.TokRBrace {
+						fname, err := p.expectIdent()
+						if err != nil {
+							return nil, err
+						}
+						if err := p.expect(lexer.TokEq); err != nil {
+							return nil, err
+						}
+						val, err := p.parseExpr()
+						if err != nil {
+							return nil, err
+						}
+						fields = append(fields, ast.RecordFieldExpr{Name: fname, Value: val})
+						if p.peek().Kind == lexer.TokComma {
+							p.advance()
+						}
+					}
+					if err := p.expect(lexer.TokRBrace); err != nil {
+						return nil, err
+					}
+					return ast.RecordCreate{TypeName: field, Fields: fields, Line: tok.Line}, nil
 				}
 				return ast.DotAccess{ModuleName: name, FieldName: field}, nil
 			}
