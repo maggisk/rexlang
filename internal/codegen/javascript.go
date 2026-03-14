@@ -14,7 +14,7 @@ import (
 )
 
 // EmitJS converts an IR program to JavaScript source code (browser target).
-func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
+func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, companionJS []string) (string, error) {
 	g := &jsGen{
 		buf:              &strings.Builder{},
 		typeEnv:          typeEnv,
@@ -26,6 +26,7 @@ func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 		usedBuiltins:     make(map[string]bool),
 		locals:           make(map[string]bool),
 		knownTypes:       map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
+		companionJS:      companionJS,
 	}
 	return g.emit(prog)
 }
@@ -83,8 +84,9 @@ type jsGen struct {
 
 	// track what features are used
 	usesConcurrency bool
-	usesJsFfi       bool // browser: Std:Js FFI primitives
+	usesJsFfi       bool              // browser: Std:Js FFI primitives
 	knownTypes      map[string]bool   // types defined in the program
+	companionJS     []string          // companion .browser.js file contents
 }
 
 func (g *jsGen) fresh() string {
@@ -130,6 +132,13 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 
 	// Emit runtime helpers
 	out.WriteString(g.emitRuntimeHelpers())
+
+	// Emit companion JS (package .browser.js files)
+	for _, js := range g.companionJS {
+		out.WriteString("// --- companion JS ---\n")
+		out.WriteString(js)
+		out.WriteString("\n")
+	}
 
 	// Emit trait dispatch functions
 	out.WriteString(g.emitTraitDispatchers())

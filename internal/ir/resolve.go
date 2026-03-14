@@ -18,8 +18,9 @@ import (
 
 // ImportInfo holds resolved module declarations and name mappings.
 type ImportInfo struct {
-	Decls   []ast.Expr        // module declarations (types, functions, etc.)
-	Aliases map[string]string // imported name → prefixed module name (e.g. "length" → "Std_List__length")
+	Decls     []ast.Expr        // module declarations (types, functions, etc.)
+	Aliases   map[string]string // imported name → prefixed module name (e.g. "length" → "Std_List__length")
+	JsSources []string          // companion .browser.js file contents for external FFI
 }
 
 // ModulePrefix converts a module path to a valid identifier prefix.
@@ -63,8 +64,9 @@ func ResolveImports(exprs []ast.Expr, srcRoot string, target string, packageRoot
 		return nil, err
 	}
 	return &ImportInfo{
-		Decls:   r.decls,
-		Aliases: r.aliases,
+		Decls:     r.decls,
+		Aliases:   r.aliases,
+		JsSources: r.jsSources,
 	}, nil
 }
 
@@ -77,6 +79,7 @@ type resolver struct {
 	packageRoots map[string]string // package name → abs path to package src/
 	target       string            // compilation target ("native", "browser", etc.)
 	stack        []string          // for circular import detection
+	jsSources    []string          // companion .browser.js file contents
 }
 
 func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
@@ -115,6 +118,11 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 			// Skip modules we can't load (e.g., IO which is builtins-only)
 			r.stack = r.stack[:len(r.stack)-1]
 			continue
+		}
+
+		// Check for companion .browser.js file
+		if r.target == "browser" {
+			r.loadCompanionJS(imp.Module)
 		}
 
 		modExprs, err := parser.Parse(src)
@@ -401,4 +409,37 @@ func (r *resolver) loadSource(module string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+// loadCompanionJS checks for a .browser.js companion file for the given module
+// and adds its contents to the jsSources list.
+func (r *resolver) loadCompanionJS(module string) {
+	if strings.Contains(module, ":") {
+		parts := strings.SplitN(module, ":", 2)
+		namespace, name := parts[0], parts[1]
+		if namespace == "Std" {
+			// Stdlib — companion JS is embedded, handled by codegen preamble
+			return
+		}
+		// Package module
+		pkgSrc, ok := r.packageRoots[namespace]
+		if !ok {
+			return
+		}
+		modPath := strings.ReplaceAll(name, ".", "/")
+		jsPath := pkgSrc + "/" + modPath + ".browser.js"
+		if data, err := os.ReadFile(jsPath); err == nil {
+			r.jsSources = append(r.jsSources, string(data))
+		}
+	} else {
+		// User module
+		if r.srcRoot == "" {
+			return
+		}
+		modPath := strings.ReplaceAll(module, ".", "/")
+		jsPath := r.srcRoot + "/" + modPath + ".browser.js"
+		if data, err := os.ReadFile(jsPath); err == nil {
+			r.jsSources = append(r.jsSources, string(data))
+		}
+	}
 }

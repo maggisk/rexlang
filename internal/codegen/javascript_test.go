@@ -35,7 +35,7 @@ func compileJSCode(t *testing.T, code string) string {
 		t.Fatalf("lower error: %v", err)
 	}
 	prog = ir.Shake(prog)
-	jsSrc, err := EmitJS(prog, typeEnv)
+	jsSrc, err := EmitJS(prog, typeEnv, nil)
 	if err != nil {
 		t.Fatalf("EmitJS error: %v", err)
 	}
