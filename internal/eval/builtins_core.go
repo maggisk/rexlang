@@ -876,17 +876,18 @@ func jsonValToRex(v interface{}) (Value, error) {
 // Process / actor builtins
 // ---------------------------------------------------------------------------
 
-func makeReceiveBuiltin(mb *Mailbox) Value {
-	return makeBuiltin("receive", func(_ Value) (Value, error) {
-		return mb.Receive(), nil
-	})
-}
-
-// ProcessBuiltins returns the five process primitives bound to the given process pid.
-func ProcessBuiltins(selfPid VPid) map[string]Value {
+// ProcessBuiltins returns the process primitives.
+func ProcessBuiltins(_ VPid) map[string]Value {
 	return map[string]Value{
-		"self":    selfPid,
-		"receive": makeReceiveBuiltin(selfPid.Mailbox),
+		// receive : Pid a -> a — read from a pid's mailbox (blocks until message arrives)
+		"receive": makeBuiltin("receive", func(pidV Value) (Value, error) {
+			pid, ok := pidV.(VPid)
+			if !ok {
+				return nil, runtimeErr("receive: expected Pid, got %s", ValueToString(pidV))
+			}
+			return pid.Mailbox.Receive(), nil
+		}),
+		// send : Pid a -> a -> () — send a message to a pid
 		"send": curried2("send", func(pidV, msgV Value) (Value, error) {
 			pid, ok := pidV.(VPid)
 			if !ok {
@@ -895,33 +896,30 @@ func ProcessBuiltins(selfPid VPid) map[string]Value {
 			pid.Mailbox.Send(msgV)
 			return VUnit{}, nil
 		}),
+		// spawn : (Pid a -> b) -> Pid a — spawn a new actor, passing it its own pid
 		"spawn": makeBuiltin("spawn", func(fnV Value) (Value, error) {
-			cl, ok := fnV.(VClosure)
-			if !ok {
-				return nil, runtimeErr("spawn: expected closure, got %s", ValueToString(fnV))
-			}
 			mb := newMailbox()
 			pid := VPid{Mailbox: mb, ID: mb.id}
-			procEnv := cl.Env.
-				Extend("self", pid).
-				Extend("receive", makeReceiveBuiltin(mb)).
-				Extend(cl.Param, VUnit{})
 			go func() {
-				Eval(procEnv, cl.Body) //nolint:errcheck
+				ApplyValue(fnV, pid) //nolint:errcheck
 			}()
 			return pid, nil
 		}),
+		// call : Pid b -> (Pid a -> b) -> a — synchronous request-reply
 		"call": curried2("call", func(pidV, makeMsgV Value) (Value, error) {
 			pid, ok := pidV.(VPid)
 			if !ok {
 				return nil, runtimeErr("call: expected Pid, got %s", ValueToString(pidV))
 			}
-			msg, err := ApplyValue(makeMsgV, selfPid)
+			// Create a temporary reply mailbox
+			replyMb := newMailbox()
+			replyPid := VPid{Mailbox: replyMb, ID: replyMb.id}
+			msg, err := ApplyValue(makeMsgV, replyPid)
 			if err != nil {
 				return nil, err
 			}
 			pid.Mailbox.Send(msg)
-			return selfPid.Mailbox.Receive(), nil
+			return replyMb.Receive(), nil
 		}),
 	}
 }
@@ -974,9 +972,7 @@ func BuiltinsForModule(name string, programArgs []string) map[string]Value {
 			result[k] = v
 		}
 	case "Process":
-		mb := newMailbox()
-		pid := VPid{Mailbox: mb, ID: mb.id}
-		for k, v := range ProcessBuiltins(pid) {
+		for k, v := range ProcessBuiltins(VPid{}) {
 			result[k] = v
 		}
 	case "Parallel":

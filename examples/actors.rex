@@ -7,14 +7,14 @@
 
 import Std:IO (println)
 import Std:String (toString)
-import Std:Process (spawn, send, receive, self, call)
+import Std:Process (spawn, send, receive, call)
 
 type Msg = Inc | Get (Pid Int) | Stop
 
 counter =
-    spawn \_ ->
+    spawn \me ->
         let rec loop n =
-            match receive ()
+            match receive me
                 when Inc ->
                     loop (n + 1)
                 when Get replyTo ->

@@ -573,15 +573,15 @@ main _ =
 func TestGoSpawnSendReceive(t *testing.T) {
 	_, stdout := runGo(t, `
 import Std:IO (println)
-import Std:Process (spawn, send, receive, self)
+import Std:Process (spawn, send, receive, call)
 
 main _ =
-    let me = self
-    in let pid = spawn \_ ->
-        let msg = receive ()
-        in send me msg
-    in let _ = send pid "hello from actor"
-    in let reply = receive ()
+    let pid = spawn \me ->
+        let msg = receive me
+        in match msg
+            when (replyTo, payload) ->
+                send replyTo payload
+    in let reply = call pid (\replyTo -> (replyTo, "hello from actor"))
     in let _ = println reply
     in 0
 `)
@@ -592,11 +592,11 @@ main _ =
 
 func TestGoCall(t *testing.T) {
 	code, _ := runGo(t, `
-import Std:Process (spawn, send, receive, self, call)
+import Std:Process (spawn, send, receive, call)
 
 main _ =
-    let actor = spawn \_ ->
-        let msg = receive ()
+    let actor = spawn \me ->
+        let msg = receive me
         in match msg
             when (replyTo, n) ->
                 send replyTo (n + 1)

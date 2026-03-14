@@ -1,26 +1,28 @@
-export external spawn : (() -> b) -> Pid a
+export external spawn : (Pid a -> b) -> Pid a
 
 export external send : Pid a -> a -> ()
 
-export external receive : () -> a
-
-export external self : Pid a
+export external receive : Pid a -> a
 
 export external call : Pid b -> (Pid a -> b) -> a
 
 test "spawn and call" =
-    let pid = spawn \_ ->
-            let caller = receive ()
-            in send caller 42
-    let n = call pid (\me -> me)
-    assert (n == 42)
+    let pid = spawn \me ->
+            let (replyPid, value) = receive me
+            in send replyPid (value * 2)
+    in let result = call pid (\replyPid -> (replyPid, 21))
+    in assert (result == 42)
 
 test "send and receive" =
-    -- Capture self before spawning so the goroutine can reply to us.
-    let me = self
-    let pid = spawn \_ ->
-            let msg = receive ()
-            in send me msg
-    let _ = send pid 99
-    let reply = receive ()
-    assert (reply == 99)
+    let pid = spawn \me ->
+            let rec loop total =
+                    let (replyPid, n) = receive me
+                    in if n == 0 then
+                        send replyPid total
+                    else
+                        loop (total + n)
+            in loop 0
+    in let _ = send pid (spawn (\_ -> ()), 10)
+    in let _ = send pid (spawn (\_ -> ()), 20)
+    in let result = call pid (\replyPid -> (replyPid, 0))
+    in assert (result == 30)

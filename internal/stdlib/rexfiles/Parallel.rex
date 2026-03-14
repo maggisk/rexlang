@@ -13,14 +13,13 @@ export
 pmap : (a -> b) -> [a] -> [b]
 pmap f lst =
     let pids = map (\x ->
-        spawn \_ ->
-            let
-                result = f x
-                caller = receive ()
+        spawn \me ->
+            let result = f x
+            in let caller = receive me
             in send caller result
     ) lst
     in
-    pids |> map (\pid -> call pid (\me -> me))
+    pids |> map (\pid -> call pid (\replyPid -> replyPid))
 
 test "pmap preserves order" =
     let result = pmap (\x -> x * 2) [1, 2, 3, 4, 5]
@@ -51,14 +50,13 @@ pmapN n f lst =
                 take size l :: chunks (drop size l)
     in
     let pids = map (\chunk ->
-        spawn \_ ->
-            let
-                result = map f chunk
-                caller = receive ()
+        spawn \me ->
+            let result = map f chunk
+            in let caller = receive me
             in send caller result
     ) (chunks lst)
     in
-    pids |> map (\pid -> call pid (\me -> me)) |> concat
+    pids |> map (\pid -> call pid (\replyPid -> replyPid)) |> concat
 
 test "pmapN preserves order" =
     let result = pmapN 2 (\x -> x * 10) [1, 2, 3, 4, 5]

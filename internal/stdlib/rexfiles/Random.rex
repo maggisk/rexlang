@@ -135,9 +135,9 @@ type RngRequest
     | ReqFloat (Pid Float)
     | ReqBool (Pid Bool)
 
-rngActor = spawn \_ ->
+rngActor = spawn \me ->
     let rec loop rng =
-        match receive ()
+        match receive me
             when ReqInt lo hi replyPid ->
                 let
                     (n, rng2) = rngInt lo hi rng

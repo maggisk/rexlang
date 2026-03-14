@@ -560,15 +560,15 @@ main _ =
 func TestJSSpawnSendReceive(t *testing.T) {
 	_, stdout := runJS(t, `
 import Std:IO (println)
-import Std:Process (spawn, send, receive, self)
+import Std:Process (spawn, send, receive, call)
 
 main _ =
-    let me = self
-    in let pid = spawn \_ ->
-        let msg = receive ()
-        in send me msg
-    in let _ = send pid "hello from actor"
-    in let reply = receive ()
+    let pid = spawn \me ->
+        let msg = receive me
+        in match msg
+            when (replyTo, payload) ->
+                send replyTo payload
+    in let reply = call pid (\replyTo -> (replyTo, "hello from actor"))
     in let _ = println reply
     in 0
 `)
@@ -579,11 +579,11 @@ main _ =
 
 func TestJSCall(t *testing.T) {
 	code, _ := runJS(t, `
-import Std:Process (spawn, send, receive, self, call)
+import Std:Process (spawn, send, receive, call)
 
 main _ =
-    let actor = spawn \_ ->
-        let msg = receive ()
+    let actor = spawn \me ->
+        let msg = receive me
         in match msg
             when (replyTo, n) ->
                 send replyTo (n + 1)
@@ -597,15 +597,15 @@ main _ =
 func TestJSActorLoop(t *testing.T) {
 	_, stdout := runJS(t, `
 import Std:IO (println)
-import Std:Process (spawn, send, receive, self, call)
+import Std:Process (spawn, send, receive, call)
 import Std:String (toString)
 
 type Msg = Inc | Get (Pid Int) | Stop
 
 counter =
-    spawn \_ ->
+    spawn \me ->
         let rec loop n =
-            match receive ()
+            match receive me
                 when Inc ->
                     loop (n + 1)
                 when Get replyTo ->
