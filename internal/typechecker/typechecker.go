@@ -1589,6 +1589,15 @@ func (tc *TypeChecker) resolveTypeSig(node ast.TySyntax, typeDefs map[string]typ
 	switch n := node.(type) {
 	case ast.TyName:
 		name := n.Name
+		// Handle qualified type names: ModuleAlias.TypeName → look up the bare type name
+		if strings.Contains(name, ".") {
+			parts := strings.SplitN(name, ".", 2)
+			bareType := parts[1]
+			if t, ok := typeDefs[bareType]; ok {
+				return t, nil
+			}
+			return types.TCon{Name: bareType, Args: nil}, nil
+		}
 		lowercasePrims := map[string]types.Type{
 			"int": types.TInt, "float": types.TFloat,
 			"string": types.TString, "bool": types.TBool,

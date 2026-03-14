@@ -1568,6 +1568,22 @@ func (p *parser) parseTypeSigAtom() (ast.TySyntax, error) {
 	case lexer.TokIdent:
 		p.advance()
 		name := tok.Value.(string)
+		// Check for qualified type: ModuleAlias.TypeName (e.g., TI.Msg)
+		if p.peek().Kind == lexer.TokDot && p.pos < len(p.tokens) {
+			if next := p.tokens[p.pos]; next.Kind == lexer.TokDot {
+				if p.pos+1 < len(p.tokens) {
+					after := p.tokens[p.pos+1]
+					if after.Kind == lexer.TokIdent {
+						afterName := after.Value.(string)
+						if isUppercase(afterName) {
+							p.advance() // consume '.'
+							p.advance() // consume type name
+							return ast.TyName{Name: name + "." + afterName}, nil
+						}
+					}
+				}
+			}
+		}
 		if isUppercase(name) {
 			var args []ast.TySyntax
 			for p.isTypeSigAtomStart() {
