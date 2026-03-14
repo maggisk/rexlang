@@ -2427,6 +2427,11 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 				modPath := resolveUserModulePath(pkgSrc, name)
 				return nil, &types.TypeError{Msg: fmt.Sprintf("module not found: %s (looked for %s)", moduleName, modPath)}
 			}
+			// Temporarily set srcRoot to the package's src/ so inner imports
+			// resolve relative to the package, not the consumer.
+			prevSrcRoot := getSrcRoot()
+			SetSrcRoot(pkgSrc)
+			defer SetSrcRoot(prevSrcRoot)
 		}
 	} else {
 		// User module — resolve from src/
