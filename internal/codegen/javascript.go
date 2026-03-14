@@ -14,7 +14,7 @@ import (
 )
 
 // EmitJS converts an IR program to JavaScript source code (browser target).
-func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, companionJS []string) (string, error) {
+func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, jsBindings []ir.JsBinding) (string, error) {
 	g := &jsGen{
 		buf:              &strings.Builder{},
 		typeEnv:          typeEnv,
@@ -26,7 +26,7 @@ func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, companionJS []string)
 		usedBuiltins:     make(map[string]bool),
 		locals:           make(map[string]bool),
 		knownTypes:       map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
-		companionJS:      companionJS,
+		jsBindings:       jsBindings,
 	}
 	return g.emit(prog)
 }
@@ -86,7 +86,7 @@ type jsGen struct {
 	usesConcurrency bool
 	usesJsFfi       bool              // browser: Std:Js FFI primitives
 	knownTypes      map[string]bool   // types defined in the program
-	companionJS     []string          // companion .browser.js file contents
+	jsBindings      []ir.JsBinding    // companion JS file bindings
 }
 
 func (g *jsGen) fresh() string {
@@ -133,11 +133,9 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 	// Emit runtime helpers
 	out.WriteString(g.emitRuntimeHelpers())
 
-	// Emit companion JS (package .browser.js files)
-	for _, js := range g.companionJS {
-		out.WriteString("// --- companion JS ---\n")
-		out.WriteString(js)
-		out.WriteString("\n")
+	// Emit companion JS bindings (external FFI)
+	for _, b := range g.jsBindings {
+		fmt.Fprintf(out, "const %s = (() => {\n%s\n})();\n\n", b.MangledName, b.Source)
 	}
 
 	// Emit trait dispatch functions

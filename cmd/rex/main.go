@@ -762,7 +762,7 @@ func compileJSFile(path string) {
 
 	prog = ir.Shake(prog)
 
-	jsSrc, err := codegen.EmitJS(prog, typeEnv, importInfo.JsSources)
+	jsSrc, err := codegen.EmitJS(prog, typeEnv, importInfo.JsBindings)
 	if err != nil {
 		printErr("Codegen error", err)
 		os.Exit(1)

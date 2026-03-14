@@ -20,7 +20,13 @@ import (
 type ImportInfo struct {
 	Decls     []ast.Expr        // module declarations (types, functions, etc.)
 	Aliases   map[string]string // imported name → prefixed module name (e.g. "length" → "Std_List__length")
-	JsSources []string          // companion .browser.js file contents for external FFI
+	JsBindings []JsBinding      // companion .js file contents for external FFI
+}
+
+// JsBinding maps a mangled function name to its JS implementation source.
+type JsBinding struct {
+	MangledName string // e.g. "rex_trex_Html__refEq"
+	Source      string // contents of the .js file
 }
 
 // ModulePrefix converts a module path to a valid identifier prefix.
@@ -66,7 +72,7 @@ func ResolveImports(exprs []ast.Expr, srcRoot string, target string, packageRoot
 	return &ImportInfo{
 		Decls:     r.decls,
 		Aliases:   r.aliases,
-		JsSources: r.jsSources,
+		JsBindings: r.jsBindings,
 	}, nil
 }
 
@@ -79,7 +85,7 @@ type resolver struct {
 	packageRoots map[string]string // package name → abs path to package src/
 	target       string            // compilation target ("native", "browser", etc.)
 	stack        []string          // for circular import detection
-	jsSources    []string          // companion .browser.js file contents
+	jsBindings   []JsBinding       // companion .js file bindings
 }
 
 func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
@@ -120,15 +126,15 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 			continue
 		}
 
-		// Check for companion .browser.js file
-		if r.target == "browser" {
-			r.loadCompanionJS(imp.Module)
-		}
-
 		modExprs, err := parser.Parse(src)
 		if err != nil {
 			r.stack = r.stack[:len(r.stack)-1]
 			return fmt.Errorf("parse error in module %s: %w", imp.Module, err)
+		}
+
+		// Check for companion JS files for external declarations
+		if r.target == "browser" {
+			r.loadCompanionJS(imp.Module, modExprs)
 		}
 
 		// Recursively resolve this module's imports first (depth-first)
@@ -411,35 +417,51 @@ func (r *resolver) loadSource(module string) (string, error) {
 	return string(data), nil
 }
 
-// loadCompanionJS checks for a .browser.js companion file for the given module
-// and adds its contents to the jsSources list.
-func (r *resolver) loadCompanionJS(module string) {
+// loadCompanionJS scans module source for external declarations and looks for
+// per-function companion JS files: ModuleName.functionName.js
+// Each file's contents are wrapped in an IIFE and assigned to the mangled name.
+func (r *resolver) loadCompanionJS(module string, modExprs []ast.Expr) {
+	// Determine the source directory and module file prefix
+	var srcDir, modFilePrefix, prefix string
+
 	if strings.Contains(module, ":") {
 		parts := strings.SplitN(module, ":", 2)
 		namespace, name := parts[0], parts[1]
 		if namespace == "Std" {
-			// Stdlib — companion JS is embedded, handled by codegen preamble
-			return
+			return // stdlib builtins handled by codegen preamble
 		}
-		// Package module
 		pkgSrc, ok := r.packageRoots[namespace]
 		if !ok {
 			return
 		}
-		modPath := strings.ReplaceAll(name, ".", "/")
-		jsPath := pkgSrc + "/" + modPath + ".browser.js"
-		if data, err := os.ReadFile(jsPath); err == nil {
-			r.jsSources = append(r.jsSources, string(data))
-		}
+		srcDir = pkgSrc
+		modFilePrefix = strings.ReplaceAll(name, ".", "/")
+		prefix = ModulePrefix(module)
 	} else {
-		// User module
 		if r.srcRoot == "" {
 			return
 		}
-		modPath := strings.ReplaceAll(module, ".", "/")
-		jsPath := r.srcRoot + "/" + modPath + ".browser.js"
-		if data, err := os.ReadFile(jsPath); err == nil {
-			r.jsSources = append(r.jsSources, string(data))
+		srcDir = r.srcRoot
+		modFilePrefix = strings.ReplaceAll(module, ".", "/")
+		prefix = ModulePrefix(module)
+	}
+
+	// Scan for external declarations
+	for _, expr := range modExprs {
+		ext, ok := expr.(ast.ExternalDecl)
+		if !ok {
+			continue
 		}
+		// Look for ModuleName.functionName.js
+		jsPath := srcDir + "/" + modFilePrefix + "." + ext.Name + ".js"
+		data, err := os.ReadFile(jsPath)
+		if err != nil {
+			continue // no companion file — might be a builtin handled by codegen
+		}
+		mangledName := "rex_" + prefix + ext.Name
+		r.jsBindings = append(r.jsBindings, JsBinding{
+			MangledName: mangledName,
+			Source:      string(data),
+		})
 	}
 }
