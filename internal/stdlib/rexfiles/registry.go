@@ -1,14 +1,20 @@
 package rexfiles
 
-// Registry maps module name -> function name -> Go function (or constant value).
-// Each companion .go file exports a map; this var collects them all.
-var Registry = map[string]map[string]any{
-	"Bitwise":  BitwiseFFI,
-	"Math":     MathFFI,
-	"String":   StringFFI,
-	"IO":       IOFFI,
-	"Env":      EnvFFI,
-	"DateTime": DateTimeFFI,
-	"Parallel": ParallelFFI,
-	"Random":   RandomFFI,
+import "github.com/maggisk/rexlang/internal/eval"
+
+func init() {
+	eval.RegisterFFI("Bitwise", BitwiseFFI)
+	eval.RegisterFFI("Math", MathFFI)
+	eval.RegisterFFI("String", StringFFI)
+	eval.RegisterFFI("IO", IOFFI)
+	eval.RegisterFFI("Env", EnvFFI)
+	eval.RegisterFFI("DateTime", DateTimeFFI)
+	eval.RegisterFFI("Parallel", ParallelFFI)
+	eval.RegisterFFI("Random", RandomFFI)
+	eval.RegisterFFI("Process", ProcessFFI)
+	eval.RegisterFFI("List", ListFFI)
+	eval.RegisterFFI("Result", ResultFFI)
+	eval.RegisterFFI("Json", JsonFFI)
+	eval.RegisterFFI("Net", NetFFI)
+	eval.RegisterFFI("Http.Server", HttpServerFFI)
 }

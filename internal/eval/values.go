@@ -99,12 +99,12 @@ type Mailbox struct {
 	mu   sync.Mutex
 	cond *sync.Cond
 	msgs []Value
-	id   int64
+	ID int64
 }
 
-func newMailbox() *Mailbox {
+func NewMailbox() *Mailbox {
 	id := atomic.AddInt64(&pidCounter, 1)
-	mb := &Mailbox{id: id}
+	mb := &Mailbox{ID: id}
 	mb.cond = sync.NewCond(&mb.mu)
 	return mb
 }
@@ -164,7 +164,7 @@ type RuntimeError struct{ Msg string }
 
 func (e *RuntimeError) Error() string { return e.Msg }
 
-func runtimeErr(format string, args ...interface{}) error {
+func RuntimeErr(format string, args ...interface{}) error {
 	return &RuntimeError{Msg: fmt.Sprintf(format, args...)}
 }
 
@@ -411,7 +411,7 @@ func CheckStr(name string, v Value) (string, error) {
 	if s, ok := v.(VString); ok {
 		return s.V, nil
 	}
-	return "", runtimeErr("%s: expected string, got %s", name, ValueToString(v))
+	return "", RuntimeErr("%s: expected string, got %s", name, ValueToString(v))
 }
 
 // AsInt asserts v is a VInt.
@@ -419,7 +419,7 @@ func AsInt(v Value) (int, error) {
 	if i, ok := v.(VInt); ok {
 		return i.V, nil
 	}
-	return 0, runtimeErr("expected int, got %s", ValueToString(v))
+	return 0, RuntimeErr("expected int, got %s", ValueToString(v))
 }
 
 // AsFloat asserts v is a VFloat.
@@ -427,7 +427,7 @@ func AsFloat(v Value) (float64, error) {
 	if f, ok := v.(VFloat); ok {
 		return f.V, nil
 	}
-	return 0, runtimeErr("expected float, got %s", ValueToString(v))
+	return 0, RuntimeErr("expected float, got %s", ValueToString(v))
 }
 
 // AsBool asserts v is a VBool.
@@ -435,7 +435,7 @@ func AsBool(v Value) (bool, error) {
 	if b, ok := v.(VBool); ok {
 		return b.V, nil
 	}
-	return false, runtimeErr("expected bool, got %s", ValueToString(v))
+	return false, RuntimeErr("expected bool, got %s", ValueToString(v))
 }
 
 // RuntimeTypeName returns the runtime type name for trait dispatch.
@@ -470,7 +470,7 @@ func RuntimeTypeName(v Value, env Env) (string, error) {
 				}
 			}
 		}
-		return "", runtimeErr("no trait dispatch for constructor %s (type unknown)", val.Name)
+		return "", RuntimeErr("no trait dispatch for constructor %s (type unknown)", val.Name)
 	}
-	return "", runtimeErr("no trait dispatch for %s", ValueToString(v))
+	return "", RuntimeErr("no trait dispatch for %s", ValueToString(v))
 }

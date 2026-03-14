@@ -5,38 +5,57 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/maggisk/rexlang/internal/eval"
 )
 
 var StringFFI = map[string]any{
-		"length":       String_length,
-		"toUpper":      String_toUpper,
-		"toLower":      String_toLower,
-		"trim":         String_trim,
-		"trimLeft":     String_trimLeft,
-		"trimRight":    String_trimRight,
-		"split":        String_split,
-		"join":         String_join,
-		"contains":     String_contains,
-		"startsWith":   String_startsWith,
-		"endsWith":     String_endsWith,
-		"charAt":       String_charAt,
-		"substring":    String_substring,
-		"indexOf":      String_indexOf,
-		"replace":      String_replace,
-		"take":         String_take,
-		"drop":         String_drop,
-		"repeat":       String_repeat,
-		"padLeft":      String_padLeft,
-		"padRight":     String_padRight,
-		"words":        String_words,
-		"lines":        String_lines,
-		"charCode":     String_charCode,
-		"fromCharCode": String_fromCharCode,
-		"parseInt":     String_parseInt,
-		"parseFloat":   String_parseFloat,
-		"reverse":      String_reverse,
-		"toList":       String_toList,
-		"fromList":     String_fromList,
+	"length":       String_length,
+	"toUpper":      String_toUpper,
+	"toLower":      String_toLower,
+	"trim":         String_trim,
+	"trimLeft":     String_trimLeft,
+	"trimRight":    String_trimRight,
+	"split":        String_split,
+	"join":         String_join,
+	"contains":     String_contains,
+	"startsWith":   String_startsWith,
+	"endsWith":     String_endsWith,
+	"charAt":       String_charAt,
+	"substring":    String_substring,
+	"indexOf":      String_indexOf,
+	"replace":      String_replace,
+	"take":         String_take,
+	"drop":         String_drop,
+	"repeat":       String_repeat,
+	"padLeft":      String_padLeft,
+	"padRight":     String_padRight,
+	"words":        String_words,
+	"lines":        String_lines,
+	"charCode":     String_charCode,
+	"fromCharCode": String_fromCharCode,
+	"parseInt":     String_parseInt,
+	"parseFloat":   String_parseFloat,
+	"reverse":      String_reverse,
+	"toList":       String_toList,
+	"fromList":     String_fromList,
+	// toString is polymorphic — handles multiple value types
+	"toString": eval.MakeBuiltin("toString", func(v eval.Value) (eval.Value, error) {
+		switch val := v.(type) {
+		case eval.VInt:
+			return eval.VString{V: fmt.Sprintf("%d", val.V)}, nil
+		case eval.VFloat:
+			return eval.VString{V: eval.FloatToStr(val.V)}, nil
+		case eval.VBool:
+			if val.V {
+				return eval.VString{V: "true"}, nil
+			}
+			return eval.VString{V: "false"}, nil
+		case eval.VString:
+			return v, nil
+		}
+		return nil, &eval.RuntimeError{Msg: "toString: cannot convert " + eval.ValueToString(v)}
+	}),
 }
 
 func String_length(s string) int       { return utf8.RuneCountInString(s) }
@@ -46,8 +65,8 @@ func String_trim(s string) string      { return strings.TrimSpace(s) }
 func String_trimLeft(s string) string  { return strings.TrimLeft(s, " \t\n\r") }
 func String_trimRight(s string) string { return strings.TrimRight(s, " \t\n\r") }
 
-func String_split(sep, s string) []string     { return strings.Split(s, sep) }
-func String_join(sep string, lst []string) string { return strings.Join(lst, sep) }
+func String_split(sep, s string) []string         { return strings.Split(s, sep) }
+func String_join(sep string, lst []string) string  { return strings.Join(lst, sep) }
 
 func String_contains(sub, s string) bool          { return strings.Contains(s, sub) }
 func String_startsWith(prefix, s string) bool     { return strings.HasPrefix(s, prefix) }

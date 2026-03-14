@@ -3,16 +3,34 @@ package eval
 import (
 	"fmt"
 	"reflect"
-
-	"github.com/maggisk/rexlang/internal/stdlib/rexfiles"
 )
 
 var errorType = reflect.TypeOf((*error)(nil)).Elem()
+
+// FFIRegistry maps module name -> function name -> Go function (or eval.Value).
+// Companion .go files in rexfiles/ register into this via init().
+var FFIRegistry = map[string]map[string]any{}
+
+// RegisterFFI registers Go FFI functions for a stdlib module.
+func RegisterFFI(module string, fns map[string]any) {
+	if existing, ok := FFIRegistry[module]; ok {
+		for k, v := range fns {
+			existing[k] = v
+		}
+	} else {
+		FFIRegistry[module] = fns
+	}
+}
 
 // wrapGoFunction wraps a Go function (or constant) as an eval.Value.
 // For functions, it generates curried wrappers based on the Go signature.
 // Constants (non-function values) are converted directly.
 func wrapGoFunction(name string, fn any) Value {
+	// If it's already a Value (pre-wrapped builtin), return directly
+	if v, ok := fn.(Value); ok {
+		return v
+	}
+
 	rv := reflect.ValueOf(fn)
 	rt := rv.Type()
 
@@ -46,7 +64,7 @@ func wrapGoFunction(name string, fn any) Value {
 	}
 
 	if numIn == 0 {
-		return makeBuiltin(name, func(_ Value) (Value, error) {
+		return MakeBuiltin(name, func(_ Value) (Value, error) {
 			return callFn(nil)
 		})
 	}
@@ -61,7 +79,7 @@ func curryN(name string, arity int, callFn func([]Value) (Value, error)) Value {
 		if len(collected) > 0 {
 			suffix = fmt.Sprintf("$%d", len(collected))
 		}
-		return makeBuiltin(name+suffix, func(v Value) (Value, error) {
+		return MakeBuiltin(name+suffix, func(v Value) (Value, error) {
 			args := append(collected[:len(collected):len(collected)], v)
 			if remaining == 1 {
 				return callFn(args)
@@ -177,9 +195,9 @@ func convertGoResults(ft reflect.Type, results []reflect.Value, hasError bool) (
 	return VTuple{Items: items}, nil
 }
 
-// loadRegisteredBuiltins loads auto-discovered builtins from rexfiles.Registry.
+// loadRegisteredBuiltins loads auto-discovered builtins from FFIRegistry.
 func loadRegisteredBuiltins(moduleName string, dest map[string]Value) {
-	fns, ok := rexfiles.Registry[moduleName]
+	fns, ok := FFIRegistry[moduleName]
 	if !ok {
 		return
 	}

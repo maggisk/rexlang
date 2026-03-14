@@ -5,6 +5,7 @@ import "os"
 var EnvFFI = map[string]any{
 	"getEnv":   Env_getEnv,
 	"getEnvOr": Env_getEnvOr,
+	// "args" is special — needs programArgs, handled in BuiltinsForModule
 }
 
 func Env_getEnv(name string) *string {

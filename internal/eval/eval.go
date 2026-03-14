@@ -55,7 +55,7 @@ func ApplyValue(fn, arg Value) (Value, error) {
 			AccArgs:    newAcc,
 		}, nil
 	}
-	return nil, runtimeErr("cannot apply %s as a function", ValueToString(fn))
+	return nil, RuntimeErr("cannot apply %s as a function", ValueToString(fn))
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +105,7 @@ func evalBinop(op string, l, r Value) (Value, error) {
 		if a, ok := l.(VInt); ok {
 			if b, ok := r.(VInt); ok {
 				if b.V == 0 {
-					return nil, runtimeErr("division by zero")
+					return nil, RuntimeErr("division by zero")
 				}
 				return VInt{V: a.V / b.V}, nil
 			}
@@ -119,7 +119,7 @@ func evalBinop(op string, l, r Value) (Value, error) {
 		if a, ok := l.(VInt); ok {
 			if b, ok := r.(VInt); ok {
 				if b.V == 0 {
-					return nil, runtimeErr("modulo by zero")
+					return nil, RuntimeErr("modulo by zero")
 				}
 				return VInt{V: a.V % b.V}, nil
 			}
@@ -238,7 +238,7 @@ func evalBinop(op string, l, r Value) (Value, error) {
 			return VList{Items: newItems}, nil
 		}
 	}
-	return nil, runtimeErr("type error: %s %s %s", ValueToString(l), sym, ValueToString(r))
+	return nil, RuntimeErr("type error: %s %s %s", ValueToString(l), sym, ValueToString(r))
 }
 
 // ---------------------------------------------------------------------------
@@ -395,11 +395,11 @@ func applyRecordUpdate(rec VRecord, path []string, value Value) (VRecord, error)
 	}
 	nested, ok := rec.Fields[path[0]]
 	if !ok {
-		return rec, runtimeErr("record '%s' has no field '%s'", rec.TypeName, path[0])
+		return rec, RuntimeErr("record '%s' has no field '%s'", rec.TypeName, path[0])
 	}
 	nestedRec, ok := nested.(VRecord)
 	if !ok {
-		return rec, runtimeErr("field '%s' is not a record", path[0])
+		return rec, RuntimeErr("field '%s' is not a record", path[0])
 	}
 	updated := cloneRecord(nestedRec)
 	updated, err := applyRecordUpdate(updated, path[1:], value)
@@ -422,7 +422,7 @@ func evalApply(env Env, fn Value, arg Value) (Value, error) {
 	case VBuiltin:
 		return f.Fn(arg)
 	default:
-		return nil, runtimeErr("cannot apply %T as function in tagged template", fn)
+		return nil, RuntimeErr("cannot apply %T as function in tagged template", fn)
 	}
 }
 
@@ -486,7 +486,7 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 		case ast.Var:
 			v, ok := env[e.Name]
 			if !ok {
-				return nil, runtimeErr("unbound variable: %s", e.Name)
+				return nil, RuntimeErr("unbound variable: %s", e.Name)
 			}
 			return v, nil
 
@@ -501,7 +501,7 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			case VFloat:
 				return VFloat{V: -val.V}, nil
 			}
-			return nil, runtimeErr("type error: unary minus on %s", ValueToString(v))
+			return nil, RuntimeErr("type error: unary minus on %s", ValueToString(v))
 
 		case ast.Binop:
 			if e.Op == "And" {
@@ -623,7 +623,7 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 				key := fn.TraitName + ":" + typeName + ":" + fn.MethodName
 				implFn, ok := instances[key]
 				if !ok {
-					return nil, runtimeErr("no %s instance for %s", fn.TraitName, typeName)
+					return nil, RuntimeErr("no %s instance for %s", fn.TraitName, typeName)
 				}
 				switch impl := implFn.(type) {
 				case VClosure:
@@ -641,10 +641,10 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 				case VBuiltin:
 					return impl.Fn(arg)
 				default:
-					return nil, runtimeErr("invalid trait impl for %s", key)
+					return nil, RuntimeErr("invalid trait impl for %s", key)
 				}
 			default:
-				return nil, runtimeErr("cannot apply %s as a function", ValueToString(funcV))
+				return nil, RuntimeErr("cannot apply %s as a function", ValueToString(funcV))
 			}
 
 		case ast.Match:
@@ -663,7 +663,7 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 				}
 			}
 			if !matched {
-				return nil, runtimeErr("match failure: no pattern matched")
+				return nil, RuntimeErr("match failure: no pattern matched")
 			}
 
 		case ast.ListLit:
@@ -695,7 +695,7 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			}
 			bindings, ok := matchPattern(e.Pat, value)
 			if !ok {
-				return nil, runtimeErr("let pattern match failure")
+				return nil, RuntimeErr("let pattern match failure")
 			}
 			if e.InExpr != nil {
 				env = env.ExtendMany(bindings)
@@ -722,11 +722,11 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			}
 			rec, ok := v.(VRecord)
 			if !ok {
-				return nil, runtimeErr("cannot access field '%s' on non-record value %s", e.Field, ValueToString(v))
+				return nil, RuntimeErr("cannot access field '%s' on non-record value %s", e.Field, ValueToString(v))
 			}
 			fv, ok := rec.Fields[e.Field]
 			if !ok {
-				return nil, runtimeErr("record '%s' has no field '%s'", rec.TypeName, e.Field)
+				return nil, RuntimeErr("record '%s' has no field '%s'", rec.TypeName, e.Field)
 			}
 			return fv, nil
 
@@ -737,7 +737,7 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			}
 			rec, ok := recVal.(VRecord)
 			if !ok {
-				return nil, runtimeErr("record update requires a record, got %s", ValueToString(recVal))
+				return nil, RuntimeErr("record update requires a record, got %s", ValueToString(recVal))
 			}
 			result := cloneRecord(rec)
 			for _, upd := range e.Updates {
@@ -756,11 +756,11 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			v := env[e.ModuleName]
 			mod, ok := v.(VModule)
 			if !ok {
-				return nil, runtimeErr("'%s' is not a module", e.ModuleName)
+				return nil, RuntimeErr("'%s' is not a module", e.ModuleName)
 			}
 			field, ok := mod.Env[e.FieldName]
 			if !ok {
-				return nil, runtimeErr("module '%s' does not export '%s'", e.ModuleName, e.FieldName)
+				return nil, RuntimeErr("module '%s' does not export '%s'", e.ModuleName, e.FieldName)
 			}
 			return field, nil
 
@@ -842,7 +842,7 @@ func Eval(env Env, expr ast.Expr) (Value, error) {
 			return nil, &AssertError{Msg: fmt.Sprintf("assert failed at line %d", e.Line)}
 
 		default:
-			return nil, runtimeErr("unknown AST node: %T", expr)
+			return nil, RuntimeErr("unknown AST node: %T", expr)
 		}
 	}
 }
@@ -990,7 +990,7 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 
 	// Circular import detection
 	if evalIsInImportStack(moduleName) {
-		return nil, runtimeErr("circular import: %s", evalFormatImportCycle(moduleName))
+		return nil, RuntimeErr("circular import: %s", evalFormatImportCycle(moduleName))
 	}
 	evalPushImport(moduleName)
 	defer evalPopImport()
@@ -1006,21 +1006,21 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 			var err error
 			src, err = stdlib.SourceForTarget(name, getEvalTarget())
 			if err != nil {
-				return nil, runtimeErr("unknown module: %s", moduleName)
+				return nil, RuntimeErr("unknown module: %s", moduleName)
 			}
-			moduleBuiltins = BuiltinsForModule(name, programArgs)
+			moduleBuiltins = BuiltinsForModule(name)
 		} else {
 			// Package import — resolve from package roots
 			pkgRoots := getEvalPackageRoots()
 			pkgSrc, ok := pkgRoots[namespace]
 			if !ok {
-				return nil, runtimeErr("unknown package '%s' in '%s' (not in rex.toml?)", namespace, moduleName)
+				return nil, RuntimeErr("unknown package '%s' in '%s' (not in rex.toml?)", namespace, moduleName)
 			}
 			var err error
 			src, err = loadUserModuleSource(pkgSrc, name, getEvalTarget())
 			if err != nil {
 				modPath := resolveUserModulePath(pkgSrc, name)
-				return nil, runtimeErr("module not found: %s (looked for %s)", moduleName, modPath)
+				return nil, RuntimeErr("module not found: %s (looked for %s)", moduleName, modPath)
 			}
 			// Temporarily set srcRoot to the package's src/ so inner imports
 			// resolve relative to the package, not the consumer.
@@ -1032,13 +1032,13 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 		// User module — resolve from src/
 		root := getEvalSrcRoot()
 		if root == "" {
-			return nil, runtimeErr("user module import '%s' requires a src/ directory", moduleName)
+			return nil, RuntimeErr("user module import '%s' requires a src/ directory", moduleName)
 		}
 		var err error
 		src, err = loadUserModuleSource(root, moduleName, getEvalTarget())
 		if err != nil {
 			modPath := resolveUserModulePath(root, moduleName)
-			return nil, runtimeErr("module not found: %s (looked for %s)", moduleName, modPath)
+			return nil, RuntimeErr("module not found: %s (looked for %s)", moduleName, modPath)
 		}
 	}
 
@@ -1107,7 +1107,7 @@ func loadModule(moduleName string, programArgs []string) (*moduleResult, error) 
 	}
 	for name := range exports {
 		if _, ok := env[name]; !ok {
-			return nil, runtimeErr("module '%s' exports undefined name(s): %s", moduleName, name)
+			return nil, RuntimeErr("module '%s' exports undefined name(s): %s", moduleName, name)
 		}
 	}
 	result := &moduleResult{env: env, exports: exports}
@@ -1206,7 +1206,7 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 			}
 			bindings, ok := matchPattern(e.Pat, value)
 			if !ok {
-				return nil, nil, runtimeErr("let pattern match failure")
+				return nil, nil, RuntimeErr("let pattern match failure")
 			}
 			return value, env.ExtendMany(bindings), nil
 		}
@@ -1255,7 +1255,7 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 		}
 		for _, name := range e.Names {
 			if !mod.exports[name] {
-				return nil, nil, runtimeErr("'%s' is not exported by module '%s'", name, e.Module)
+				return nil, nil, RuntimeErr("'%s' is not exported by module '%s'", name, e.Module)
 			}
 			newEnv[name] = mod.env[name]
 		}
@@ -1312,7 +1312,7 @@ func EvalToplevel(env Env, expr ast.Expr, programArgs []string) (Value, Env, err
 		// The builtin should already be in env (injected by BuiltinsForModule).
 		// If not, it's only available via compilation.
 		if _, ok := env[e.Name]; !ok {
-			return nil, nil, runtimeErr("external function '%s' is not available in the interpreter (compile to use)", e.Name)
+			return nil, nil, RuntimeErr("external function '%s' is not available in the interpreter (compile to use)", e.Name)
 		}
 		return VUnit{}, env, nil
 

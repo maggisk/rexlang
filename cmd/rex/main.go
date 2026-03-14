@@ -21,6 +21,8 @@ import (
 	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/typechecker"
 	"github.com/maggisk/rexlang/internal/types"
+
+	_ "github.com/maggisk/rexlang/internal/stdlib/rexfiles" // registers stdlib FFI
 )
 
 // safeMode is set by the --safe flag; it promotes warnings (todo usage) to errors.
@@ -889,7 +891,7 @@ func runTests(path string, only string) (int, []eval.FailedTest) {
 	absPath, _ := filepath.Abs(path)
 	moduleName := stdlibModuleForPath(absPath)
 	if moduleName != "" {
-		extraBuiltins = eval.BuiltinsForModule(moduleName, nil)
+		extraBuiltins = eval.BuiltinsForModule(moduleName)
 		extraTypeEnv = typechecker.TypeEnvForModule(moduleName)
 	}
 

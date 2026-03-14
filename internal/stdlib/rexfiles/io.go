@@ -3,6 +3,8 @@ package rexfiles
 import (
 	"fmt"
 	"os"
+
+	"github.com/maggisk/rexlang/internal/eval"
 )
 
 var IOFFI = map[string]any{
@@ -12,6 +14,14 @@ var IOFFI = map[string]any{
 	"appendFile": IO_appendFile,
 	"fileExists": IO_fileExists,
 	"listDir":    IO_listDir,
+	"print": eval.MakeBuiltin("print", func(v eval.Value) (eval.Value, error) {
+		fmt.Print(eval.Display(v))
+		return v, nil
+	}),
+	"println": eval.MakeBuiltin("println", func(v eval.Value) (eval.Value, error) {
+		fmt.Println(eval.Display(v))
+		return v, nil
+	}),
 }
 
 func IO_readLine(prompt string) string {
