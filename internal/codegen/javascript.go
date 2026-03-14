@@ -509,7 +509,7 @@ function rex_spawn(f) {
   const pid = { ch: [], id: ++_pidCounter, _resume: null };
   const prevPid = _currentPid;
   _currentPid = pid;
-  f(null);
+  f(pid);
   _currentPid = prevPid;
   return pid;
 }
@@ -528,12 +528,11 @@ function rex_send(pid, msg) {
   return null;
 }
 
-function rex_receive_cps(handler) {
-  const self = _currentPid;
-  if (self.ch.length > 0) {
-    handler(self.ch.shift());
+function rex_receive_cps(pid, handler) {
+  if (pid.ch.length > 0) {
+    handler(pid.ch.shift());
   } else {
-    self._resume = handler;
+    pid._resume = handler;
   }
 }
 
@@ -694,11 +693,17 @@ func (g *jsGen) emitDLet(d ir.DLet) error {
 
 	// Function
 	g.wn("function %s(", jsName)
+	wildcardIdx := 0
 	for i, p := range fi.params {
 		if i > 0 {
 			g.buf.WriteString(", ")
 		}
-		g.buf.WriteString(jsVarName(p.name))
+		pname := p.name
+		if pname == "_" {
+			pname = fmt.Sprintf("_%d", wildcardIdx)
+			wildcardIdx++
+		}
+		g.buf.WriteString(jsVarName(pname))
 	}
 	g.buf.WriteString(") {\n")
 
@@ -725,11 +730,17 @@ func (g *jsGen) emitDLetRec(d ir.DLetRec) error {
 		}
 		jsName := jsFuncName(b.Name)
 		g.wn("function %s(", jsName)
+		wildcardIdx := 0
 		for i, p := range fi.params {
 			if i > 0 {
 				g.buf.WriteString(", ")
 			}
-			g.buf.WriteString(jsVarName(p.name))
+			pname := p.name
+			if pname == "_" {
+				pname = fmt.Sprintf("_%d", wildcardIdx)
+				wildcardIdx++
+			}
+			g.buf.WriteString(jsVarName(pname))
 		}
 		g.buf.WriteString(") {\n")
 
@@ -875,10 +886,13 @@ func (g *jsGen) emitExprStmt(expr ir.Expr, isReturn bool) error {
 		return g.emitCExprStmt(e.C, isReturn)
 
 	case ir.ELet:
-		// CPS transform for receive(): instead of blocking, set _resume callback
+		// CPS transform for receive(pid): instead of blocking, set _resume callback
 		if g.usesConcurrency && isReceiveCall(e.Bind) {
 			varName := jsVarName(e.Name)
-			g.w("rex_receive_cps((%s) => {", varName)
+			// Extract the pid argument from receive(pid)
+			app := e.Bind.(ir.CApp)
+			pidArg := g.atomStr(app.Arg)
+			g.w("rex_receive_cps(%s, (%s) => {", pidArg, varName)
 			g.indent++
 			g.locals[e.Name] = true
 			if err := g.emitExprStmt(e.Body, true); err != nil {
@@ -1256,10 +1270,9 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		g.buf.WriteString(", _msg))")
 		return nil
 	case "receive":
-		g.buf.WriteString("rex_getSelf().ch.shift()")
-		return nil
-	case "self":
-		g.buf.WriteString("rex_getSelf()")
+		// receive pid — read from pid's channel
+		g.emitAtom(c.Arg)
+		g.buf.WriteString(".ch.shift()")
 		return nil
 	case "call":
 		// call is curried: call pid fn → partial app
@@ -1857,10 +1870,8 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 		// Actor builtins as values
 		if g.usesConcurrency {
 			switch name {
-			case "self":
-				return "rex_getSelf()"
 			case "receive":
-				return "((_) => rex_getSelf().ch.shift())"
+				return "((pid) => pid.ch.shift())"
 			case "spawn":
 				return "((f) => rex_spawn(f))"
 			case "send":

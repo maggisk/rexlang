@@ -203,6 +203,12 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 		// (topNames). Re-exported builtins (e.g., println from IO.rex) keep
 		// their original names so codegen can handle them as builtins.
 		if isRoot {
+			if imp.Alias != "" {
+				// Qualified import: import Foo as F → F.bar → Foo__bar
+				for name := range topNames {
+					r.aliases[imp.Alias+"."+name] = prefix + name
+				}
+			}
 			for _, name := range imp.Names {
 				if topNames[name] {
 					r.aliases[name] = prefix + name
@@ -300,6 +306,12 @@ func renameRefs(expr ast.Expr, nameMap map[string]string) ast.Expr {
 	case ast.RecordCreate:
 		for i, f := range e.Fields {
 			e.Fields[i].Value = renameRefs(f.Value, nameMap)
+		}
+		return e
+	case ast.DotAccess:
+		qualName := e.ModuleName + "." + e.FieldName
+		if newName, ok := nameMap[qualName]; ok {
+			return ast.Var{Name: newName}
 		}
 		return e
 	case ast.FieldAccess:
