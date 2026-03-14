@@ -14,7 +14,7 @@ import (
 )
 
 // EmitJS converts an IR program to JavaScript source code (browser target).
-func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, jsBindings []ir.JsBinding) (string, error) {
+func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, jsBindings []ir.JsBinding, moduleMode string) (string, error) {
 	g := &jsGen{
 		buf:              &strings.Builder{},
 		typeEnv:          typeEnv,
@@ -27,6 +27,7 @@ func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, jsBindings []ir.JsBin
 		locals:           make(map[string]bool),
 		knownTypes:       map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
 		jsBindings:       jsBindings,
+		moduleMode:       moduleMode,
 	}
 	return g.emit(prog)
 }
@@ -87,6 +88,7 @@ type jsGen struct {
 	usesJsFfi       bool              // browser: Std:Js FFI primitives
 	knownTypes      map[string]bool   // types defined in the program
 	jsBindings      []ir.JsBinding    // companion JS file bindings
+	moduleMode      string            // module compilation mode
 }
 
 func (g *jsGen) fresh() string {
@@ -126,23 +128,22 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 	// Phase 1: analyze
 	g.analyze(prog)
 
-	// Phase 2: emit
-	out := &strings.Builder{}
-	out.WriteString("\"use strict\";\n\n")
+	// Phase 2: emit module body
+	body := &strings.Builder{}
 
 	// Emit runtime helpers
-	out.WriteString(g.emitRuntimeHelpers())
+	body.WriteString(g.emitRuntimeHelpers())
 
 	// Emit companion JS bindings (external FFI)
 	for _, b := range g.jsBindings {
-		fmt.Fprintf(out, "const %s = (() => {\n%s\n})();\n\n", b.MangledName, b.Source)
+		fmt.Fprintf(body, "const %s = (() => {\n%s\n})();\n\n", b.MangledName, b.Source)
 	}
 
 	// Emit trait dispatch functions
-	out.WriteString(g.emitTraitDispatchers())
+	body.WriteString(g.emitTraitDispatchers())
 
 	// Emit top-level declarations
-	g.buf = out
+	g.buf = body
 	for _, d := range prog.Decls {
 		if err := g.emitDecl(d); err != nil {
 			return "", err
@@ -152,10 +153,32 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 	// Emit trait dispatch functions (after all impls are collected)
 	g.emitAllDispatchers()
 
-	// Emit entry point
-	out.WriteString("\nrex_main(null);\n")
+	// Phase 3: wrap in module format
+	return g.wrapModule(body.String()), nil
+}
 
-	return out.String(), nil
+// wrapModule wraps the emitted JS body in the appropriate module format.
+func (g *jsGen) wrapModule(body string) string {
+	mode := g.moduleMode
+	if mode == "" {
+		mode = "global:Rex"
+	}
+
+	switch {
+	case mode == "esm":
+		return "\"use strict\";\n\n" + body + "\nexport function main() { return $main(null); }\n"
+
+	case mode == "cjs":
+		return "\"use strict\";\n\n" + body + "\nmodule.exports = { main: () => $main(null) };\n"
+
+	default:
+		// global or global:Name
+		name := "Rex"
+		if strings.HasPrefix(mode, "global:") {
+			name = strings.TrimPrefix(mode, "global:")
+		}
+		return fmt.Sprintf("const %s = (() => {\n\"use strict\";\n\n%s\nreturn { main: () => $main(null) };\n})();\n%s.main();\n", name, body, name)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -164,9 +187,9 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 
 func (g *jsGen) analyze(prog *ir.Program) {
 	// Register Prelude trait methods as builtins
-	g.traitMethodNames["show"] = "rex_display"
-	g.traitMethodNames["eq"] = "rex_eq"
-	g.traitMethodNames["compare"] = "rex_compare"
+	g.traitMethodNames["show"] = "$display"
+	g.traitMethodNames["eq"] = "$eq"
+	g.traitMethodNames["compare"] = "$compare"
 
 	// First pass: collect trait method names from DImpl declarations
 	for _, d := range prog.Decls {
@@ -295,8 +318,8 @@ func (g *jsGen) scanExpr(expr ir.Expr) {
 // Returns the short name (e.g. "jsGlobal") if it is, or "" if not.
 func jsFfiBuiltin(name string) string {
 	short := name
-	if strings.HasPrefix(name, "Std_Js__") {
-		short = name[len("Std_Js__"):]
+	if strings.HasPrefix(name, "Std$Js$") {
+		short = name[len("Std$Js$"):]
 	}
 	switch short {
 	case "jsGlobal", "jsGet", "jsSet", "jsCall", "jsNew", "jsCallback",
@@ -380,8 +403,8 @@ func (g *jsGen) scanCExpr(c ir.CExpr) {
 func (g *jsGen) emitRuntimeHelpers() string {
 	var b strings.Builder
 
-	// rex_eq: structural equality
-	b.WriteString(`function rex_eq(a, b) {
+	// $eq: structural equality
+	b.WriteString(`function $eq(a, b) {
   if (a === b) return true;
   if (a === null || b === null) return a === b;
   if (typeof a !== typeof b) return false;
@@ -390,17 +413,17 @@ func (g *jsGen) emitRuntimeHelpers() string {
       if (a.$tag !== b.$tag) return false;
       const ka = Object.keys(a), kb = Object.keys(b);
       if (ka.length !== kb.length) return false;
-      for (const k of ka) { if (k !== "$tag" && !rex_eq(a[k], b[k])) return false; }
+      for (const k of ka) { if (k !== "$tag" && !$eq(a[k], b[k])) return false; }
       return true;
     }
     if (Array.isArray(a) && Array.isArray(b)) {
       if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++) { if (!rex_eq(a[i], b[i])) return false; }
+      for (let i = 0; i < a.length; i++) { if (!$eq(a[i], b[i])) return false; }
       return true;
     }
     const ka = Object.keys(a), kb = Object.keys(b);
     if (ka.length !== kb.length) return false;
-    for (const k of ka) { if (!rex_eq(a[k], b[k])) return false; }
+    for (const k of ka) { if (!$eq(a[k], b[k])) return false; }
     return true;
   }
   return false;
@@ -408,8 +431,8 @@ func (g *jsGen) emitRuntimeHelpers() string {
 
 `)
 
-	// rex_compare: structural comparison
-	b.WriteString(`function rex_compare(a, b) {
+	// $compare: structural comparison
+	b.WriteString(`function $compare(a, b) {
   if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
   if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
   if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
@@ -418,87 +441,87 @@ func (g *jsGen) emitRuntimeHelpers() string {
 
 `)
 
-	// rex_display: convert any value to string
-	b.WriteString(`function rex_display(v) {
+	// $display: convert any value to string
+	b.WriteString(`function $display(v) {
   if (v === null) return "()";
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(v);
   if (typeof v === "string") return v;
   if (typeof v === "boolean") return v ? "true" : "false";
-  if (Array.isArray(v)) return "(" + v.map(rex_display).join(", ") + ")";
+  if (Array.isArray(v)) return "(" + v.map($display).join(", ") + ")";
   if (typeof v === "object") {
     if (v.$tag === "Cons") {
       const items = [];
       let cur = v;
-      while (cur !== null && cur.$tag === "Cons") { items.push(rex_display(cur.head)); cur = cur.tail; }
+      while (cur !== null && cur.$tag === "Cons") { items.push($display(cur.head)); cur = cur.tail; }
       return "[" + items.join(", ") + "]";
     }
     if (v.$tag === "Nil") return "[]";
     if (v.$tag !== undefined) {
       const fields = Object.keys(v).filter(k => k !== "$tag" && k !== "$type");
       if (fields.length === 0) return v.$tag;
-      return v.$tag + " " + fields.map(k => rex_display(v[k])).join(" ");
+      return v.$tag + " " + fields.map(k => $display(v[k])).join(" ");
     }
     const entries = Object.entries(v);
-    return "{ " + entries.map(([k, val]) => k + " = " + rex_display(val)).join(", ") + " }";
+    return "{ " + entries.map(([k, val]) => k + " = " + $display(val)).join(", ") + " }";
   }
   return String(v);
 }
 
 `)
 
-	// rex__apply: apply a function to an argument
-	b.WriteString(`function rex__apply(f, arg) {
+	// $$apply: apply a function to an argument
+	b.WriteString(`function $$apply(f, arg) {
   return f(arg);
 }
 
 `)
 
 	// Builtins
-	b.WriteString(`function rex_println(v) { console.log(rex_display(v)); return null; }
-function rex_print(v) { console.log(rex_display(v)); return null; }`)
+	b.WriteString(`function $println(v) { console.log($display(v)); return null; }
+function $print(v) { console.log($display(v)); return null; }`)
 	b.WriteString(`
-function rex_showInt(v) { return String(v); }
-function rex_showFloat(v) { return String(v); }
-function rex_not(v) { return !v; }
-function rex_error(msg) { throw new Error(typeof msg === "string" ? msg : rex_display(msg)); }
-function rex_todo(msg) { throw new Error("TODO: " + (typeof msg === "string" ? msg : rex_display(msg))); }
+function $showInt(v) { return String(v); }
+function $showFloat(v) { return String(v); }
+function $not(v) { return !v; }
+function $error(msg) { throw new Error(typeof msg === "string" ? msg : $display(msg)); }
+function $todo(msg) { throw new Error("TODO: " + (typeof msg === "string" ? msg : $display(msg))); }
 
 `)
 
 	// String builtins
-	b.WriteString(`function rex_stringLength(s) { return [...s].length; }
-function rex_toUpper(s) { return s.toUpperCase(); }
-function rex_toLower(s) { return s.toLowerCase(); }
-function rex_trim(s) { return s.trim(); }
-function rex_trimLeft(s) { return s.trimStart(); }
-function rex_trimRight(s) { return s.trimEnd(); }
-function rex_stringReverse(s) { return [...s].reverse().join(""); }
-function rex_split(sep, s) { return s.split(sep).reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
-function rex_join(sep, lst) {
+	b.WriteString(`function $stringLength(s) { return [...s].length; }
+function $toUpper(s) { return s.toUpperCase(); }
+function $toLower(s) { return s.toLowerCase(); }
+function $trim(s) { return s.trim(); }
+function $trimLeft(s) { return s.trimStart(); }
+function $trimRight(s) { return s.trimEnd(); }
+function $stringReverse(s) { return [...s].reverse().join(""); }
+function $split(sep, s) { return s.split(sep).reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
+function $join(sep, lst) {
   const items = [];
   let cur = lst;
   while (cur !== null && cur.$tag === "Cons") { items.push(cur.head); cur = cur.tail; }
   return items.join(sep);
 }
-function rex_contains(sub, s) { return s.includes(sub); }
-function rex_startsWith(pfx, s) { return s.startsWith(pfx); }
-function rex_endsWith(sfx, s) { return s.endsWith(sfx); }
-function rex_replace(from, to, s) { return s.split(from).join(to); }
-function rex_substring(start, end, s) { return [...s].slice(start, end).join(""); }
-function rex_repeat(n, s) { return s.repeat(n); }
-function rex_charAt(i, s) { const chars = [...s]; return i >= 0 && i < chars.length ? {$tag: "Just", _0: chars[i], $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }
-function rex_indexOf(sub, s) { const i = s.indexOf(sub); return i >= 0 ? {$tag: "Just", _0: i, $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }
-function rex_padLeft(n, ch, s) { return s.padStart(n, ch); }
-function rex_padRight(n, ch, s) { return s.padEnd(n, ch); }
-function rex_words(s) { const ws = s.trim().split(/\s+/).filter(x => x); return ws.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
-function rex_lines(s) { const ls = s.split(/\r?\n/); return ls.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
-function rex_charCode(s) { return s.codePointAt(0) || 0; }
-function rex_fromCharCode(n) { return String.fromCodePoint(n); }
-function rex_stringParseInt(s) { const n = parseInt(s, 10); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }
-function rex_stringParseFloat(s) { const n = parseFloat(s); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }
-function rex_stringToList(s) { return [...s].reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
-function rex_stringFromList(lst) { const chars = []; let cur = lst; while (cur !== null && cur.$tag === "Cons") { chars.push(cur.head); cur = cur.tail; } return chars.join(""); }
-function rex_toFloat(n) { return n; }
+function $contains(sub, s) { return s.includes(sub); }
+function $startsWith(pfx, s) { return s.startsWith(pfx); }
+function $endsWith(sfx, s) { return s.endsWith(sfx); }
+function $replace(from, to, s) { return s.split(from).join(to); }
+function $substring(start, end, s) { return [...s].slice(start, end).join(""); }
+function $repeat(n, s) { return s.repeat(n); }
+function $charAt(i, s) { const chars = [...s]; return i >= 0 && i < chars.length ? {$tag: "Just", _0: chars[i], $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }
+function $indexOf(sub, s) { const i = s.indexOf(sub); return i >= 0 ? {$tag: "Just", _0: i, $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }
+function $padLeft(n, ch, s) { return s.padStart(n, ch); }
+function $padRight(n, ch, s) { return s.padEnd(n, ch); }
+function $words(s) { const ws = s.trim().split(/\s+/).filter(x => x); return ws.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
+function $lines(s) { const ls = s.split(/\r?\n/); return ls.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
+function $charCode(s) { return s.codePointAt(0) || 0; }
+function $fromCharCode(n) { return String.fromCodePoint(n); }
+function $stringParseInt(s) { const n = parseInt(s, 10); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }
+function $stringParseFloat(s) { const n = parseFloat(s); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }
+function $stringToList(s) { return [...s].reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
+function $stringFromList(lst) { const chars = []; let cur = lst; while (cur !== null && cur.$tag === "Cons") { chars.push(cur.head); cur = cur.tail; } return chars.join(""); }
+function $toFloat(n) { return n; }
 
 `)
 
@@ -512,7 +535,7 @@ function rex_toFloat(n) { return n; }
 let _pidCounter = 0;
 let _currentPid = { ch: [], id: 0, _resume: null };
 
-function rex_spawn(f) {
+function $spawn(f) {
   const pid = { ch: [], id: ++_pidCounter, _resume: null };
   const prevPid = _currentPid;
   _currentPid = pid;
@@ -521,7 +544,7 @@ function rex_spawn(f) {
   return pid;
 }
 
-function rex_send(pid, msg) {
+function $send(pid, msg) {
   if (pid._resume) {
     const resume = pid._resume;
     pid._resume = null;
@@ -535,7 +558,7 @@ function rex_send(pid, msg) {
   return null;
 }
 
-function rex_receive_cps(pid, handler) {
+function $receive_cps(pid, handler) {
   if (pid.ch.length > 0) {
     handler(pid.ch.shift());
   } else {
@@ -543,7 +566,7 @@ function rex_receive_cps(pid, handler) {
   }
 }
 
-function rex_call(targetPid, msgFn) {
+function $call(targetPid, msgFn) {
   const replyPid = { ch: [], id: ++_pidCounter, _resume: null };
   const msg = msgFn(replyPid);
   if (targetPid._resume) {
@@ -559,7 +582,7 @@ function rex_call(targetPid, msgFn) {
   return replyPid.ch.shift();
 }
 
-function rex_getSelf() { return _currentPid; }
+function $getSelf() { return _currentPid; }
 
 `)
 	}
@@ -567,51 +590,51 @@ function rex_getSelf() { return _currentPid; }
 	// Js FFI runtime helpers
 	if g.usesJsFfi {
 		b.WriteString(`// Std:Js FFI helpers
-function rex_listToArray(lst) {
+function $listToArray(lst) {
   const arr = [];
   while (lst !== null && lst.$tag === "Cons") { arr.push(lst.head); lst = lst.tail; }
   return arr;
 }
-function rex_jsOk(v) { return {$tag: "Ok", $type: "Result", _0: v}; }
-function rex_jsErr(msg) { return {$tag: "Err", $type: "Result", _0: msg}; }
-function rex_jsGlobal(name) {
-  try { const v = globalThis[name]; if (v === undefined) return rex_jsErr("global not found: " + name); return rex_jsOk(v); }
-  catch(e) { return rex_jsErr(e.message); }
+function $jsOk(v) { return {$tag: "Ok", $type: "Result", _0: v}; }
+function $jsErr(msg) { return {$tag: "Err", $type: "Result", _0: msg}; }
+function $jsGlobal(name) {
+  try { const v = globalThis[name]; if (v === undefined) return $jsErr("global not found: " + name); return $jsOk(v); }
+  catch(e) { return $jsErr(e.message); }
 }
-function rex_jsGet(prop, obj) {
-  try { return rex_jsOk(obj[prop]); }
-  catch(e) { return rex_jsErr(e.message); }
+function $jsGet(prop, obj) {
+  try { return $jsOk(obj[prop]); }
+  catch(e) { return $jsErr(e.message); }
 }
-function rex_jsSet(prop, obj, val) {
-  try { obj[prop] = val; return rex_jsOk(null); }
-  catch(e) { return rex_jsErr(e.message); }
+function $jsSet(prop, obj, val) {
+  try { obj[prop] = val; return $jsOk(null); }
+  catch(e) { return $jsErr(e.message); }
 }
-function rex_jsCall(method, args, obj) {
-  try { return rex_jsOk(obj[method](...rex_listToArray(args))); }
-  catch(e) { return rex_jsErr(e.message); }
+function $jsCall(method, args, obj) {
+  try { return $jsOk(obj[method](...$listToArray(args))); }
+  catch(e) { return $jsErr(e.message); }
 }
-function rex_jsNew(name, args) {
-  try { const C = globalThis[name]; if (!C) return rex_jsErr("constructor not found: " + name); return rex_jsOk(new C(...rex_listToArray(args))); }
-  catch(e) { return rex_jsErr(e.message); }
+function $jsNew(name, args) {
+  try { const C = globalThis[name]; if (!C) return $jsErr("constructor not found: " + name); return $jsOk(new C(...$listToArray(args))); }
+  catch(e) { return $jsErr(e.message); }
 }
-function rex_jsCallback(f) {
+function $jsCallback(f) {
   return (function() { return f(arguments[0] !== undefined ? arguments[0] : null); });
 }
-function rex_jsToString(v) {
-  if (typeof v === "string") return rex_jsOk(v);
-  return rex_jsErr("expected string, got " + typeof v);
+function $jsToString(v) {
+  if (typeof v === "string") return $jsOk(v);
+  return $jsErr("expected string, got " + typeof v);
 }
-function rex_jsToInt(v) {
-  if (typeof v === "number" && Number.isInteger(v)) return rex_jsOk(v);
-  return rex_jsErr("expected integer, got " + typeof v);
+function $jsToInt(v) {
+  if (typeof v === "number" && Number.isInteger(v)) return $jsOk(v);
+  return $jsErr("expected integer, got " + typeof v);
 }
-function rex_jsToFloat(v) {
-  if (typeof v === "number") return rex_jsOk(v);
-  return rex_jsErr("expected number, got " + typeof v);
+function $jsToFloat(v) {
+  if (typeof v === "number") return $jsOk(v);
+  return $jsErr("expected number, got " + typeof v);
 }
-function rex_jsToBool(v) {
-  if (typeof v === "boolean") return rex_jsOk(v);
-  return rex_jsErr("expected boolean, got " + typeof v);
+function $jsToBool(v) {
+  if (typeof v === "boolean") return $jsOk(v);
+  return $jsErr("expected boolean, got " + typeof v);
 }
 
 `)
@@ -866,7 +889,7 @@ func (g *jsGen) emitDispatchFunction(name string, cases []jsImplCase) {
 			g.w(`if (typeof x === "object" && x !== null && x.$type === %q) return %s(x);`, c.typeName, c.funcName)
 		}
 	}
-	g.w(`throw new Error("No trait instance for: " + rex_display(x));`)
+	g.w(`throw new Error("No trait instance for: " + $display(x));`)
 	g.indent = 0
 	g.buf.WriteString("}\n\n")
 }
@@ -899,7 +922,7 @@ func (g *jsGen) emitExprStmt(expr ir.Expr, isReturn bool) error {
 			// Extract the pid argument from receive(pid)
 			app := e.Bind.(ir.CApp)
 			pidArg := g.atomStr(app.Arg)
-			g.w("rex_receive_cps(%s, (%s) => {", pidArg, varName)
+			g.w("$receive_cps(%s, (%s) => {", pidArg, varName)
 			g.indent++
 			g.locals[e.Name] = true
 			if err := g.emitExprStmt(e.Body, true); err != nil {
@@ -1079,117 +1102,117 @@ func (g *jsGen) emitStringBuiltin(funcName string, c ir.CApp) bool {
 	switch funcName {
 	// 1-arg string builtins
 	case "length":
-		g.buf.WriteString("rex_stringLength(")
+		g.buf.WriteString("$stringLength(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "toUpper":
-		g.buf.WriteString("rex_toUpper(")
+		g.buf.WriteString("$toUpper(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "toLower":
-		g.buf.WriteString("rex_toLower(")
+		g.buf.WriteString("$toLower(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "trim":
-		g.buf.WriteString("rex_trim(")
+		g.buf.WriteString("$trim(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "trimLeft":
-		g.buf.WriteString("rex_trimLeft(")
+		g.buf.WriteString("$trimLeft(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "trimRight":
-		g.buf.WriteString("rex_trimRight(")
+		g.buf.WriteString("$trimRight(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "reverse":
-		g.buf.WriteString("rex_stringReverse(")
+		g.buf.WriteString("$stringReverse(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "words":
-		g.buf.WriteString("rex_words(")
+		g.buf.WriteString("$words(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "lines":
-		g.buf.WriteString("rex_lines(")
+		g.buf.WriteString("$lines(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "charCode":
-		g.buf.WriteString("rex_charCode(")
+		g.buf.WriteString("$charCode(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "fromCharCode":
-		g.buf.WriteString("rex_fromCharCode(")
+		g.buf.WriteString("$fromCharCode(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "parseInt":
-		g.buf.WriteString("rex_stringParseInt(")
+		g.buf.WriteString("$stringParseInt(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "parseFloat":
-		g.buf.WriteString("rex_stringParseFloat(")
+		g.buf.WriteString("$stringParseFloat(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "toList":
-		g.buf.WriteString("rex_stringToList(")
+		g.buf.WriteString("$stringToList(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "fromList":
-		g.buf.WriteString("rex_stringFromList(")
+		g.buf.WriteString("$stringFromList(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	case "toFloat":
-		g.buf.WriteString("rex_toFloat(")
+		g.buf.WriteString("$toFloat(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 	// 2-arg curried string builtins
 	case "split":
-		g.buf.WriteString("((_s) => rex_split(")
+		g.buf.WriteString("((_s) => $split(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _s))")
 	case "join":
-		g.buf.WriteString("((_lst) => rex_join(")
+		g.buf.WriteString("((_lst) => $join(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _lst))")
 	case "contains":
-		g.buf.WriteString("((_s) => rex_contains(")
+		g.buf.WriteString("((_s) => $contains(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _s))")
 	case "startsWith":
-		g.buf.WriteString("((_s) => rex_startsWith(")
+		g.buf.WriteString("((_s) => $startsWith(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _s))")
 	case "endsWith":
-		g.buf.WriteString("((_s) => rex_endsWith(")
+		g.buf.WriteString("((_s) => $endsWith(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _s))")
 	case "indexOf":
-		g.buf.WriteString("((_s) => rex_indexOf(")
+		g.buf.WriteString("((_s) => $indexOf(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _s))")
 	case "charAt":
-		g.buf.WriteString("((_s) => rex_charAt(")
+		g.buf.WriteString("((_s) => $charAt(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _s))")
 	case "repeat":
-		g.buf.WriteString("((_s) => rex_repeat(")
+		g.buf.WriteString("((_s) => $repeat(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _s))")
 	case "substring":
-		g.buf.WriteString("((_end) => ((_s) => rex_substring(")
+		g.buf.WriteString("((_end) => ((_s) => $substring(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _end, _s)))")
 	// 3-arg curried string builtins
 	case "replace":
-		g.buf.WriteString("((_to) => ((_s) => rex_replace(")
+		g.buf.WriteString("((_to) => ((_s) => $replace(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _to, _s)))")
 	case "padLeft":
-		g.buf.WriteString("((_ch) => ((_s) => rex_padLeft(")
+		g.buf.WriteString("((_ch) => ((_s) => $padLeft(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _ch, _s)))")
 	case "padRight":
-		g.buf.WriteString("((_ch) => ((_s) => rex_padRight(")
+		g.buf.WriteString("((_ch) => ((_s) => $padRight(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _ch, _s)))")
 	default:
@@ -1215,42 +1238,42 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		g.emitAtom(c.Arg)
 		return nil
 	case "println":
-		g.buf.WriteString("rex_println(")
+		g.buf.WriteString("$println(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
 	case "print":
-		g.buf.WriteString("rex_print(")
+		g.buf.WriteString("$print(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
 	case "showInt":
-		g.buf.WriteString("rex_showInt(")
+		g.buf.WriteString("$showInt(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
 	case "showFloat":
-		g.buf.WriteString("rex_showFloat(")
+		g.buf.WriteString("$showFloat(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
 	case "toString":
-		g.buf.WriteString("rex_display(")
+		g.buf.WriteString("$display(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
 	case "not":
-		g.buf.WriteString("rex_not(")
+		g.buf.WriteString("$not(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
 	case "error":
-		g.buf.WriteString("rex_error(")
+		g.buf.WriteString("$error(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
 	case "todo":
-		g.buf.WriteString("rex_todo(")
+		g.buf.WriteString("$todo(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
@@ -1266,13 +1289,13 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 	// Actor builtins
 	switch funcName {
 	case "spawn":
-		g.buf.WriteString("rex_spawn(")
+		g.buf.WriteString("$spawn(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
 	case "send":
 		// send is curried: send pid msg → partial app
-		g.buf.WriteString("((_msg) => rex_send(")
+		g.buf.WriteString("((_msg) => $send(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _msg))")
 		return nil
@@ -1283,42 +1306,42 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		return nil
 	case "call":
 		// call is curried: call pid fn → partial app
-		g.buf.WriteString("((_fn) => rex_call(")
+		g.buf.WriteString("((_fn) => $call(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _fn))")
 		return nil
 	}
 
-	// Std:Js FFI builtins (may be module-prefixed as Std_Js__*)
+	// Std:Js FFI builtins (may be module-prefixed as Std$Js$*)
 	if short := jsFfiBuiltin(funcName); short != "" {
 		switch short {
 		case "jsGlobal":
-			g.buf.WriteString("rex_jsGlobal(")
+			g.buf.WriteString("$jsGlobal(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(")")
 			return nil
 		case "jsGet":
-			g.buf.WriteString("((_obj) => rex_jsGet(")
+			g.buf.WriteString("((_obj) => $jsGet(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(", _obj))")
 			return nil
 		case "jsSet":
-			g.buf.WriteString("((_obj) => ((_val) => rex_jsSet(")
+			g.buf.WriteString("((_obj) => ((_val) => $jsSet(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(", _obj, _val)))")
 			return nil
 		case "jsCall":
-			g.buf.WriteString("((_args) => ((_obj) => rex_jsCall(")
+			g.buf.WriteString("((_args) => ((_obj) => $jsCall(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(", _args, _obj)))")
 			return nil
 		case "jsNew":
-			g.buf.WriteString("((_args) => rex_jsNew(")
+			g.buf.WriteString("((_args) => $jsNew(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(", _args))")
 			return nil
 		case "jsCallback":
-			g.buf.WriteString("rex_jsCallback(")
+			g.buf.WriteString("$jsCallback(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(")")
 			return nil
@@ -1326,22 +1349,22 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 			g.emitAtom(c.Arg)
 			return nil
 		case "jsToString":
-			g.buf.WriteString("rex_jsToString(")
+			g.buf.WriteString("$jsToString(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(")")
 			return nil
 		case "jsToInt":
-			g.buf.WriteString("rex_jsToInt(")
+			g.buf.WriteString("$jsToInt(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(")")
 			return nil
 		case "jsToFloat":
-			g.buf.WriteString("rex_jsToFloat(")
+			g.buf.WriteString("$jsToFloat(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(")")
 			return nil
 		case "jsToBool":
-			g.buf.WriteString("rex_jsToBool(")
+			g.buf.WriteString("$jsToBool(")
 			g.emitAtom(c.Arg)
 			g.buf.WriteString(")")
 			return nil
@@ -1369,8 +1392,8 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		return nil
 	}
 
-	// Unknown / variable function: use rex__apply
-	g.buf.WriteString("rex__apply(")
+	// Unknown / variable function: use $$apply
+	g.buf.WriteString("$$apply(")
 	g.emitAtom(c.Func)
 	g.buf.WriteString(", ")
 	g.emitAtom(c.Arg)
@@ -1448,42 +1471,42 @@ func (g *jsGen) emitBinop(c ir.CBinop) error {
 		g.buf.WriteString(")")
 		return nil
 	case "Eq":
-		g.buf.WriteString("rex_eq(")
+		g.buf.WriteString("$eq(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
 		return nil
 	case "Neq":
-		g.buf.WriteString("!rex_eq(")
+		g.buf.WriteString("!$eq(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
 		return nil
 	case "Lt":
-		g.buf.WriteString("(rex_compare(")
+		g.buf.WriteString("($compare(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(") < 0)")
 		return nil
 	case "Gt":
-		g.buf.WriteString("(rex_compare(")
+		g.buf.WriteString("($compare(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(") > 0)")
 		return nil
 	case "Leq":
-		g.buf.WriteString("(rex_compare(")
+		g.buf.WriteString("($compare(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(") <= 0)")
 		return nil
 	case "Geq":
-		g.buf.WriteString("(rex_compare(")
+		g.buf.WriteString("($compare(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
@@ -1660,7 +1683,7 @@ func (g *jsGen) emitStringInterp(c ir.CStringInterp) error {
 		return nil
 	}
 	if len(c.Parts) == 1 {
-		g.buf.WriteString("rex_display(")
+		g.buf.WriteString("$display(")
 		g.emitAtom(c.Parts[0])
 		g.buf.WriteString(")")
 		return nil
@@ -1670,7 +1693,7 @@ func (g *jsGen) emitStringInterp(c ir.CStringInterp) error {
 		if s, ok := p.(ir.AString); ok {
 			parts = append(parts, fmt.Sprintf("%q", s.Value))
 		} else {
-			parts = append(parts, fmt.Sprintf("rex_display(%s)", g.atomStr(p)))
+			parts = append(parts, fmt.Sprintf("$display(%s)", g.atomStr(p)))
 		}
 	}
 	g.buf.WriteString(strings.Join(parts, " + "))
@@ -1747,13 +1770,13 @@ func (g *jsGen) patternCondition(scrutExpr string, pat ir.Pattern) (string, []js
 		return "true", []jsPatBinding{{name: p.Name, expr: scrutExpr}}
 
 	case ir.PInt:
-		return fmt.Sprintf("rex_eq(%s, %d)", scrutExpr, p.Value), nil
+		return fmt.Sprintf("$eq(%s, %d)", scrutExpr, p.Value), nil
 
 	case ir.PFloat:
-		return fmt.Sprintf("rex_eq(%s, %g)", scrutExpr, p.Value), nil
+		return fmt.Sprintf("$eq(%s, %g)", scrutExpr, p.Value), nil
 
 	case ir.PString:
-		return fmt.Sprintf("rex_eq(%s, %q)", scrutExpr, p.Value), nil
+		return fmt.Sprintf("$eq(%s, %q)", scrutExpr, p.Value), nil
 
 	case ir.PBool:
 		if p.Value {
@@ -1880,11 +1903,11 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 			case "receive":
 				return "((pid) => pid.ch.shift())"
 			case "spawn":
-				return "((f) => rex_spawn(f))"
+				return "((f) => $spawn(f))"
 			case "send":
-				return "((pid) => (msg) => rex_send(pid, msg))"
+				return "((pid) => (msg) => $send(pid, msg))"
 			case "call":
-				return "((pid) => (fn) => rex_call(pid, fn))"
+				return "((pid) => (fn) => $call(pid, fn))"
 			}
 		}
 		// Js FFI builtins as values
@@ -1892,27 +1915,27 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 			if short := jsFfiBuiltin(name); short != "" {
 				switch short {
 				case "jsGlobal":
-					return "((n) => rex_jsGlobal(n))"
+					return "((n) => $jsGlobal(n))"
 				case "jsGet":
-					return "((p) => (o) => rex_jsGet(p, o))"
+					return "((p) => (o) => $jsGet(p, o))"
 				case "jsSet":
-					return "((p) => (o) => (v) => rex_jsSet(p, o, v))"
+					return "((p) => (o) => (v) => $jsSet(p, o, v))"
 				case "jsCall":
-					return "((m) => (a) => (o) => rex_jsCall(m, a, o))"
+					return "((m) => (a) => (o) => $jsCall(m, a, o))"
 				case "jsNew":
-					return "((n) => (a) => rex_jsNew(n, a))"
+					return "((n) => (a) => $jsNew(n, a))"
 				case "jsCallback":
-					return "((f) => rex_jsCallback(f))"
+					return "((f) => $jsCallback(f))"
 				case "jsFromString", "jsFromInt", "jsFromFloat", "jsFromBool":
 					return "((v) => v)"
 				case "jsToString":
-					return "((v) => rex_jsToString(v))"
+					return "((v) => $jsToString(v))"
 				case "jsToInt":
-					return "((v) => rex_jsToInt(v))"
+					return "((v) => $jsToInt(v))"
 				case "jsToFloat":
-					return "((v) => rex_jsToFloat(v))"
+					return "((v) => $jsToFloat(v))"
 				case "jsToBool":
-					return "((v) => rex_jsToBool(v))"
+					return "((v) => $jsToBool(v))"
 				case "jsNull":
 					return "null"
 				}
@@ -1921,19 +1944,19 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 		// Builtins as values
 		switch name {
 		case "println":
-			return "((v) => rex_println(v))"
+			return "((v) => $println(v))"
 		case "print":
-			return "((v) => rex_print(v))"
+			return "((v) => $print(v))"
 		case "toString":
-			return "((v) => rex_display(v))"
+			return "((v) => $display(v))"
 		case "showInt":
-			return "((v) => rex_showInt(v))"
+			return "((v) => $showInt(v))"
 		case "showFloat":
-			return "((v) => rex_showFloat(v))"
+			return "((v) => $showFloat(v))"
 		case "not":
-			return "((v) => rex_not(v))"
+			return "((v) => $not(v))"
 		case "error":
-			return "((v) => rex_error(v))"
+			return "((v) => $error(v))"
 		}
 		// Check if it's a trait method
 		if dispatchName, ok := g.traitMethodNames[name]; ok {
@@ -1962,61 +1985,61 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 		// String/math builtins as values (after user-defined names)
 		switch name {
 		case "length":
-			return "((s) => rex_stringLength(s))"
+			return "((s) => $stringLength(s))"
 		case "toUpper":
-			return "((s) => rex_toUpper(s))"
+			return "((s) => $toUpper(s))"
 		case "toLower":
-			return "((s) => rex_toLower(s))"
+			return "((s) => $toLower(s))"
 		case "trim":
-			return "((s) => rex_trim(s))"
+			return "((s) => $trim(s))"
 		case "trimLeft":
-			return "((s) => rex_trimLeft(s))"
+			return "((s) => $trimLeft(s))"
 		case "trimRight":
-			return "((s) => rex_trimRight(s))"
+			return "((s) => $trimRight(s))"
 		case "reverse":
-			return "((s) => rex_stringReverse(s))"
+			return "((s) => $stringReverse(s))"
 		case "words":
-			return "((s) => rex_words(s))"
+			return "((s) => $words(s))"
 		case "lines":
-			return "((s) => rex_lines(s))"
+			return "((s) => $lines(s))"
 		case "charCode":
-			return "((s) => rex_charCode(s))"
+			return "((s) => $charCode(s))"
 		case "fromCharCode":
-			return "((n) => rex_fromCharCode(n))"
+			return "((n) => $fromCharCode(n))"
 		case "parseInt":
-			return "((s) => rex_stringParseInt(s))"
+			return "((s) => $stringParseInt(s))"
 		case "parseFloat":
-			return "((s) => rex_stringParseFloat(s))"
+			return "((s) => $stringParseFloat(s))"
 		case "toList":
-			return "((s) => rex_stringToList(s))"
+			return "((s) => $stringToList(s))"
 		case "fromList":
-			return "((lst) => rex_stringFromList(lst))"
+			return "((lst) => $stringFromList(lst))"
 		case "toFloat":
-			return "((n) => rex_toFloat(n))"
+			return "((n) => $toFloat(n))"
 		case "split":
-			return "((sep) => (s) => rex_split(sep, s))"
+			return "((sep) => (s) => $split(sep, s))"
 		case "join":
-			return "((sep) => (lst) => rex_join(sep, lst))"
+			return "((sep) => (lst) => $join(sep, lst))"
 		case "contains":
-			return "((sub) => (s) => rex_contains(sub, s))"
+			return "((sub) => (s) => $contains(sub, s))"
 		case "startsWith":
-			return "((pfx) => (s) => rex_startsWith(pfx, s))"
+			return "((pfx) => (s) => $startsWith(pfx, s))"
 		case "endsWith":
-			return "((sfx) => (s) => rex_endsWith(sfx, s))"
+			return "((sfx) => (s) => $endsWith(sfx, s))"
 		case "indexOf":
-			return "((sub) => (s) => rex_indexOf(sub, s))"
+			return "((sub) => (s) => $indexOf(sub, s))"
 		case "charAt":
-			return "((i) => (s) => rex_charAt(i, s))"
+			return "((i) => (s) => $charAt(i, s))"
 		case "repeat":
-			return "((n) => (s) => rex_repeat(n, s))"
+			return "((n) => (s) => $repeat(n, s))"
 		case "substring":
-			return "((start) => (end) => (s) => rex_substring(start, end, s))"
+			return "((start) => (end) => (s) => $substring(start, end, s))"
 		case "replace":
-			return "((from) => (to) => (s) => rex_replace(from, to, s))"
+			return "((from) => (to) => (s) => $replace(from, to, s))"
 		case "padLeft":
-			return "((n) => (ch) => (s) => rex_padLeft(n, ch, s))"
+			return "((n) => (ch) => (s) => $padLeft(n, ch, s))"
 		case "padRight":
-			return "((n) => (ch) => (s) => rex_padRight(n, ch, s))"
+			return "((n) => (ch) => (s) => $padRight(n, ch, s))"
 		}
 		return jsVarName(name)
 	}
@@ -2101,16 +2124,17 @@ var jsReserved = map[string]bool{
 }
 
 func jsFuncName(name string) string {
-	if name == "main" {
-		return "rex_main"
+	// Module-prefixed names (containing $) already have their prefix from ModulePrefix
+	if strings.Contains(name, "$") {
+		return jsSanitize(name)
 	}
-	return "rex_" + jsSanitize(name)
+	return "$" + jsSanitize(name)
 }
 
 func jsVarName(name string) string {
 	s := jsSanitize(name)
 	if jsReserved[s] {
-		return "r_" + s
+		return "$" + s
 	}
 	return s
 }
@@ -2129,12 +2153,12 @@ func jsSanitize(name string) string {
 	var b strings.Builder
 	for _, c := range name {
 		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_', c == '$':
 			b.WriteRune(c)
 		case c == '\'':
-			b.WriteString("_prime")
+			b.WriteString("$prime")
 		default:
-			fmt.Fprintf(&b, "_%d_", c)
+			fmt.Fprintf(&b, "$%d", c)
 		}
 	}
 	return b.String()

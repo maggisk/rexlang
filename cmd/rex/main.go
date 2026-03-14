@@ -29,6 +29,9 @@ var safeMode bool
 // targetMode is set by the --target flag; defaults to "native".
 var targetMode = "native"
 
+// moduleMode is set by the --module flag; defaults to "global:Rex".
+var moduleMode = "global:Rex"
+
 // packageRoots maps package names to their src/ directories (from rex.toml).
 var packageRoots map[string]string
 
@@ -46,6 +49,8 @@ func main() {
 			safeMode = true
 		} else if strings.HasPrefix(a, "--target=") {
 			targetMode = strings.TrimPrefix(a, "--target=")
+		} else if strings.HasPrefix(a, "--module=") {
+			moduleMode = strings.TrimPrefix(a, "--module=")
 		} else {
 			filtered = append(filtered, a)
 		}
@@ -762,7 +767,7 @@ func compileJSFile(path string) {
 
 	prog = ir.Shake(prog)
 
-	jsSrc, err := codegen.EmitJS(prog, typeEnv, importInfo.JsBindings)
+	jsSrc, err := codegen.EmitJS(prog, typeEnv, importInfo.JsBindings, moduleMode)
 	if err != nil {
 		printErr("Codegen error", err)
 		os.Exit(1)

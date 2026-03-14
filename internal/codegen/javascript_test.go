@@ -35,7 +35,7 @@ func compileJSCode(t *testing.T, code string) string {
 		t.Fatalf("lower error: %v", err)
 	}
 	prog = ir.Shake(prog)
-	jsSrc, err := EmitJS(prog, typeEnv, nil)
+	jsSrc, err := EmitJS(prog, typeEnv, nil, "")
 	if err != nil {
 		t.Fatalf("EmitJS error: %v", err)
 	}
@@ -43,14 +43,15 @@ func compileJSCode(t *testing.T, code string) string {
 }
 
 // runJS compiles Rex source to JS and runs it with Node.js, returning the exit code and stdout.
-// The generated JS uses rex_main(null) without process.exit (browser target),
+// The generated JS uses $main(null) without process.exit (browser target),
 // so we append process.exit for testability with node.
 func runJS(t *testing.T, code string) (int, string) {
 	t.Helper()
 	jsSrc := compileJSCode(t, code)
 
-	// Replace the browser-style entry point with a node-testable one
-	jsSrc = strings.Replace(jsSrc, "\nrex_main(null);\n", "\nprocess.exit(rex_main(null));\n", 1)
+	// Replace the module entry point with a node-testable one.
+	// The global module wraps as: ...Rex.main(); — replace with process.exit
+	jsSrc = strings.Replace(jsSrc, "Rex.main();\n", "process.exit(Rex.main());\n", 1)
 
 	dir := t.TempDir()
 	jsFile := filepath.Join(dir, "main.js")

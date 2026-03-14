@@ -29,12 +29,12 @@ type JsBinding struct {
 	Source      string // contents of the .js file
 }
 
-// ModulePrefix converts a module path to a valid identifier prefix.
-// e.g. "Std:List" → "Std_List__", "Std:Json.Decode" → "Std_Json_Decode__"
+// ModulePrefix converts a module path to a valid JS identifier prefix.
+// e.g. "Std:List" → "Std$List$", "Std:Json.Decode" → "Std$Json$Decode$"
 func ModulePrefix(module string) string {
-	s := strings.ReplaceAll(module, ":", "_")
-	s = strings.ReplaceAll(s, ".", "_")
-	return s + "__"
+	s := strings.ReplaceAll(module, ":", "$")
+	s = strings.ReplaceAll(s, ".", "$")
+	return s + "$"
 }
 
 // ResolveImports collects type declarations, trait declarations, impl blocks,
@@ -458,7 +458,7 @@ func (r *resolver) loadCompanionJS(module string, modExprs []ast.Expr) {
 		if err != nil {
 			continue // no companion file — might be a builtin handled by codegen
 		}
-		mangledName := "rex_" + prefix + ext.Name
+		mangledName := prefix + ext.Name
 		r.jsBindings = append(r.jsBindings, JsBinding{
 			MangledName: mangledName,
 			Source:      string(data),
