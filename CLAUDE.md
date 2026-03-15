@@ -303,6 +303,51 @@ Key design decisions:
 - **Actors**: goroutines + channels are a direct match for Rex's actor model
 - **Advantage over WasmGC**: no manual memory layout, no boxing gymnastics, actors work natively via goroutines
 
+### Go backend as primary runtime (planned)
+
+Drop the tree-walking interpreter and make Go compilation the only execution path. `rex file.rex` compiles to Go behind the scenes (like `go run`), caches the binary, and executes it. Go becomes a required dependency.
+
+**What this enables:**
+- Go FFI works everywhere — companion `.go` files use real Go types, no reflect, no registry
+- ADTs compile to Go interfaces + structs — companion `.go` files can construct and pattern match on Rex ADTs directly (the interpreter couldn't do this because ADTs only existed as runtime values)
+- Delete `internal/eval/` entirely (~2000 lines) — one codegen path instead of two
+- User packages with Go FFI are first-class citizens
+- Go toolchain gives debugging, profiling, race detector for free
+
+**How it works:**
+1. `rex run file.rex` — parse, typecheck, emit Go to temp dir, `go build`, execute (cached on source hash)
+2. `rex test file.rex` — same pipeline, generated Go includes test runner
+3. `rex generate` — parse `.rex` files, emit Go type definitions (`_gen.go`) so companion `.go` files have types to reference with full IDE support
+4. `rex build` — full compilation to binary
+5. REPL — dropped (Go doesn't have one either; use `test` blocks for exploration)
+
+**Go FFI convention:**
+- Companion `.go` file next to `.rex` file, same Go package
+- Functions named `Module_functionName` with plain Go types
+- Generated `_gen.go` provides Go type definitions for Rex ADTs/records
+- Companion code can construct and return Rex ADTs as normal Go values
+- `go build` compiles everything together — type mismatches are compile errors
+
+**Package layout — each Rex module directory = one Go package:**
+```
+mypackage/
+  src/
+    Db/
+      Postgres.rex          -- type ConnResult = Connected Conn | Failed String
+      postgres_gen.go       -- generated: ConnResult interface, Connected/Failed structs
+      postgres.go           -- companion: uses Connected{}, Failed{} directly
+    Main.rex
+```
+
+**Migration plan:**
+1. Ensure Go codegen is feature-complete (close but not 100%)
+2. Implement `rex run` as compile-and-execute with caching
+3. Implement `rex generate` for Go type stubs
+4. Validate all tests pass through Go compilation path
+5. Deprecate interpreter, remove `internal/eval/`
+
+**Stdlib companion files** (`internal/stdlib/rexfiles/*.go`) already exist with the right Go function signatures. Post-migration they become plain Go files compiled by `go build` — no reflect wrapper needed.
+
 ### Compilation (JS backend — browser)
 
 Compile Rex to JavaScript for browser deployment. Pipeline: `source → parse → typecheck → IR → JS codegen → .js + .html`. Flag: `--compile --target=browser`.
