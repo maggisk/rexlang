@@ -2739,23 +2739,36 @@ func ReorderToplevel(exprs []ast.Expr) ([]ast.Expr, error) {
 		annotation *ast.TypeAnnotation
 	}
 
-	// First pass: collect all binding names so we know which annotations to pair
+	// First pass: collect all binding names so we know which annotations to pair.
+	// Also detect duplicate top-level definitions.
 	bindingNameSet := map[string]bool{}
+	bindingNameLine := map[string]int{} // first definition line for error messages
 	for _, e := range exprs {
 		switch e := e.(type) {
 		case ast.Let:
-			if e.InExpr == nil {
+			if e.InExpr == nil && e.Name != "_" {
+				if bindingNameSet[e.Name] {
+					return nil, fmt.Errorf("duplicate top-level definition '%s' (first defined at line %d)", e.Name, bindingNameLine[e.Name])
+				}
 				bindingNameSet[e.Name] = true
+				bindingNameLine[e.Name] = e.Line
 			}
 		case ast.LetRec:
 			if e.InExpr == nil {
 				for _, b := range e.Bindings {
+					if bindingNameSet[b.Name] {
+						return nil, fmt.Errorf("duplicate top-level definition '%s' (first defined at line %d)", b.Name, bindingNameLine[b.Name])
+					}
 					bindingNameSet[b.Name] = true
+					bindingNameLine[b.Name] = e.Line
 				}
 			}
 		case ast.LetPat:
 			if e.InExpr == nil {
 				for _, n := range patNames(e.Pat) {
+					if bindingNameSet[n] {
+						return nil, fmt.Errorf("duplicate top-level definition '%s'", n)
+					}
 					bindingNameSet[n] = true
 				}
 			}
