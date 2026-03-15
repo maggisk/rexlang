@@ -26,7 +26,7 @@ func loadUserModuleSource(root, moduleName, target string) (string, error) {
 	modPath := strings.ReplaceAll(moduleName, ".", string(filepath.Separator))
 	basePath := filepath.Join(root, modPath+".rex")
 
-	if target != "" && target != "native" {
+	if target != "" {
 		overlayPath := filepath.Join(root, modPath+"."+target+".rex")
 		baseData, baseErr := os.ReadFile(basePath)
 		overlayData, overlayErr := os.ReadFile(overlayPath)

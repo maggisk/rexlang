@@ -14,6 +14,7 @@ import (
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/parser"
 	"github.com/maggisk/rexlang/internal/stdlib"
+	"github.com/maggisk/rexlang/internal/typechecker"
 )
 
 // ImportInfo holds resolved module declarations and name mappings.
@@ -130,6 +131,15 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 		if err != nil {
 			r.stack = r.stack[:len(r.stack)-1]
 			return fmt.Errorf("parse error in module %s: %w", imp.Module, err)
+		}
+
+		// Topologically sort declarations so dependencies come before uses.
+		// This is critical for JS codegen where const bindings can't be
+		// referenced before initialization.
+		modExprs, err = typechecker.ReorderToplevel(modExprs)
+		if err != nil {
+			r.stack = r.stack[:len(r.stack)-1]
+			return fmt.Errorf("reorder error in module %s: %w", imp.Module, err)
 		}
 
 		// Check for companion JS files for external declarations
@@ -364,7 +374,7 @@ func (r *resolver) loadSource(module string) (string, error) {
 		}
 		modPath := strings.ReplaceAll(name, ".", "/")
 		basePath := pkgSrc + "/" + modPath + ".rex"
-		if r.target != "" && r.target != "native" {
+		if r.target != "" {
 			overlayPath := pkgSrc + "/" + modPath + "." + r.target + ".rex"
 			baseData, baseErr := os.ReadFile(basePath)
 			overlayData, overlayErr := os.ReadFile(overlayPath)
@@ -393,7 +403,7 @@ func (r *resolver) loadSource(module string) (string, error) {
 	basePath := r.srcRoot + "/" + modPath + ".rex"
 
 	// Try target-specific overlay for user modules
-	if r.target != "" && r.target != "native" {
+	if r.target != "" {
 		overlayPath := r.srcRoot + "/" + modPath + "." + r.target + ".rex"
 		baseData, baseErr := os.ReadFile(basePath)
 		overlayData, overlayErr := os.ReadFile(overlayPath)

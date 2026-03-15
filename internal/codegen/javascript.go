@@ -142,9 +142,46 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 	// Emit trait dispatch functions
 	body.WriteString(g.emitTraitDispatchers())
 
-	// Emit top-level declarations
+	// Emit top-level declarations.
+	// When overlay files shadow stubs, the same name appears multiple times.
+	// Keep only the last DLet/DLetRec definition for each name (overlay wins).
 	g.buf = body
-	for _, d := range prog.Decls {
+	lastDeclIdx := make(map[string]int)
+	for i, d := range prog.Decls {
+		switch d := d.(type) {
+		case ir.DLet:
+			if d.Name != "_" {
+				lastDeclIdx[d.Name] = i
+			}
+		case ir.DLetRec:
+			for _, b := range d.Bindings {
+				lastDeclIdx[b.Name] = i
+			}
+		}
+	}
+	for i, d := range prog.Decls {
+		skip := false
+		switch d := d.(type) {
+		case ir.DLet:
+			if d.Name != "_" && lastDeclIdx[d.Name] != i {
+				skip = true
+			}
+		case ir.DLetRec:
+			// Skip if ALL bindings in this group have a later definition
+			allLater := true
+			for _, b := range d.Bindings {
+				if lastDeclIdx[b.Name] == i {
+					allLater = false
+					break
+				}
+			}
+			if allLater {
+				skip = true
+			}
+		}
+		if skip {
+			continue
+		}
 		if err := g.emitDecl(d); err != nil {
 			return "", err
 		}

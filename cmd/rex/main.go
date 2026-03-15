@@ -512,20 +512,45 @@ func addAndInstallDep(projectRoot, gitURL, ref string) {
 }
 
 // ---------------------------------------------------------------------------
+// readSourceWithOverlay reads the entry file and, if a target-specific overlay
+// exists (e.g. Foo.browser.rex for --target=browser), concatenates it.
+// ---------------------------------------------------------------------------
+
+func readSourceWithOverlay(path string) (string, error) {
+	base, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	src := string(base)
+
+	// Build overlay path: Foo.rex -> Foo.<target>.rex
+	ext := filepath.Ext(path)
+	overlayPath := strings.TrimSuffix(path, ext) + "." + targetMode + ext
+	if overlayPath == path {
+		return src, nil
+	}
+	overlay, err := os.ReadFile(overlayPath)
+	if err != nil {
+		return src, nil // no overlay, that's fine
+	}
+	return src + "\n" + string(overlay), nil
+}
+
+// ---------------------------------------------------------------------------
 // compileFile
 // ---------------------------------------------------------------------------
 
 func compileFile(path string) {
 	setupSrcRoot(path)
 
-	source, err := os.ReadFile(path)
+	source, err := readSourceWithOverlay(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Parse
-	exprs, err := parser.Parse(string(source))
+	exprs, err := parser.Parse(source)
 	if err != nil {
 		printErr("Parse error", err)
 		os.Exit(1)
@@ -717,13 +742,13 @@ func compileGoFile(path string) {
 func compileJSFile(path string) {
 	setupSrcRoot(path)
 
-	source, err := os.ReadFile(path)
+	source, err := readSourceWithOverlay(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
 		os.Exit(1)
 	}
 
-	exprs, err := parser.Parse(string(source))
+	exprs, err := parser.Parse(source)
 	if err != nil {
 		printErr("Parse error", err)
 		os.Exit(1)
@@ -800,14 +825,14 @@ func compileJSFile(path string) {
 func runFile(path string, programArgs []string) {
 	setupSrcRoot(path)
 
-	source, err := os.ReadFile(path)
+	source, err := readSourceWithOverlay(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Parse
-	exprs, err := parser.Parse(string(source))
+	exprs, err := parser.Parse(source)
 	if err != nil {
 		printErr("Lexer/Parse error", err)
 		os.Exit(1)
@@ -877,12 +902,11 @@ func runFile(path string, programArgs []string) {
 func runTests(path string, only string) (int, []eval.FailedTest) {
 	setupSrcRoot(path)
 
-	source, err := os.ReadFile(path)
+	src, err := readSourceWithOverlay(path)
 	if err != nil {
 		printTestErr(path, "error", err)
 		return 1, nil
 	}
-	src := string(source)
 
 	// Detect if this is a stdlib file and inject extra builtins/type-env
 	var extraBuiltins map[string]eval.Value

@@ -58,7 +58,18 @@ func (l *Lowerer) lowerToplevel(expr ast.Expr) (Decl, error) {
 			if err != nil {
 				return nil, err
 			}
-			bindings = append(bindings, RecBinding{Name: b.Name, Bind: CLambda{Body: body}})
+			// If the body is already a lambda, use it directly as the binding
+			// to avoid wrapping in an extra zero-param CLambda.
+			var cexpr CExpr
+			if ec, ok := body.(EComplex); ok {
+				if _, isLam := ec.C.(CLambda); isLam {
+					cexpr = ec.C
+				}
+			}
+			if cexpr == nil {
+				cexpr = CLambda{Body: body}
+			}
+			bindings = append(bindings, RecBinding{Name: b.Name, Bind: cexpr})
 		}
 		exported := make(map[string]bool)
 		if e.Exported {
