@@ -122,25 +122,27 @@ func String_repeat(n int, s string) string {
 }
 
 func String_padLeft(width int, pad, s string) string {
-	if utf8.RuneCountInString(pad) != 1 {
-		panic("padLeft: fill must be a single character")
-	}
-	runes := []rune(s)
 	padRunes := []rune(pad)
+	if len(padRunes) == 0 {
+		return s
+	}
+	fillRune := padRunes[0]
+	runes := []rune(s)
 	for len(runes) < width {
-		runes = append(padRunes, runes...)
+		runes = append([]rune{fillRune}, runes...)
 	}
 	return string(runes)
 }
 
 func String_padRight(width int, pad, s string) string {
-	if utf8.RuneCountInString(pad) != 1 {
-		panic("padRight: fill must be a single character")
+	padRunes := []rune(pad)
+	if len(padRunes) == 0 {
+		return s
 	}
+	fillRune := padRunes[0]
 	runes := []rune(s)
-	padRune := []rune(pad)[0]
 	for len(runes) < width {
-		runes = append(runes, padRune)
+		runes = append(runes, fillRune)
 	}
 	return string(runes)
 }
@@ -159,19 +161,21 @@ func String_lines(s string) []string {
 	return parts
 }
 
-func String_charCode(s string) int {
+func String_charCode(s string) *int {
 	if s == "" {
-		panic("charCode: empty string")
+		return nil
 	}
 	r, _ := utf8.DecodeRuneInString(s)
-	return int(r)
+	code := int(r)
+	return &code
 }
 
-func String_fromCharCode(code int) string {
+func String_fromCharCode(code int) *string {
 	if code < 0 || code > 0x10FFFF {
-		panic(fmt.Sprintf("fromCharCode: invalid code point %d", code))
+		return nil
 	}
-	return string(rune(code))
+	s := string(rune(code))
+	return &s
 }
 
 func String_parseInt(s string) *int {

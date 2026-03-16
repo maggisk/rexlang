@@ -1449,12 +1449,13 @@ func (g *goGen) findRecordForField(field string) *goRecordInfo {
 }
 
 func (g *goGen) emitRecordUpdate(c ir.CRecordUpdate) error {
-	// Find record type
+	// Resolve record type from the first update's field name
 	var recTypeName string
-	for _, ri := range g.records {
-		// Try to figure out the type from the record atom
-		recTypeName = ri.name
-		break // TODO: improve type resolution
+	if len(c.Updates) > 0 {
+		ri := g.findRecordForField(c.Updates[0].Path[0])
+		if ri != nil {
+			recTypeName = ri.name
+		}
 	}
 	if recTypeName == "" {
 		return fmt.Errorf("cannot determine record type for update")
@@ -1466,12 +1467,9 @@ func (g *goGen) emitRecordUpdate(c ir.CRecordUpdate) error {
 	g.w("r := %s", g.atomStr(c.Record))
 	g.w("copy := r.(%s)", structName)
 	for _, u := range c.Updates {
-		if len(u.Path) == 1 {
-			g.wn("copy.%s = ", goExportedField(u.Path[0]))
-			g.emitAtom(u.Value)
-			g.buf.WriteByte('\n')
+		if err := g.emitFieldUpdate("copy", u, recTypeName); err != nil {
+			return err
 		}
-		// TODO: nested paths
 	}
 	g.w("return copy")
 	g.indent--
@@ -1479,6 +1477,45 @@ func (g *goGen) emitRecordUpdate(c ir.CRecordUpdate) error {
 		g.buf.WriteByte('\t')
 	}
 	g.buf.WriteString("}()")
+	return nil
+}
+
+func (g *goGen) emitFieldUpdate(varName string, u ir.FieldUpdate, recTypeName string) error {
+	if len(u.Path) == 1 {
+		g.wn("%s.%s = ", varName, goExportedField(u.Path[0]))
+		g.emitAtom(u.Value)
+		g.buf.WriteByte('\n')
+		return nil
+	}
+	// Nested path: clone each intermediate record.
+	// Use the next field in the path to determine the intermediate record type.
+	for i := 0; i < len(u.Path)-1; i++ {
+		field := u.Path[i]
+		nextField := u.Path[i+1]
+		ri := g.findRecordForField(nextField)
+		if ri == nil {
+			return fmt.Errorf("cannot determine nested record type for field '%s'", field)
+		}
+		nestedStruct := goTypeName(ri.name)
+		innerVar := fmt.Sprintf("inner%d", i)
+		g.w("%s := %s.%s.(%s)", innerVar, varName, goExportedField(field), nestedStruct)
+		varName = innerVar
+	}
+	// Set the leaf field
+	lastField := u.Path[len(u.Path)-1]
+	g.wn("%s.%s = ", varName, goExportedField(lastField))
+	g.emitAtom(u.Value)
+	g.buf.WriteByte('\n')
+	// Write back up the chain
+	for i := len(u.Path) - 2; i >= 0; i-- {
+		field := u.Path[i]
+		innerVar := fmt.Sprintf("inner%d", i)
+		outerVar := "copy"
+		if i > 0 {
+			outerVar = fmt.Sprintf("inner%d", i-1)
+		}
+		g.w("%s.%s = %s", outerVar, goExportedField(field), innerVar)
+	}
 	return nil
 }
 

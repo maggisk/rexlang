@@ -1653,16 +1653,61 @@ func (g *jsGen) emitFieldAccess(c ir.CFieldAccess) error {
 }
 
 func (g *jsGen) emitRecordUpdate(c ir.CRecordUpdate) error {
-	g.buf.WriteString("{...")
-	g.emitAtom(c.Record)
+	// Separate single-field updates from nested updates
+	var simple []ir.FieldUpdate
+	var nested []ir.FieldUpdate
 	for _, u := range c.Updates {
 		if len(u.Path) == 1 {
+			simple = append(simple, u)
+		} else {
+			nested = append(nested, u)
+		}
+	}
+
+	if len(nested) == 0 {
+		// Simple case: all single-field updates
+		g.buf.WriteString("{...")
+		g.emitAtom(c.Record)
+		for _, u := range simple {
 			fmt.Fprintf(g.buf, ", %s: ", u.Path[0])
 			g.emitAtom(u.Value)
 		}
-		// TODO: nested paths
+		g.buf.WriteString("}")
+		return nil
 	}
+
+	// Mixed or nested: use an IIFE to handle nested cloning
+	g.buf.WriteString("(() => { const __r = {...")
+	g.emitAtom(c.Record)
 	g.buf.WriteString("}")
+	// Apply simple updates
+	for _, u := range simple {
+		fmt.Fprintf(g.buf, "; __r.%s = ", u.Path[0])
+		g.emitAtom(u.Value)
+	}
+	// Apply nested updates: clone each intermediate level
+	for _, u := range nested {
+		// Clone intermediate records: __r.a = {...__r.a}, __r.a.b = {...__r.a.b}, etc.
+		for i := 0; i < len(u.Path)-1; i++ {
+			g.buf.WriteString("; __r")
+			for j := 0; j <= i; j++ {
+				fmt.Fprintf(g.buf, ".%s", u.Path[j])
+			}
+			g.buf.WriteString(" = {...__r")
+			for j := 0; j <= i; j++ {
+				fmt.Fprintf(g.buf, ".%s", u.Path[j])
+			}
+			g.buf.WriteString("}")
+		}
+		// Set the leaf field
+		g.buf.WriteString("; __r")
+		for _, p := range u.Path {
+			fmt.Fprintf(g.buf, ".%s", p)
+		}
+		g.buf.WriteString(" = ")
+		g.emitAtom(u.Value)
+	}
+	g.buf.WriteString("; return __r })()")
 	return nil
 }
 

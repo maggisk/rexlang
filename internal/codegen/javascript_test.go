@@ -671,3 +671,39 @@ export main _ = 0
 		t.Error("JS output should not reference process.stdout")
 	}
 }
+
+func TestJSRecordUpdateMultipleTypes(t *testing.T) {
+	code, _ := runJS(t, `
+type Point = { x : Int, y : Int }
+type Size = { w : Int, h : Int }
+
+export main _ =
+    let
+        p = Point { x = 1, y = 2 }
+        s = Size { w = 10, h = 20 }
+        p2 = { p | x = 99 }
+        s2 = { s | h = 50 }
+    in
+    if p2.x == 99 && s2.h == 50 then 0 else 1
+`)
+	if code != 0 {
+		t.Errorf("expected 0, got %d", code)
+	}
+}
+
+func TestJSNestedRecordUpdate(t *testing.T) {
+	code, _ := runJS(t, `
+type Address = { city : String, zip : String }
+type Person = { name : String, addr : Address }
+
+export main _ =
+    let
+        p = Person { name = "Alice", addr = Address { city = "NYC", zip = "10001" } }
+        p2 = { p | addr.city = "LA" }
+    in
+    if p2.addr.city == "LA" && p2.addr.zip == "10001" && p2.name == "Alice" then 0 else 1
+`)
+	if code != 0 {
+		t.Errorf("expected 0, got %d", code)
+	}
+}

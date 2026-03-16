@@ -139,12 +139,18 @@ export external padLeft : Int -> String -> String -> String
 
 test "padLeft" =
     assert (padLeft 5 "0" "42" == "00042")
+    assert (padLeft 5 "ab" "42" == "aaa42")
+    assert (padLeft 5 "" "42" == "42")
+    assert (padLeft 3 "0" "12345" == "12345")
 
 
 export external padRight : Int -> String -> String -> String
 
 test "padRight" =
     assert (padRight 5 "." "hi" == "hi...")
+    assert (padRight 5 "ab" "hi" == "hiaaa")
+    assert (padRight 5 "" "hi" == "hi")
+    assert (padRight 3 "." "hello" == "hello")
 
 
 export external words : String -> [String]
@@ -159,16 +165,18 @@ test "lines" =
     assert (lines "a\nb\nc" == ["a", "b", "c"])
 
 
-export external charCode : String -> Int
+export external charCode : String -> Maybe Int
 
 test "charCode" =
-    assert (charCode "A" == 65)
+    assert (charCode "A" == Just 65)
+    assert (charCode "" == Nothing)
 
 
-export external fromCharCode : Int -> String
+export external fromCharCode : Int -> Maybe String
 
 test "fromCharCode" =
-    assert (fromCharCode 65 == "A")
+    assert (fromCharCode 65 == Just "A")
+    assert (fromCharCode (-1) == Nothing)
 
 
 export external parseInt : String -> Maybe Int
