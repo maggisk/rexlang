@@ -2040,6 +2040,26 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		// Freshen type variables in target type to avoid collision with trait param
 		targetTy = tc.freshenType(targetTy)
 		targetName := implTargetNameTC(e.TargetType)
+
+		// Orphan rule: impl must be in the same module as the trait or the type.
+		localTraits := map[string]bool{}
+		if lt, ok := env["__local_traits__"]; ok {
+			if ltm, ok := lt.(map[string]bool); ok {
+				localTraits = ltm
+			}
+		}
+		localTypes := map[string]bool{}
+		if lt, ok := env["__local_types__"]; ok {
+			if ltm, ok := lt.(map[string]bool); ok {
+				localTypes = ltm
+			}
+		}
+		if !localTraits[e.TraitName] && !localTypes[targetName] {
+			return InferToplevelResult{}, &types.TypeError{Msg: fmt.Sprintf(
+				"orphan impl: 'impl %s %s' is not allowed here — the impl must be in the same module that defines either the trait or the type",
+				e.TraitName, targetName)}
+		}
+
 		implNames := map[string]bool{}
 		for _, m := range e.Methods {
 			implNames[m.Name] = true
@@ -2481,6 +2501,20 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 	opaqueTypes := map[string]bool{}
 	opaqueCtors := map[string]bool{}
 
+	// Collect locally-defined type and trait names for orphan rule enforcement.
+	localTypes := map[string]bool{}
+	localTraits := map[string]bool{}
+	for _, expr := range exprs {
+		switch e := expr.(type) {
+		case ast.TypeDecl:
+			localTypes[e.Name] = true
+		case ast.TraitDecl:
+			localTraits[e.Name] = true
+		}
+	}
+	env["__local_types__"] = localTypes
+	env["__local_traits__"] = localTraits
+
 	for _, expr := range exprs {
 		if ex, ok := expr.(ast.Export); ok {
 			for _, n := range ex.Names {
@@ -2674,6 +2708,20 @@ func loadPreludeTC() (*preludeTC, error) {
 	tc := NewTypeChecker()
 	env := InitialTypeEnv()
 	typeDefs := PreregisterTypes(exprs, map[string]types.Type{})
+	// Collect locally-defined type and trait names for orphan rule enforcement.
+	// The Prelude defines traits (Eq, Ord, Show) and impls them for builtins.
+	localTypes := map[string]bool{}
+	localTraits := map[string]bool{}
+	for _, expr := range exprs {
+		switch e := expr.(type) {
+		case ast.TypeDecl:
+			localTypes[e.Name] = true
+		case ast.TraitDecl:
+			localTraits[e.Name] = true
+		}
+	}
+	env["__local_types__"] = localTypes
+	env["__local_traits__"] = localTraits
 	for _, expr := range exprs {
 		res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 		if err != nil {
@@ -2709,6 +2757,19 @@ func CheckProgram(exprs []ast.Expr) (TypeEnv, []Warning, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	// Collect locally-defined type and trait names for orphan rule enforcement.
+	localTypes := map[string]bool{}
+	localTraits := map[string]bool{}
+	for _, expr := range ordered {
+		switch e := expr.(type) {
+		case ast.TypeDecl:
+			localTypes[e.Name] = true
+		case ast.TraitDecl:
+			localTraits[e.Name] = true
+		}
+	}
+	env["__local_types__"] = localTypes
+	env["__local_traits__"] = localTraits
 	for _, expr := range ordered {
 		res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 		if err != nil {
@@ -3284,6 +3345,19 @@ func CheckProgramWithExtraEnv(exprs []ast.Expr, extraEnv TypeEnv) (TypeEnv, []Wa
 	if err != nil {
 		return nil, nil, err
 	}
+	// Collect locally-defined type and trait names for orphan rule enforcement.
+	localTypes := map[string]bool{}
+	localTraits := map[string]bool{}
+	for _, expr := range ordered {
+		switch e := expr.(type) {
+		case ast.TypeDecl:
+			localTypes[e.Name] = true
+		case ast.TraitDecl:
+			localTraits[e.Name] = true
+		}
+	}
+	env["__local_types__"] = localTypes
+	env["__local_traits__"] = localTraits
 	for _, expr := range ordered {
 		res, err := tc.InferToplevel(env, typeDefs, types.Subst{}, expr)
 		if err != nil {

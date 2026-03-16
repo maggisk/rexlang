@@ -237,7 +237,7 @@ export opaque type Rng = | Rng Int
 - [x] Bitwise — `Std:Bitwise` with `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shiftLeft`, `shiftRight`; all operate on `Int`; Go builtins
 - [x] DateTime — `Std:DateTime` with `Instant`/`Duration` opaque types, `DateTimeParts` record, `Weekday` ADT; pure Rex calendar math (Hinnant algorithm), formatting/parsing; 2 Go builtins (`dateTimeNow`, `dateTimeUtcOffset`)
 - [x] Js — `Std:Js` generic JS FFI primitives: `JsRef` opaque type, `jsGlobal`, `jsGet`, `jsSet`, `jsCall`, `jsNew`, `jsCallback`, `jsFrom*`/`jsTo*` conversions, `jsNull`; browser-only (overlay-only via `Js.browser.rex`); JS codegen replaces calls with inline JS
-- Html and Browser moved to `t-rex` web framework package (separate repo)
+- Html and Browser moved to `tea-rex` web framework package (separate repo)
 
 ### Language ergonomics
 
@@ -373,9 +373,9 @@ Key design decisions:
 - **Target overlays**: `--target=browser` enables `.browser.rex` module overlays (e.g., `Js.browser.rex` loaded for `import Std:Js`)
 - **Js FFI**: `Std:Js` provides generic JS interop — `JsRef` opaque type; `jsGlobal`, `jsGet`, `jsSet`, `jsCall`, `jsNew`, `jsCallback`; `jsFrom*`/`jsTo*` conversions; `jsNull`. JS codegen intercepts calls by name (including `Std_Js__` prefix) and emits inline JS. Rex stubs use `error "browser-only builtin"` as placeholders.
 
-### Browser Framework (TEA + Virtual DOM) — moved to t-rex
+### Browser Framework (TEA + Virtual DOM) — moved to tea-rex
 
-Html (VDOM types, elements, attributes, events, renderToString, diffing/patching) and the TEA runtime (`browserMount`) now live in the `t-rex` web framework package. The language provides `Std:Js`, `Std:Net`, and `Std:Process` as building blocks.
+Html (VDOM types, elements, attributes, events, renderToString, diffing/patching) and the TEA runtime (`browserMount`) now live in the `tea-rex` web framework package. The language provides `Std:Js`, `Std:Net`, and `Std:Process` as building blocks.
 
 ### Before going public
 

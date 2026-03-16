@@ -26,7 +26,7 @@ type ImportInfo struct {
 
 // JsBinding maps a mangled function name to its JS implementation source.
 type JsBinding struct {
-	MangledName string // e.g. "rex_trex_Html__refEq"
+	MangledName string // e.g. "rex_tearex_Html__refEq"
 	Source      string // contents of the .js file
 }
 
