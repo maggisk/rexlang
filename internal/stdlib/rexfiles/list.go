@@ -4,7 +4,7 @@ package main
 
 import "sort"
 
-func Stdlib_List_sortWith(cmpFn any, lst *RexList) *RexList {
+func Std_List_sortWith(cmpFn any, lst *RexList) *RexList {
 	var items []any
 	for l := lst; l != nil; l = l.Tail {
 		items = append(items, l.Head)

@@ -8,10 +8,10 @@ import (
 	"net/http"
 )
 
-// Stdlib_Http_Server_httpServe starts an HTTP server.
+// Std_Http_Server_httpServe starts an HTTP server.
 // The handler is a Rex closure: Request -> Response.
 // Returns error for the standard Result () String wrapper.
-func Stdlib_Http_Server_httpServe(port int64, handler any) error {
+func Std_Http_Server_httpServe(port int64, handler any) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		// Build header list

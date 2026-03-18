@@ -4,4 +4,4 @@ package main
 
 import "runtime"
 
-var Stdlib_Parallel_numCPU = int64(runtime.NumCPU())
+var Std_Parallel_numCPU = int64(runtime.NumCPU())

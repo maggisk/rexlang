@@ -8,17 +8,17 @@ import (
 	"unicode/utf8"
 )
 
-func Stdlib_String_length(s string) int64 {
+func Std_String_length(s string) int64 {
 	return int64(utf8.RuneCountInString(s))
 }
 
-func Stdlib_String_toUpper(s string) string   { return strings.ToUpper(s) }
-func Stdlib_String_toLower(s string) string   { return strings.ToLower(s) }
-func Stdlib_String_trim(s string) string      { return strings.TrimSpace(s) }
-func Stdlib_String_trimLeft(s string) string  { return strings.TrimLeft(s, " \t\n\r") }
-func Stdlib_String_trimRight(s string) string { return strings.TrimRight(s, " \t\n\r") }
+func Std_String_toUpper(s string) string   { return strings.ToUpper(s) }
+func Std_String_toLower(s string) string   { return strings.ToLower(s) }
+func Std_String_trim(s string) string      { return strings.TrimSpace(s) }
+func Std_String_trimLeft(s string) string  { return strings.TrimLeft(s, " \t\n\r") }
+func Std_String_trimRight(s string) string { return strings.TrimRight(s, " \t\n\r") }
 
-func Stdlib_String_split(sep, s string) *RexList {
+func Std_String_split(sep, s string) *RexList {
 	parts := strings.Split(s, sep)
 	var list *RexList
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -27,7 +27,7 @@ func Stdlib_String_split(sep, s string) *RexList {
 	return list
 }
 
-func Stdlib_String_join(sep string, lst *RexList) string {
+func Std_String_join(sep string, lst *RexList) string {
 	var parts []string
 	for l := lst; l != nil; l = l.Tail {
 		parts = append(parts, l.Head.(string))
@@ -35,11 +35,11 @@ func Stdlib_String_join(sep string, lst *RexList) string {
 	return strings.Join(parts, sep)
 }
 
-func Stdlib_String_contains(sub, s string) bool   { return strings.Contains(s, sub) }
-func Stdlib_String_startsWith(pfx, s string) bool { return strings.HasPrefix(s, pfx) }
-func Stdlib_String_endsWith(sfx, s string) bool   { return strings.HasSuffix(s, sfx) }
+func Std_String_contains(sub, s string) bool   { return strings.Contains(s, sub) }
+func Std_String_startsWith(pfx, s string) bool { return strings.HasPrefix(s, pfx) }
+func Std_String_endsWith(sfx, s string) bool   { return strings.HasSuffix(s, sfx) }
 
-func Stdlib_String_charAt(idx int64, s string) *string {
+func Std_String_charAt(idx int64, s string) *string {
 	runes := []rune(s)
 	i := int(idx)
 	if i >= 0 && i < len(runes) {
@@ -49,7 +49,7 @@ func Stdlib_String_charAt(idx int64, s string) *string {
 	return nil
 }
 
-func Stdlib_String_substring(start, end int64, s string) string {
+func Std_String_substring(start, end int64, s string) string {
 	runes := []rune(s)
 	n := len(runes)
 	sc, ec := int(start), int(end)
@@ -68,7 +68,7 @@ func Stdlib_String_substring(start, end int64, s string) string {
 	return string(runes[sc:ec])
 }
 
-func Stdlib_String_indexOf(needle, haystack string) *int64 {
+func Std_String_indexOf(needle, haystack string) *int64 {
 	byteIdx := strings.Index(haystack, needle)
 	if byteIdx == -1 {
 		return nil
@@ -77,11 +77,11 @@ func Stdlib_String_indexOf(needle, haystack string) *int64 {
 	return &idx
 }
 
-func Stdlib_String_replace(find, repl, s string) string {
+func Std_String_replace(find, repl, s string) string {
 	return strings.ReplaceAll(s, find, repl)
 }
 
-func Stdlib_String_take(n int64, s string) string {
+func Std_String_take(n int64, s string) string {
 	runes := []rune(s)
 	end := int(n)
 	if end < 0 {
@@ -93,7 +93,7 @@ func Stdlib_String_take(n int64, s string) string {
 	return string(runes[:end])
 }
 
-func Stdlib_String_drop(n int64, s string) string {
+func Std_String_drop(n int64, s string) string {
 	runes := []rune(s)
 	start := int(n)
 	if start < 0 {
@@ -105,7 +105,7 @@ func Stdlib_String_drop(n int64, s string) string {
 	return string(runes[start:])
 }
 
-func Stdlib_String_repeat(n int64, s string) string {
+func Std_String_repeat(n int64, s string) string {
 	count := int(n)
 	if count < 0 {
 		count = 0
@@ -113,7 +113,7 @@ func Stdlib_String_repeat(n int64, s string) string {
 	return strings.Repeat(s, count)
 }
 
-func Stdlib_String_padLeft(width int64, pad, s string) string {
+func Std_String_padLeft(width int64, pad, s string) string {
 	padRunes := []rune(pad)
 	if len(padRunes) == 0 {
 		return s
@@ -126,7 +126,7 @@ func Stdlib_String_padLeft(width int64, pad, s string) string {
 	return string(runes)
 }
 
-func Stdlib_String_padRight(width int64, pad, s string) string {
+func Std_String_padRight(width int64, pad, s string) string {
 	padRunes := []rune(pad)
 	if len(padRunes) == 0 {
 		return s
@@ -139,7 +139,7 @@ func Stdlib_String_padRight(width int64, pad, s string) string {
 	return string(runes)
 }
 
-func Stdlib_String_words(s string) *RexList {
+func Std_String_words(s string) *RexList {
 	parts := strings.Fields(s)
 	var list *RexList
 	for i := len(parts) - 1; i >= 0; i-- {
@@ -148,7 +148,7 @@ func Stdlib_String_words(s string) *RexList {
 	return list
 }
 
-func Stdlib_String_lines(s string) *RexList {
+func Std_String_lines(s string) *RexList {
 	if s == "" {
 		return nil
 	}
@@ -164,7 +164,7 @@ func Stdlib_String_lines(s string) *RexList {
 	return list
 }
 
-func Stdlib_String_charCode(s string) *int64 {
+func Std_String_charCode(s string) *int64 {
 	if s == "" {
 		return nil
 	}
@@ -173,7 +173,7 @@ func Stdlib_String_charCode(s string) *int64 {
 	return &code
 }
 
-func Stdlib_String_fromCharCode(code int64) *string {
+func Std_String_fromCharCode(code int64) *string {
 	if code < 0 || code > 0x10FFFF {
 		return nil
 	}
@@ -181,7 +181,7 @@ func Stdlib_String_fromCharCode(code int64) *string {
 	return &s
 }
 
-func Stdlib_String_parseInt(s string) *int64 {
+func Std_String_parseInt(s string) *int64 {
 	str := strings.TrimSpace(s)
 	i, err := strconv.Atoi(str)
 	if err != nil {
@@ -191,7 +191,7 @@ func Stdlib_String_parseInt(s string) *int64 {
 	return &v
 }
 
-func Stdlib_String_parseFloat(s string) *float64 {
+func Std_String_parseFloat(s string) *float64 {
 	str := strings.TrimSpace(s)
 	f, err := strconv.ParseFloat(str, 64)
 	if err != nil {
@@ -200,7 +200,7 @@ func Stdlib_String_parseFloat(s string) *float64 {
 	return &f
 }
 
-func Stdlib_String_reverse(s string) string {
+func Std_String_reverse(s string) string {
 	runes := []rune(s)
 	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
 		runes[i], runes[j] = runes[j], runes[i]
@@ -208,7 +208,7 @@ func Stdlib_String_reverse(s string) string {
 	return string(runes)
 }
 
-func Stdlib_String_toList(s string) *RexList {
+func Std_String_toList(s string) *RexList {
 	runes := []rune(s)
 	var list *RexList
 	for i := len(runes) - 1; i >= 0; i-- {
@@ -217,7 +217,7 @@ func Stdlib_String_toList(s string) *RexList {
 	return list
 }
 
-func Stdlib_String_fromList(lst *RexList) string {
+func Std_String_fromList(lst *RexList) string {
 	var b strings.Builder
 	for l := lst; l != nil; l = l.Tail {
 		b.WriteString(l.Head.(string))
@@ -225,6 +225,6 @@ func Stdlib_String_fromList(lst *RexList) string {
 	return b.String()
 }
 
-func Stdlib_String_toString(v any) string {
+func Std_String_toString(v any) string {
 	return rex_display(v)
 }

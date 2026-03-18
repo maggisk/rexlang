@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// Stdlib_Result_try executes a thunk and catches division/modulo-by-zero panics,
+// Std_Result_try executes a thunk and catches division/modulo-by-zero panics,
 // returning the full Result ADT directly (since the error type is RuntimeError, not String).
-func Stdlib_Result_try(thunk any) (result any) {
+func Std_Result_try(thunk any) (result any) {
 	defer func() {
 		if r := recover(); r != nil {
 			if re, ok := r.(runtime.Error); ok {

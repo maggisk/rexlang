@@ -8,9 +8,9 @@ import (
 	"sort"
 )
 
-// Stdlib_Json_jsonParse parses a JSON string into a Rex Json ADT.
+// Std_Json_jsonParse parses a JSON string into a Rex Json ADT.
 // Returns (Json, error) for the standard Result wrapper.
-func Stdlib_Json_jsonParse(s string) (any, error) {
+func Std_Json_jsonParse(s string) (any, error) {
 	var raw any
 	if err := json.Unmarshal([]byte(s), &raw); err != nil {
 		return nil, err

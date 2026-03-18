@@ -18,12 +18,11 @@ import (
 // ---------------------------------------------------------------------------
 
 // companionFuncName converts a mangled external name to the companion function name.
-// "Std$String$length" → "Stdlib_String_length"
+// "Std$String$length" → "Std_String_length"
 func companionFuncName(name string) string {
-	s := strings.TrimPrefix(name, "Std$")
-	s = strings.ReplaceAll(s, "$", "_")
+	s := strings.ReplaceAll(name, "$", "_")
 	s = strings.ReplaceAll(s, ".", "_")
-	return "Stdlib_" + s
+	return s
 }
 
 // externalModule extracts the module name from a mangled external name.

@@ -4,7 +4,7 @@ package main
 
 import "os"
 
-func Stdlib_Env_getEnv(name string) *string {
+func Std_Env_getEnv(name string) *string {
 	val, ok := os.LookupEnv(name)
 	if !ok {
 		return nil
@@ -12,7 +12,7 @@ func Stdlib_Env_getEnv(name string) *string {
 	return &val
 }
 
-func Stdlib_Env_getEnvOr(name, def string) string {
+func Std_Env_getEnvOr(name, def string) string {
 	val, ok := os.LookupEnv(name)
 	if !ok {
 		return def
