@@ -175,16 +175,17 @@ type RecordFieldExpr struct {
 }
 
 type FieldAccess struct {
-	Record Expr
-	Field  string
-	Line   int
+	Record         Expr
+	Field          string
+	Line           int
+	RecordTypeName *string // set by typechecker: resolved record type name (for disambiguation)
 }
 
 type RecordUpdate struct {
-	Record  Expr
-	Updates []RecordFieldUpdate
-	Line    int
-	Ty      interface{} // set by typechecker (types.Type — the record's concrete type)
+	Record         Expr
+	Updates        []RecordFieldUpdate
+	Line           int
+	RecordTypeName *string // set by typechecker: resolved record type name (for disambiguation)
 }
 
 type RecordFieldUpdate struct {

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/maggisk/rexlang/internal/ast"
-	"github.com/maggisk/rexlang/internal/typechecker"
 	"github.com/maggisk/rexlang/internal/types"
 )
 
@@ -626,7 +625,11 @@ func (l *Lowerer) normalizeRecordCreate(e ast.RecordCreate) (Expr, error) {
 
 func (l *Lowerer) normalizeFieldAccess(e ast.FieldAccess) (Expr, error) {
 	return l.normalize(e.Record, func(rec Atom) (Expr, error) {
-		return EComplex{C: CFieldAccess{Record: rec, Field: e.Field}}, nil
+		var ty types.Type
+		if e.RecordTypeName != nil && *e.RecordTypeName != "" {
+			ty = types.TCon{Name: *e.RecordTypeName}
+		}
+		return EComplex{C: CFieldAccess{Record: rec, Field: e.Field, Ty: ty, Line: e.Line}}, nil
 	})
 }
 
@@ -643,8 +646,8 @@ func (l *Lowerer) normalizeRecordUpdate(e ast.RecordUpdate) (Expr, error) {
 				updates = append(updates, FieldUpdate{Path: u.Path, Value: atoms[i]})
 			}
 			var ty types.Type
-			if tc, ok := typechecker.LookupRecordUpdateType(e.Line); ok {
-				ty = tc
+			if e.RecordTypeName != nil && *e.RecordTypeName != "" {
+				ty = types.TCon{Name: *e.RecordTypeName}
 			}
 			return EComplex{C: CRecordUpdate{Record: rec, Updates: updates, Ty: ty}}, nil
 		})

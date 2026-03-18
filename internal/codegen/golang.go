@@ -1568,7 +1568,14 @@ func (g *goGen) emitRecord(c ir.CRecord) error {
 
 func (g *goGen) emitFieldAccess(c ir.CFieldAccess) error {
 	g.emitAtom(c.Record)
-	ri := g.findRecordForField(c.Field)
+	// Use type from typechecker if available (disambiguates overlapping field names)
+	var ri *goRecordInfo
+	if tc, ok := c.Ty.(types.TCon); ok {
+		ri = g.recordsByOrigName[tc.Name]
+	}
+	if ri == nil {
+		ri = g.findRecordForField(c.Field)
+	}
 	if ri != nil {
 		fmt.Fprintf(g.buf, ".(%s).%s", goTypeName(ri.name), goExportedField(c.Field))
 	} else {
@@ -1686,8 +1693,14 @@ func (g *goGen) emitRecordUpdate(c ir.CRecordUpdate) error {
 		return fmt.Errorf("cannot determine record type for update (field=%q)", field)
 	}
 
-	// Map to the (possibly renamed) Go struct name
-	if ri, ok := g.recordsByOrigName[recTypeName]; ok {
+	// Map to the (possibly renamed) Go struct name using field-based disambiguation
+	var updateFieldNames []string
+	for _, u := range c.Updates {
+		updateFieldNames = append(updateFieldNames, u.Path[0])
+	}
+	if ri := g.findRecordByOrigName(recTypeName, updateFieldNames); ri != nil {
+		recTypeName = ri.name
+	} else if ri, ok := g.recordsByOrigName[recTypeName]; ok {
 		recTypeName = ri.name
 	}
 	structName := goTypeName(recTypeName)

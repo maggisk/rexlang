@@ -198,7 +198,8 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 				if err != nil {
 					return nil, err
 				}
-				result = ast.FieldAccess{Record: result, Field: field, Line: tok.Line}
+				rtn := new(string)
+				result = ast.FieldAccess{Record: result, Field: field, Line: tok.Line, RecordTypeName: rtn}
 			}
 			return result, nil
 		}
@@ -249,7 +250,7 @@ func (p *parser) parseAtom() (ast.Expr, error) {
 		if err := p.expect(lexer.TokRBrace); err != nil {
 			return nil, err
 		}
-		return ast.RecordUpdate{Record: recExpr, Updates: updates, Line: tok.Line}, nil
+		return ast.RecordUpdate{Record: recExpr, Updates: updates, Line: tok.Line, RecordTypeName: new(string)}, nil
 
 	case lexer.TokLParen:
 		p.advance()

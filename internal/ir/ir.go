@@ -132,6 +132,7 @@ type CFieldAccess struct {
 	Record Atom
 	Field  string
 	Ty     types.Type
+	Line   int // source line for type lookup
 }
 
 // CRecordUpdate creates a new record with some fields changed.
