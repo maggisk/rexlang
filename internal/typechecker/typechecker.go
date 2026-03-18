@@ -2281,6 +2281,7 @@ type TraitInfo struct {
 // ModuleResult is the result of type-checking a module.
 type ModuleResult struct {
 	Env            TypeEnv
+	FullEnv        TypeEnv // includes non-exported names (for external type resolution)
 	CtorFamilies   map[string]map[string]bool
 	Traits         map[string]TraitInfo
 	TraitInstances map[string]map[string]bool
@@ -2621,6 +2622,7 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 
 	result := &ModuleResult{
 		Env:            exportedEnv,
+		FullEnv:        env,
 		CtorFamilies:   ctorFamilies,
 		Traits:         traits,
 		TraitInstances: instances,
@@ -2693,7 +2695,10 @@ func LookupModuleType(qualifiedName string) interface{} {
 	if !ok {
 		return nil
 	}
-	return result.Env[localName]
+	if v := result.Env[localName]; v != nil {
+		return v
+	}
+	return result.FullEnv[localName]
 }
 
 // ---------------------------------------------------------------------------

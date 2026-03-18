@@ -1450,19 +1450,27 @@ func (g *goGen) emitBinop(c ir.CBinop) error {
 
 func (g *goGen) emitArithBinop(c ir.CBinop, op string) error {
 	isFloat := isFloatType(c.Ty) || isFloatAtom(c.Left) || isFloatAtom(c.Right)
-	g.buf.WriteString("(")
+	isInt := isIntType(c.Ty) || isIntAtom(c.Left) || isIntAtom(c.Right)
 	if isFloat {
+		g.buf.WriteString("(")
 		g.emitAtomAsFloat(c.Left)
-	} else {
-		g.emitAtomAsInt(c.Left)
-	}
-	fmt.Fprintf(g.buf, " %s ", op)
-	if isFloat {
+		fmt.Fprintf(g.buf, " %s ", op)
 		g.emitAtomAsFloat(c.Right)
-	} else {
+		g.buf.WriteString(")")
+	} else if isInt {
+		g.buf.WriteString("(")
+		g.emitAtomAsInt(c.Left)
+		fmt.Fprintf(g.buf, " %s ", op)
 		g.emitAtomAsInt(c.Right)
+		g.buf.WriteString(")")
+	} else {
+		// Unknown type — use runtime dispatch
+		fmt.Fprintf(g.buf, "rex_arith(")
+		g.emitAtom(c.Left)
+		fmt.Fprintf(g.buf, ", ")
+		g.emitAtom(c.Right)
+		fmt.Fprintf(g.buf, ", %q)", op)
 	}
-	g.buf.WriteString(")")
 	return nil
 }
 
@@ -2256,6 +2264,24 @@ func (g *goGen) goType(ty types.Type) string {
 	default:
 		return "any"
 	}
+}
+
+func isIntType(ty types.Type) bool {
+	if ty == nil {
+		return false
+	}
+	tc, ok := ty.(types.TCon)
+	return ok && tc.Name == "Int"
+}
+
+func isIntAtom(a ir.Atom) bool {
+	switch v := a.(type) {
+	case ir.AInt:
+		return true
+	case ir.AVar:
+		return v.Ty != nil && isIntType(v.Ty)
+	}
+	return false
 }
 
 func isFloatAtom(a ir.Atom) bool {

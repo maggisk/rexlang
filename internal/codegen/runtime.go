@@ -90,6 +90,29 @@ func rex_compare(a, b any) int {
 	return 0
 }
 
+func rex_arith(a, b any, op string) any {
+	// Runtime arithmetic dispatch for polymorphic Int/Float operations
+	switch av := a.(type) {
+	case int64:
+		bv := b.(int64)
+		switch op {
+		case "+": return av + bv
+		case "-": return av - bv
+		case "*": return av * bv
+		case "/": return av / bv
+		}
+	case float64:
+		bv := b.(float64)
+		switch op {
+		case "+": return av + bv
+		case "-": return av - bv
+		case "*": return av * bv
+		case "/": return av / bv
+		}
+	}
+	panic(fmt.Sprintf("rex_arith: unsupported types %T %s %T", a, op, b))
+}
+
 // ---------------------------------------------------------------------------
 // Display
 // ---------------------------------------------------------------------------
