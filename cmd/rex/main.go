@@ -130,14 +130,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: rex --test [--safe] [--only=<pattern>] <file.rex> [file.rex ...]")
 			os.Exit(1)
 		}
-		anyFailed := false
-		for _, path := range files {
-			if !runTests(path, only) {
-				anyFailed = true
+		if len(files) == 1 {
+			if !runTests(files[0], only) {
+				os.Exit(1)
 			}
-		}
-		if anyFailed {
-			os.Exit(1)
+		} else {
+			if !runTestsBatch(files, only) {
+				os.Exit(1)
+			}
 		}
 		return
 	}
@@ -1138,6 +1138,117 @@ func buildBinary(path string, outPath string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Built %s\n", outPath)
+}
+
+// ---------------------------------------------------------------------------
+// runTestsBatch — compile multiple test files into a single binary
+// ---------------------------------------------------------------------------
+
+func runTestsBatch(files []string, only string) bool {
+	// Phase 1: compile all files to IR sequentially (uses shared global state)
+	type compiled struct {
+		path    string
+		prog    *ir.Program
+		typeEnv typechecker.TypeEnv
+	}
+	var items []compiled
+	for _, path := range files {
+		setupSrcRoot(path)
+		src, err := readSourceWithOverlay(path)
+		if err != nil {
+			printTestErr(path, "error", err)
+			continue
+		}
+		prog, typeEnv, err := compileToIR(src, path, true)
+		if err != nil {
+			continue
+		}
+		items = append(items, compiled{path: path, prog: prog, typeEnv: typeEnv})
+	}
+
+	// Phase 2: build and run in parallel (each gets its own build dir)
+	type result struct {
+		idx    int
+		output string
+		ok     bool
+	}
+	results := make(chan result, len(items))
+	sem := make(chan struct{}, 4) // limit to 4 parallel go builds
+
+	for i, item := range items {
+		go func(idx int, item compiled) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			// Emit Go source
+			goSrc, err := codegen.EmitGoTests(item.prog, item.typeEnv)
+			if err != nil {
+				results <- result{idx: idx, output: fmt.Sprintf("Codegen error: %v\n", err), ok: false}
+				return
+			}
+
+			// Build in a temp dir
+			buildDir, err := os.MkdirTemp("", "rex-test-*")
+			if err != nil {
+				results <- result{idx: idx, output: fmt.Sprintf("Error: %v\n", err), ok: false}
+				return
+			}
+			defer os.RemoveAll(buildDir)
+
+			base := strings.TrimSuffix(filepath.Base(item.path), ".rex")
+			os.WriteFile(filepath.Join(buildDir, "main.go"), []byte(goSrc), 0644)
+			os.WriteFile(filepath.Join(buildDir, "go.mod"), []byte(fmt.Sprintf("module rex_%s_%d\n\ngo 1.24\n", base, idx)), 0644)
+			os.WriteFile(filepath.Join(buildDir, "runtime.go"), []byte(codegen.RuntimeSource()), 0644)
+
+			for _, mod := range codegen.NeededModules(item.prog, item.typeEnv) {
+				src := stdlib.GoCompanion(mod)
+				if src != "" {
+					p := filepath.Join(buildDir, "stdlib_"+strings.ToLower(strings.ReplaceAll(mod, ".", "_"))+".go")
+					os.WriteFile(p, []byte(src), 0644)
+				}
+			}
+
+			binaryPath := filepath.Join(buildDir, "program")
+			cmd := exec.Command("go", "build", "-o", binaryPath, ".")
+			cmd.Dir = buildDir
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				goFile := filepath.Join(buildDir, "main.go")
+				results <- result{idx: idx, output: fmt.Sprintf("go build failed: %v\n%s\nGenerated Go source: %s\n", err, out, goFile), ok: false}
+				return
+			}
+
+			var runCmd *exec.Cmd
+			if only != "" {
+				runCmd = exec.Command(binaryPath, only)
+			} else {
+				runCmd = exec.Command(binaryPath)
+			}
+			var buf strings.Builder
+			runCmd.Stdout = &buf
+			runCmd.Stderr = &buf
+			err = runCmd.Run()
+			results <- result{idx: idx, output: buf.String(), ok: err == nil}
+		}(i, item)
+	}
+
+	// Collect results in order
+	resultMap := make(map[int]result)
+	for range items {
+		r := <-results
+		resultMap[r.idx] = r
+	}
+	anyFailed := false
+	for i := range items {
+		r := resultMap[i]
+		if r.output != "" {
+			fmt.Print(r.output)
+		}
+		if !r.ok {
+			anyFailed = true
+		}
+	}
+	return !anyFailed
 }
 
 // ---------------------------------------------------------------------------

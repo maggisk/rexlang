@@ -510,6 +510,7 @@ func renameAtom(a Atom, renames map[string]string) Atom {
 	return a
 }
 
+
 // Program is the complete lowered program.
 type Program struct {
 	Decls []Decl
