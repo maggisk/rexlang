@@ -37,6 +37,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Usage: rex <file.rex> [args...]")
 		fmt.Fprintln(os.Stderr, "       rex --test <file.rex> [file.rex ...]")
 		fmt.Fprintln(os.Stderr, "       rex --types <file.rex>")
+		fmt.Fprintln(os.Stderr, "       rex build [--out=<path>] <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex --compile-go <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex --compile [--target=browser] <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex init | install")
@@ -68,6 +69,23 @@ func main() {
 	}
 	if args[0] == "install" {
 		runInstall(args[1:])
+		return
+	}
+	if args[0] == "build" {
+		var outPath string
+		var buildArgs []string
+		for _, a := range args[1:] {
+			if strings.HasPrefix(a, "--out=") {
+				outPath = strings.TrimPrefix(a, "--out=")
+			} else {
+				buildArgs = append(buildArgs, a)
+			}
+		}
+		if len(buildArgs) != 1 {
+			fmt.Fprintln(os.Stderr, "Usage: rex build [--out=<path>] <file.rex>")
+			os.Exit(1)
+		}
+		buildBinary(buildArgs[0], outPath)
 		return
 	}
 	if args[0] == "--compile" {
@@ -1057,6 +1075,45 @@ func runFile(path string, programArgs []string) {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// buildBinary
+// ---------------------------------------------------------------------------
+
+func buildBinary(path string, outPath string) {
+	setupSrcRoot(path)
+
+	src, err := readSourceWithOverlay(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
+	}
+
+	prog, typeEnv, err := compileToIR(src, path, false)
+	if err != nil {
+		os.Exit(1)
+	}
+
+	binary := buildGoProgram(prog, typeEnv, path, false)
+
+	// Default output: lowercase basename without extension
+	if outPath == "" {
+		base := strings.TrimSuffix(filepath.Base(path), ".rex")
+		outPath = strings.ToLower(base)
+	}
+
+	// Copy binary to output path
+	data, err := os.ReadFile(binary)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading binary: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(outPath, data, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing binary: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("Built %s\n", outPath)
 }
 
 // ---------------------------------------------------------------------------
