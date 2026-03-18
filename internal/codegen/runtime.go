@@ -141,7 +141,32 @@ func rex_display(v any) string {
 			parts = append(parts, rex_display(l.Head))
 		}
 		return "[" + strings.Join(parts, ", ") + "]"
+	case Tuple2:
+		return "(" + rex_display(val.F0) + ", " + rex_display(val.F1) + ")"
+	case Tuple3:
+		return "(" + rex_display(val.F0) + ", " + rex_display(val.F1) + ", " + rex_display(val.F2) + ")"
 	default:
+		// Try to display ADTs using reflection: struct with $tag-like pattern
+		rv := reflect.ValueOf(val)
+		if rv.Kind() == reflect.Struct {
+			t := rv.Type()
+			name := t.Name()
+			// Strip "Rex_TypeName_" prefix to get constructor name
+			if idx := strings.LastIndex(name, "_"); idx >= 0 {
+				ctorName := name[idx+1:]
+				// Collect fields F0, F1, ...
+				var fields []string
+				for i := 0; i < rv.NumField(); i++ {
+					if strings.HasPrefix(t.Field(i).Name, "F") {
+						fields = append(fields, rex_display(rv.Field(i).Interface()))
+					}
+				}
+				if len(fields) == 0 {
+					return ctorName
+				}
+				return ctorName + " " + strings.Join(fields, " ")
+			}
+		}
 		return fmt.Sprintf("%v", val)
 	}
 }

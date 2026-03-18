@@ -831,6 +831,10 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		if !ok {
 			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("record update requires a record type, got %s", types.TypeToString(resolved))}
 		}
+		// Store resolved type for codegen to disambiguate record collisions
+		recordUpdateTypesMu.Lock()
+		recordUpdateTypes[e.Line] = con
+		recordUpdateTypesMu.Unlock()
 		ri, ok := rfMap[con.Name]
 		if !ok {
 			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("'%s' is not a record type", con.Name)}
@@ -2293,6 +2297,12 @@ var (
 	moduleCache   = map[string]*ModuleResult{}
 	moduleCacheMu sync.Mutex
 
+	// recordUpdateTypes maps source line numbers to the resolved record type
+	// for RecordUpdate expressions. Used by the IR lowerer to disambiguate
+	// record collisions when multiple records share field names.
+	recordUpdateTypes   = map[int]types.TCon{}
+	recordUpdateTypesMu sync.Mutex
+
 	srcRoot   string // absolute path to src/ directory (empty if not set)
 	srcRootMu sync.Mutex
 
@@ -2669,6 +2679,14 @@ func typeDefsForModule(name string) map[string]types.Type {
 		}
 	}
 	return nil
+}
+
+// LookupRecordUpdateType returns the resolved record type for a RecordUpdate at the given line.
+func LookupRecordUpdateType(line int) (types.TCon, bool) {
+	recordUpdateTypesMu.Lock()
+	defer recordUpdateTypesMu.Unlock()
+	t, ok := recordUpdateTypes[line]
+	return t, ok
 }
 
 // TypeEnvForModule is the exported version of typeEnvForModule.

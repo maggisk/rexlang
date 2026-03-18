@@ -184,6 +184,7 @@ type RecordUpdate struct {
 	Record  Expr
 	Updates []RecordFieldUpdate
 	Line    int
+	Ty      interface{} // set by typechecker (types.Type — the record's concrete type)
 }
 
 type RecordFieldUpdate struct {

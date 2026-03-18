@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/maggisk/rexlang/internal/ast"
+	"github.com/maggisk/rexlang/internal/typechecker"
+	"github.com/maggisk/rexlang/internal/types"
 )
 
 // Lowerer converts an AST program into ANF IR.
@@ -424,6 +426,25 @@ func (l *Lowerer) normalizeApp(e ast.App) (Expr, error) {
 }
 
 func (l *Lowerer) normalizeBinop(e ast.Binop) (Expr, error) {
+	// Short-circuit: && and || must not evaluate the right side eagerly
+	if e.Op == "And" {
+		return l.normalize(e.Left, func(left Atom) (Expr, error) {
+			thenBranch, err := l.lowerExpr(e.Right)
+			if err != nil {
+				return nil, err
+			}
+			return EComplex{C: CIf{Cond: left, Then: thenBranch, Else: EAtom{A: ABool{Value: false}}}}, nil
+		})
+	}
+	if e.Op == "Or" {
+		return l.normalize(e.Left, func(left Atom) (Expr, error) {
+			elseBranch, err := l.lowerExpr(e.Right)
+			if err != nil {
+				return nil, err
+			}
+			return EComplex{C: CIf{Cond: left, Then: EAtom{A: ABool{Value: true}}, Else: elseBranch}}, nil
+		})
+	}
 	return l.normalize(e.Left, func(left Atom) (Expr, error) {
 		return l.normalize(e.Right, func(right Atom) (Expr, error) {
 			return EComplex{C: CBinop{Op: e.Op, Left: left, Right: right}}, nil
@@ -621,7 +642,11 @@ func (l *Lowerer) normalizeRecordUpdate(e ast.RecordUpdate) (Expr, error) {
 			for i, u := range e.Updates {
 				updates = append(updates, FieldUpdate{Path: u.Path, Value: atoms[i]})
 			}
-			return EComplex{C: CRecordUpdate{Record: rec, Updates: updates}}, nil
+			var ty types.Type
+			if tc, ok := typechecker.LookupRecordUpdateType(e.Line); ok {
+				ty = tc
+			}
+			return EComplex{C: CRecordUpdate{Record: rec, Updates: updates, Ty: ty}}, nil
 		})
 	})
 }

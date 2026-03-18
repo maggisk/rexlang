@@ -132,7 +132,7 @@ func newGoGen(typeEnv typechecker.TypeEnv, testMode bool) *goGen {
 		recordsByOrigName: make(map[string]*goRecordInfo),
 		traitImpls:    make(map[string][]goImplCase),
 		locals:        make(map[string]bool),
-		knownTypes:    map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
+		knownTypes:    map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true, "List": true, "Tuple2": true, "Tuple3": true, "Tuple4": true, "Unit": true},
 		neededModules: make(map[string]bool),
 		testMode:      testMode,
 	}
@@ -750,8 +750,17 @@ func (g *goGen) emitTraitDispatchers() string {
 			b.WriteString("\t}\n")
 		}
 		b.WriteString("\tv := args[0]\n")
+		// Handle nil (Unit) before the type switch
+		for _, c := range filteredCases {
+			if c.typeName == "Unit" {
+				fmt.Fprintf(&b, "\tif v == nil { return %s(args...) }\n", c.funcName)
+			}
+		}
 		b.WriteString("\tswitch v.(type) {\n")
 		for _, c := range filteredCases {
+			if c.typeName == "Unit" {
+				continue // already handled above
+			}
 			fmt.Fprintf(&b, "\tcase %s:\n", g.goTypeForDispatch(c.typeName))
 			fmt.Fprintf(&b, "\t\treturn %s(args...)\n", c.funcName)
 		}
@@ -776,6 +785,12 @@ func (g *goGen) goTypeForDispatch(typeName string) string {
 		return "bool"
 	case "List":
 		return "*RexList"
+	case "Tuple2":
+		return "Tuple2"
+	case "Tuple3":
+		return "Tuple3"
+	case "Tuple4":
+		return "Tuple4"
 	default:
 		return goTypeName(typeName)
 	}
