@@ -1,4 +1,5 @@
 _build/
+.cache/
 guide.elm-lang.org/
 *.pyc
 /rex

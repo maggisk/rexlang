@@ -657,9 +657,10 @@ func stdlibExtraTypeEnv(absPath string) typechecker.TypeEnv {
 	return nil
 }
 
-// buildGoProgram compiles an IR program to a Go binary in a temp dir.
-// Returns the binary path and a cleanup function that removes the temp dir.
-func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, testMode bool) (string, func()) {
+// buildGoProgram compiles an IR program to a Go binary in .cache/rex-build/.
+// Returns the binary path. The build dir is a stable location so that Go's
+// own content-based build cache makes repeated runs fast.
+func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, testMode bool) string {
 	// Emit Go source
 	var goSrc string
 	var err error
@@ -673,13 +674,20 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 		os.Exit(1)
 	}
 
-	// Create temp build directory
-	buildDir, err := os.MkdirTemp("", "rex-build-*")
-	if err != nil {
+	// Determine build directory: .cache/rex-build/ under project root (or cwd)
+	cwd, _ := os.Getwd()
+	root := manifest.FindProjectRoot(cwd)
+	if root == "" {
+		root = cwd
+	}
+	buildDir := filepath.Join(root, ".cache", "rex-build")
+
+	// Clean and recreate
+	os.RemoveAll(buildDir)
+	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating build dir: %v\n", err)
 		os.Exit(1)
 	}
-	cleanup := func() { os.RemoveAll(buildDir) }
 
 	// Write main.go
 	goFile := filepath.Join(buildDir, "main.go")
@@ -707,7 +715,7 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	for _, mod := range modules {
 		src := stdlib.GoCompanion(mod)
 		if src != "" {
-			p := filepath.Join(buildDir, "stdlib_"+strings.ToLower(mod)+".go")
+			p := filepath.Join(buildDir, "stdlib_"+strings.ToLower(strings.ReplaceAll(mod, ".", "_"))+".go")
 			if err := os.WriteFile(p, []byte(src), 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing companion file: %v\n", err)
 				os.Exit(1)
@@ -725,7 +733,7 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 		os.Exit(1)
 	}
 
-	return binaryPath, cleanup
+	return binaryPath
 }
 
 func readSourceWithOverlay(path string) (string, error) {
@@ -1036,8 +1044,7 @@ func runFile(path string, programArgs []string) {
 	}
 
 	// Compile to Go and execute
-	binary, cleanup := buildGoProgram(prog, typeEnv, path, false)
-	defer cleanup()
+	binary := buildGoProgram(prog, typeEnv, path, false)
 
 	cmd := exec.Command(binary, programArgs...)
 	cmd.Stdout = os.Stdout
@@ -1072,8 +1079,7 @@ func runTests(path string, only string) bool {
 	}
 
 	// Compile and run tests
-	binary, cleanup := buildGoProgram(prog, typeEnv, path, true)
-	defer cleanup()
+	binary := buildGoProgram(prog, typeEnv, path, true)
 
 	var cmd *exec.Cmd
 	if only != "" {
