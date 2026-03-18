@@ -1,20 +1,21 @@
 # RexLang
 
-> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Wasm's reach. One binary. No runtime, no dependencies, and no human who fully understands this codebase — only our new AI overlords.
+> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Go's speed. One binary. No runtime errors, and no human who fully understands this codebase — only our new AI overlords.
 
-A functional programming language with algebraic data types, pattern matching, and Hindley-Milner type inference. The current implementation is a Go tree-walking interpreter that ships as a single static binary — no runtime dependency. The long-term plan is a **WasmGC compilation backend** — producing `.wasm` binaries that run in browsers (native) and on servers via a Wasm runtime (Wasmtime, Wasmer, WasmEdge).
+A functional programming language with algebraic data types, pattern matching, and Hindley-Milner type inference. `rex file.rex` compiles your program to Go behind the scenes, builds a native binary, and runs it. Ships as a single static binary — Go is the only dependency. Additional compilation targets: **JavaScript** (browser) and **WasmGC** (in progress).
 
 ## Quick start
 
 ```bash
 go build -o rex ./cmd/rex/
 
-./rex examples/io.rex             # run a program (requires main)
+./rex examples/io.rex                # run a program (requires main)
 ./rex --test examples/factorial.rex  # run tests
-./rex --safe examples/io.rex      # --safe: reject any `todo` usage
-./rex --types Std:List            # show all exported types in a module
-./rex --types myfile.rex          # show all top-level binding types
-./rex                             # start the REPL
+./rex --test --only="double" f.rex   # run only tests matching a pattern
+./rex --safe examples/io.rex         # --safe: reject any `todo` usage
+./rex --types Std:List               # show all exported types in a module
+./rex --types myfile.rex             # show all top-level binding types
+./rex --compile --target=browser src/Main.rex  # compile to JS for browser
 ```
 
 ## Language
@@ -263,6 +264,32 @@ H.sumDoubles [1, 2, 3]    -- 12
 
 User modules use absolute paths from a `src/` directory in the project root. Dots map to directories: `import Lib.Helpers` resolves to `src/Lib/Helpers.rex`. The entry file must be inside `src/` for user module imports to work. Circular imports produce a clear error.
 
+### Packages
+
+Rex uses `rex.toml` for project dependencies:
+
+```toml
+[dependencies]
+mylib = { git = "https://github.com/user/mylib.git", ref = "main" }
+utils = { path = "../utils" }
+```
+
+```bash
+rex init                             # create rex.toml
+rex install                          # fetch all dependencies
+rex install https://github.com/u/pkg main  # add a git dependency
+rex install ../utils                 # add a local path dependency
+```
+
+Import package modules with the package name as namespace:
+
+```
+import mylib:Parser (parse, fromString)
+import utils:Helpers as H
+```
+
+Git dependencies are cloned to `rex_modules/`. Path dependencies resolve directly. Use `rex.local.toml` (gitignored) to override git deps with local paths during development.
+
 ### Exports
 
 Use `export` to make bindings visible to importers. Place it on its own line before the definition:
@@ -326,7 +353,7 @@ main args =
 
 `main` must have type `List String -> Int`. Use `_` to ignore args: `main _ = 0`.
 
-Only declarations are allowed at the top level — bare expressions like `1 + 2` are rejected. The REPL is exempt from both rules.
+Only declarations are allowed at the top level — bare expressions like `1 + 2` are rejected.
 
 ### Built-in test framework
 
@@ -443,6 +470,8 @@ Non-exhaustive patterns are caught at compile time — `match` expressions on AD
 | `Std:Random` | Pure seed-based RNG (`rngMake`, `rngInt`, `rngFloat`, `rngBool`, `rngList`) and actor facade (`randomInt`, `randomFloat`, `randomBool`, `shuffle`) — xorshift32; opaque `Rng` type |
 | `Std:Bitwise` | `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shiftLeft`, `shiftRight` — bitwise operations on `Int` |
 | `Std:DateTime` | `now`, `fromMillis`, `fromParts`, `fromLocalParts`, `parse`, `toMillis`, `toParts`, `toLocalParts`, `format`, `formatLocal`, `weekday`, `add`, `sub`, `diff`; duration constructors `milliseconds`, `seconds`, `minutes`, `hours`, `days`; opaque `Instant`/`Duration` types, `DateTimeParts` record, `Weekday` ADT |
+| `Std:Http.Server` | `httpServe` — HTTP server with pattern matching on `(method, segments path)` for routing; `Request`/`Response` records; response helpers |
+| `Std:Js` | Browser JS FFI: `JsRef` opaque type, `jsGlobal`, `jsGet`, `jsSet`, `jsCall`, `jsNew`, `jsCallback`, `jsFrom*`/`jsTo*` conversions, `jsNull` — browser-only via target overlay |
 
 ## Examples
 
@@ -479,14 +508,17 @@ Non-exhaustive patterns are caught at compile time — `match` expressions on AD
 | `examples/forward_ref.rex` | Forward references between top-level bindings |
 | `examples/testing.rex` | Built-in test framework |
 | `examples/json_decode.rex` | JSON decoder combinators with `Std:Json.Decode` |
+| `examples/http.rex` | HTTP server with `Std:Http.Server` |
 | `examples/tcp_echo.rex` | TCP echo server with `Std:Net` and `Std:Process` |
 | `examples/user_modules/` | User module imports with `src/` directory |
 
 ## Running tests
 
 ```bash
-./rex --test internal/stdlib/rexfiles/*.rex
-go test ./...
+./rex --test internal/stdlib/rexfiles/*.rex   # stdlib tests
+./rex --test --only="length" myfile.rex       # run only matching tests
+go test ./...                                 # Go-level tests
+make test                                     # everything
 ```
 
 ## Roadmap
@@ -514,19 +546,22 @@ go test ./...
 - [x] TCP networking — `Std:Net` with `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener`
 - [x] Random numbers — `Std:Random` with pure seed-based API and actor facade; `randomInt`, `randomFloat`, `randomBool`, `shuffle`
 - [x] Date/Time — `Std:DateTime` with `Instant`/`Duration` opaque types, Temporal-inspired API, pure Rex calendar math
+- [x] HTTP server — `Std:Http.Server` with `Request`/`Response` records and pattern-matching routing
+- [x] JS FFI — `Std:Js` with `JsRef` opaque type for browser interop (browser-only via target overlay)
 
 ### Tooling
 
 - [x] `--types` — type query for files and stdlib modules
 - [ ] Installable `rex` CLI (`go install`)
-- [x] REPL history — readline with `~/.rexlang_history`, arrow keys, Ctrl-R search
 - [x] Better error messages — type errors now include source line numbers
+- [x] Package system — `rex.toml` with git and path dependencies; `rex init`, `rex install`
 
 ### Compilation
 
-- [ ] IR design (A-normal form)
-- [ ] WasmGC backend — emit WAT → `wasm-tools` → `.wasm`
-- [ ] WASI output (servers/CLI) and browser deployment via standard Wasm loader
+- [x] IR design (A-normal form) — pattern match compilation to decision trees
+- [x] Go backend — `rex file.rex` compiles to Go, builds a native binary, and runs it; all stdlib and user modules supported; actors via goroutines
+- [x] JS backend — `--compile --target=browser` emits `.js` + `.html`; actors via synchronous CPS; `Std:Js` FFI for browser APIs
+- [ ] WasmGC backend — emit WAT → `wasm-tools` → `.wasm` (in progress: primitives, functions, closures, ADTs, strings, lists, tuples, tail calls, traits done; stdlib and actors remaining)
 
 ## Simmering
 
@@ -536,6 +571,6 @@ Ideas worth keeping in mind but not yet committed to. May never happen.
 
 - **Extensible records (row polymorphism)** — functions over "any record with field `x`". Elm has a restricted form (read-only narrowing, no field addition/deletion); PureScript has full row polymorphism. Elm's restricted version would compile to WasmGC via monomorphization (concrete record type known at each call site), so the compilation target isn't a blocker. The real cost is type system complexity — error messages get harder and the inference machinery grows. Traits already cover many of the same use cases. Worth revisiting only if plain records prove genuinely limiting in practice.
 - **Hot module reloading** — WasmGC separates code from the GC-managed heap, which makes this more tractable than classic linear-memory Wasm. Live GC references are typed and runtime-managed, so a host could in theory transfer them from an old module instance to a new one. The open questions are type layout compatibility across versions and the lack of standardized dynamic linking in the Wasm spec today. Needs more research before committing.
-- **Concurrency / actors** — already implemented via `Std:Process` with Go goroutines. May swap internals for real WASI threads when the spec matures.
+- **Concurrency / actors** — already implemented via `Std:Process` with Go goroutines (native backend) and synchronous CPS (JS backend). WasmGC backend needs stack switching (the [Wasm stack switching proposal](https://github.com/WebAssembly/stack-switching)) to support lightweight concurrent processes.
 - **List fusion** — the WasmGC compiler could detect `map |> filter |> take` chains and fuse them into a single pass, eliminating intermediate lists. Until then, an explicit `Std:Stream` module provides opt-in lazy evaluation. If fusion lands, `Stream` becomes unnecessary for finite pipelines (but remains useful for infinite sequences).
 - **Tagged templates** — backtick-delimited literals with a tag prefix: `` html`<div onClick={handler}>{content}</div>` ``. The parser desugars the template into typed function calls at compile time (not a runtime string). Each `{expr}` hole is a real Rex expression, fully typechecked. Different tags (html, sql, regex, …) could provide different desugaring strategies. Backticks are only valid with a tag — no untagged template literals. Enables JSX-like HTML authoring without contaminating the core expression grammar.
