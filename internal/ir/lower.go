@@ -165,17 +165,88 @@ func (l *Lowerer) lowerExprList(exprs []ast.Expr) (Expr, error) {
 	if len(exprs) == 1 {
 		return l.lowerExpr(exprs[0])
 	}
+	// If the first expression is a let/let-rec/let-pat without `in`, thread the
+	// rest of the list as its continuation so names are preserved.
+	switch e := exprs[0].(type) {
+	case ast.Let:
+		if e.InExpr == nil {
+			rest, err := l.lowerExprList(exprs[1:])
+			if err != nil {
+				return nil, err
+			}
+			bind, err := l.lowerExpr(e.Body)
+			if err != nil {
+				return nil, err
+			}
+			if e.Recursive {
+				var cexpr CExpr
+				switch be := bind.(type) {
+				case EComplex:
+					cexpr = be.C
+				default:
+					cexpr = CLambda{Body: bind}
+				}
+				return ELetRec{
+					Bindings: []RecBinding{{Name: e.Name, Bind: cexpr}},
+					Body:     rest,
+				}, nil
+			}
+			return l.wrapExpr(bind, e.Name, rest), nil
+		}
+	case ast.LetRec:
+		if e.InExpr == nil {
+			rest, err := l.lowerExprList(exprs[1:])
+			if err != nil {
+				return nil, err
+			}
+			var bindings []RecBinding
+			for _, b := range e.Bindings {
+				body, err := l.lowerExpr(b.Body)
+				if err != nil {
+					return nil, err
+				}
+				var cexpr CExpr
+				switch be := body.(type) {
+				case EComplex:
+					cexpr = be.C
+				default:
+					cexpr = CLambda{Body: body}
+				}
+				bindings = append(bindings, RecBinding{Name: b.Name, Bind: cexpr})
+			}
+			return ELetRec{Bindings: bindings, Body: rest}, nil
+		}
+	case ast.LetPat:
+		if e.InExpr == nil {
+			rest, err := l.lowerExprList(exprs[1:])
+			if err != nil {
+				return nil, err
+			}
+			bind, err := l.lowerExpr(e.Body)
+			if err != nil {
+				return nil, err
+			}
+			pat := lowerPattern(e.Pat)
+			tmp := l.fresh("pat")
+			inner := l.wrapExpr(bind, tmp, EComplex{C: CMatch{
+				Scrutinee: AVar{Name: tmp},
+				Arms:      []MatchArm{{Pat: pat, Body: rest}},
+			}})
+			return inner, nil
+		}
+	}
+
 	// Thread: let _ = e1 in (let _ = e2 in ... en)
 	rest, err := l.lowerExprList(exprs[1:])
 	if err != nil {
 		return nil, err
 	}
-	first, err := l.lowerExpr(exprs[0])
+	lowered, err := l.lowerExpr(exprs[0])
 	if err != nil {
 		return nil, err
 	}
-	// If first is already a simple atom, wrap in a let _ = ...
-	switch f := first.(type) {
+	// If lowered is already a simple atom, wrap in a let _ = ...
+	switch f := lowered.(type) {
 	case EAtom:
 		_ = f // discard the value, proceed to rest
 		return rest, nil
@@ -184,7 +255,7 @@ func (l *Lowerer) lowerExprList(exprs []ast.Expr) (Expr, error) {
 	default:
 		// Wrap in a temporary
 		tmp := l.fresh("seq")
-		return l.wrapExpr(first, tmp, rest), nil
+		return l.wrapExpr(lowered, tmp, rest), nil
 	}
 }
 
