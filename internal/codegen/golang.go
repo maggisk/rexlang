@@ -269,6 +269,9 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 	// Emit type definitions (ADTs, records, tuples)
 	out.WriteString(g.emitTypeDefinitions())
 
+	// Ensure Result and Maybe ADTs are defined if needed by external wrappers
+	g.ensureBuiltinADTs(out, prog)
+
 	// Emit trait dispatch functions
 	out.WriteString(g.emitTraitDispatchers())
 
@@ -658,6 +661,41 @@ func RuntimeSource() string {
 // Trait dispatch
 // ---------------------------------------------------------------------------
 
+// ensureBuiltinADTs emits Result and Maybe type definitions if they're needed
+// by external wrappers but not already defined in the program's type declarations.
+func (g *goGen) ensureBuiltinADTs(out *strings.Builder, prog *ir.Program) {
+	needResult, needMaybe := false, false
+	for _, d := range prog.Decls {
+		if ext, ok := d.(ir.DExternal); ok {
+			fi := g.funcs[ext.Name]
+			if fi == nil {
+				continue
+			}
+			switch returnKind(fi.retType) {
+			case "result":
+				needResult = true
+			case "maybe":
+				needMaybe = true
+			}
+		}
+	}
+
+	if needResult && g.adts["Result"] == nil {
+		out.WriteString("type Rex_Result interface{ tagRex_Result() int }\n")
+		out.WriteString("type Rex_Result_Ok struct { F0 any }\n")
+		out.WriteString("func (Rex_Result_Ok) tagRex_Result() int { return 0 }\n")
+		out.WriteString("type Rex_Result_Err struct { F0 any }\n")
+		out.WriteString("func (Rex_Result_Err) tagRex_Result() int { return 1 }\n\n")
+	}
+	if needMaybe && g.adts["Maybe"] == nil {
+		out.WriteString("type Rex_Maybe interface{ tagRex_Maybe() int }\n")
+		out.WriteString("type Rex_Maybe_Nothing struct{}\n")
+		out.WriteString("func (Rex_Maybe_Nothing) tagRex_Maybe() int { return 0 }\n")
+		out.WriteString("type Rex_Maybe_Just struct { F0 any }\n")
+		out.WriteString("func (Rex_Maybe_Just) tagRex_Maybe() int { return 1 }\n\n")
+	}
+}
+
 func (g *goGen) emitTraitDispatchers() string {
 	var b strings.Builder
 
@@ -971,8 +1009,9 @@ func (g *goGen) emitExprStmt(expr ir.Expr, isReturn bool) error {
 			g.wn("return ")
 			g.emitAtom(e.A)
 			g.buf.WriteByte('\n')
-		} else {
-			g.wn("")
+		} else if _, isUnit := e.A.(ir.AUnit); !isUnit {
+			// Skip bare unit in non-return position (bare `nil` is invalid Go)
+			g.wn("_ = ")
 			g.emitAtom(e.A)
 			g.buf.WriteByte('\n')
 		}
@@ -1285,8 +1324,22 @@ func (g *goGen) emitBinop(c ir.CBinop) error {
 	case "Mul":
 		return g.emitArithBinop(c, "*")
 	case "Div":
+		// Avoid compile-time constant division by zero — use runtime variable
+		if isLiteralZero(c.Right) {
+			g.buf.WriteString("func() int64 { d := int64(0); return ")
+			g.emitAtomAsInt(c.Left)
+			g.buf.WriteString(" / d }()")
+			return nil
+		}
 		return g.emitArithBinop(c, "/")
 	case "Mod":
+		// Avoid compile-time constant modulo by zero — use runtime variable
+		if isLiteralZero(c.Right) {
+			g.buf.WriteString("func() int64 { d := int64(0); return ")
+			g.emitAtomAsInt(c.Left)
+			g.buf.WriteString(" % d }()")
+			return nil
+		}
 		g.buf.WriteString("(")
 		g.emitAtomTyped(c.Left, c.Ty)
 		g.buf.WriteString(" % ")
@@ -1368,7 +1421,7 @@ func (g *goGen) emitBinop(c ir.CBinop) error {
 }
 
 func (g *goGen) emitArithBinop(c ir.CBinop, op string) error {
-	isFloat := isFloatType(c.Ty)
+	isFloat := isFloatType(c.Ty) || isFloatAtom(c.Left) || isFloatAtom(c.Right)
 	g.buf.WriteString("(")
 	if isFloat {
 		g.emitAtomAsFloat(c.Left)
@@ -2175,6 +2228,23 @@ func (g *goGen) goType(ty types.Type) string {
 	default:
 		return "any"
 	}
+}
+
+func isFloatAtom(a ir.Atom) bool {
+	switch v := a.(type) {
+	case ir.AFloat:
+		return true
+	case ir.AVar:
+		return v.Ty != nil && isFloatType(v.Ty)
+	}
+	return false
+}
+
+func isLiteralZero(a ir.Atom) bool {
+	if v, ok := a.(ir.AInt); ok {
+		return v.Value == 0
+	}
+	return false
 }
 
 func isFloatType(ty types.Type) bool {

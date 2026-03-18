@@ -52,17 +52,28 @@ func ResolveImports(exprs []ast.Expr, srcRoot string, target string, packageRoot
 		aliases:      make(map[string]string),
 		modTopNames:  make(map[string]map[string]bool),
 	}
-	// Always include Prelude types (Ordering) and trait declarations.
-	// Impl blocks and function bodies are handled by codegen from the type env.
-	preludeSrc, err := stdlib.Source("Prelude")
-	if err == nil {
-		preludeExprs, err := parser.Parse(preludeSrc)
+	// Always include Prelude declarations (types, traits, impls, functions),
+	// unless the entry file IS the Prelude (detected by checking for trait Eq).
+	isPrelude := false
+	for _, e := range exprs {
+		if td, ok := e.(ast.TraitDecl); ok && td.Name == "Eq" {
+			isPrelude = true
+			break
+		}
+	}
+	if !isPrelude {
+		preludeSrc, err := stdlib.Source("Prelude")
 		if err == nil {
-			r.visited["Std:Prelude"] = true
-			for _, me := range preludeExprs {
-				switch me.(type) {
-				case ast.TypeDecl, ast.TraitDecl:
-					r.decls = append(r.decls, me)
+			preludeExprs, err := parser.Parse(preludeSrc)
+			if err == nil {
+				r.visited["Std:Prelude"] = true
+				for _, me := range preludeExprs {
+					switch me.(type) {
+					case ast.TestDecl, ast.Export, ast.TypeAnnotation, ast.Import:
+						continue
+					default:
+						r.decls = append(r.decls, me)
+					}
 				}
 			}
 		}
@@ -90,7 +101,20 @@ type resolver struct {
 }
 
 func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
+	// Also collect imports from inside test bodies
+	var allImports []ast.Expr
 	for _, e := range exprs {
+		if _, ok := e.(ast.Import); ok {
+			allImports = append(allImports, e)
+		} else if td, ok := e.(ast.TestDecl); ok && isRoot {
+			for _, te := range td.Body {
+				if _, ok := te.(ast.Import); ok {
+					allImports = append(allImports, te)
+				}
+			}
+		}
+	}
+	for _, e := range allImports {
 		imp, ok := e.(ast.Import)
 		if !ok {
 			continue
@@ -363,6 +387,11 @@ func renameRefs(expr ast.Expr, nameMap map[string]string) ast.Expr {
 		e.Body = renameRefs(e.Body, nameMap)
 		if e.InExpr != nil {
 			e.InExpr = renameRefs(e.InExpr, nameMap)
+		}
+		return e
+	case ast.TestDecl:
+		for i, bodyExpr := range e.Body {
+			e.Body[i] = renameRefs(bodyExpr, nameMap)
 		}
 		return e
 	}
