@@ -1,28 +1,22 @@
-// Command rex is the RexLang interpreter and REPL.
+// Command rex is the RexLang compiler and runtime.
 package main
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
-	"github.com/chzyer/readline"
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/codegen"
-	"github.com/maggisk/rexlang/internal/eval"
+	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/ir"
-	"github.com/maggisk/rexlang/internal/lexer"
 	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
-	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/typechecker"
 	"github.com/maggisk/rexlang/internal/types"
-
-	_ "github.com/maggisk/rexlang/internal/stdlib/rexfiles" // registers stdlib FFI
 )
 
 // safeMode is set by the --safe flag; it promotes warnings (todo usage) to errors.
@@ -40,8 +34,13 @@ var packageRoots map[string]string
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
-		repl()
-		return
+		fmt.Fprintln(os.Stderr, "Usage: rex <file.rex> [args...]")
+		fmt.Fprintln(os.Stderr, "       rex --test <file.rex> [file.rex ...]")
+		fmt.Fprintln(os.Stderr, "       rex --types <file.rex>")
+		fmt.Fprintln(os.Stderr, "       rex --compile-go <file.rex>")
+		fmt.Fprintln(os.Stderr, "       rex --compile [--target=browser] <file.rex>")
+		fmt.Fprintln(os.Stderr, "       rex init | install")
+		os.Exit(1)
 	}
 
 	// Strip global flags before dispatching.
@@ -60,8 +59,8 @@ func main() {
 	args = filtered
 
 	if len(args) == 0 {
-		repl()
-		return
+		fmt.Fprintln(os.Stderr, "Usage: rex <file.rex> [args...]")
+		os.Exit(1)
 	}
 	if args[0] == "init" {
 		runInit()
@@ -93,7 +92,7 @@ func main() {
 	}
 	if args[0] == "--types" {
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: rex --types <file.rex | Std:Module>")
+			fmt.Fprintln(os.Stderr, "Usage: rex --types <file.rex>")
 			os.Exit(1)
 		}
 		showTypes(args[1])
@@ -113,28 +112,13 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: rex --test [--safe] [--only=<pattern>] <file.rex> [file.rex ...]")
 			os.Exit(1)
 		}
-		totalFailed := 0
-		var allFailed []struct {
-			path string
-			t    eval.FailedTest
-		}
+		anyFailed := false
 		for _, path := range files {
-			n, tests := runTests(path, only)
-			totalFailed += n
-			for _, t := range tests {
-				allFailed = append(allFailed, struct {
-					path string
-					t    eval.FailedTest
-				}{path, t})
+			if !runTests(path, only) {
+				anyFailed = true
 			}
 		}
-		if len(allFailed) > 0 {
-			fmt.Printf("\nFailures:\n")
-			for _, f := range allFailed {
-				fmt.Printf("  %s  (%s:%d)\n", f.t.Name, f.path, f.t.Line)
-			}
-		}
-		if totalFailed > 0 {
+		if anyFailed {
 			os.Exit(1)
 		}
 		return
@@ -209,12 +193,10 @@ func handleWarnings(path string, warnings []typechecker.Warning) {
 // ---------------------------------------------------------------------------
 
 // setupSrcRoot detects a src/ directory in cwd, validates the entry file if needed,
-// and sets the srcRoot for both typechecker and eval. Also detects rex.toml and
-// populates package roots.
+// and sets the srcRoot for the typechecker. Also detects rex.toml and populates
+// package roots.
 func setupSrcRoot(entryFile string) {
-	// Set target for typechecker and eval
 	typechecker.SetTarget(targetMode)
-	eval.SetTarget(targetMode)
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -230,7 +212,6 @@ func setupSrcRoot(entryFile string) {
 			if err == nil {
 				packageRoots = roots
 				typechecker.SetPackageRoots(roots)
-				eval.SetPackageRoots(roots)
 			}
 		}
 	}
@@ -238,7 +219,6 @@ func setupSrcRoot(entryFile string) {
 	srcDir := filepath.Join(cwd, "src")
 	info, err := os.Stat(srcDir)
 	if err != nil || !info.IsDir() {
-		// No src/ directory — user module imports will error at load time
 		return
 	}
 	absEntry, err := filepath.Abs(entryFile)
@@ -247,12 +227,9 @@ func setupSrcRoot(entryFile string) {
 	}
 	absSrc, _ := filepath.Abs(srcDir)
 	if !strings.HasPrefix(absEntry, absSrc+string(filepath.Separator)) {
-		// Entry file is NOT under src/ — don't set srcRoot.
-		// User module imports will error at load time.
 		return
 	}
 	typechecker.SetSrcRoot(absSrc)
-	eval.SetSrcRoot(absSrc)
 }
 
 // ---------------------------------------------------------------------------
@@ -516,6 +493,241 @@ func addAndInstallDep(projectRoot, gitURL, ref string) {
 // exists (e.g. Foo.browser.rex for --target=browser), concatenates it.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// showTypes
+// ---------------------------------------------------------------------------
+
+func showTypes(path string) {
+	setupSrcRoot(path)
+
+	source, err := readSourceWithOverlay(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
+	}
+
+	exprs, err := parser.Parse(source)
+	if err != nil {
+		printErr("Parse error", err)
+		os.Exit(1)
+	}
+	if err := parser.ValidateToplevel(exprs); err != nil {
+		printErr("Syntax error", err)
+		os.Exit(1)
+	}
+	if err := parser.ValidateIndentation(exprs); err != nil {
+		printErr("Indentation error", err)
+		os.Exit(1)
+	}
+	exprs, err = typechecker.ReorderToplevel(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+
+	absPath, _ := filepath.Abs(path)
+	extraTypeEnv := stdlibExtraTypeEnv(absPath)
+
+	var typeEnv typechecker.TypeEnv
+	var warnings []typechecker.Warning
+	if extraTypeEnv != nil {
+		typeEnv, warnings, err = typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv)
+	} else {
+		typeEnv, warnings, err = typechecker.CheckProgram(exprs)
+	}
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+	handleWarnings(path, warnings)
+
+	// Collect top-level names in source order
+	var names []string
+	seen := map[string]bool{}
+	for _, e := range exprs {
+		switch e := e.(type) {
+		case ast.Let:
+			if e.InExpr == nil && e.Name != "_" && !seen[e.Name] {
+				names = append(names, e.Name)
+				seen[e.Name] = true
+			}
+		case ast.LetRec:
+			if e.InExpr == nil {
+				for _, b := range e.Bindings {
+					if !seen[b.Name] {
+						names = append(names, b.Name)
+						seen[b.Name] = true
+					}
+				}
+			}
+		}
+	}
+
+	for _, name := range names {
+		v, ok := typeEnv[name]
+		if !ok {
+			continue
+		}
+		if scheme, ok := v.(types.Scheme); ok {
+			fmt.Printf("%s : %s\n", name, types.SchemeToString(scheme))
+		}
+	}
+}
+
+// compileToIR runs the frontend pipeline: parse → validate → typecheck → IR.
+// Errors are printed to stderr; returns (nil, nil, err) on failure.
+func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.TypeEnv, error) {
+	exprs, err := parser.Parse(source)
+	if err != nil {
+		printErr("Parse error", err)
+		return nil, nil, err
+	}
+
+	if err := parser.ValidateToplevel(exprs); err != nil {
+		printErr("Syntax error", err)
+		return nil, nil, err
+	}
+
+	if err := parser.ValidateIndentation(exprs); err != nil {
+		printErr("Indentation error", err)
+		return nil, nil, err
+	}
+
+	exprs, err = typechecker.ReorderToplevel(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		return nil, nil, err
+	}
+
+	// Detect if this is a stdlib file for extra type env
+	absPath, _ := filepath.Abs(path)
+	extraTypeEnv := stdlibExtraTypeEnv(absPath)
+
+	var typeEnv typechecker.TypeEnv
+	var warnings []typechecker.Warning
+	if extraTypeEnv != nil {
+		typeEnv, warnings, err = typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv)
+	} else {
+		typeEnv, warnings, err = typechecker.CheckProgram(exprs)
+	}
+	if err != nil {
+		printErr("Type error", err)
+		return nil, nil, err
+	}
+	handleWarnings(path, warnings)
+
+	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
+	if err != nil {
+		printErr("Import resolution error", err)
+		return nil, nil, err
+	}
+	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
+	allExprs := append(importInfo.Decls, userExprs...)
+
+	l := ir.NewLowerer()
+	prog, err := l.LowerProgram(allExprs)
+	if err != nil {
+		printErr("IR error", err)
+		return nil, nil, err
+	}
+
+	if testMode {
+		prog = ir.ShakeForTests(prog)
+	} else {
+		prog = ir.Shake(prog)
+	}
+
+	return prog, typeEnv, nil
+}
+
+// stdlibExtraTypeEnv returns extra type environment for stdlib module testing.
+func stdlibExtraTypeEnv(absPath string) typechecker.TypeEnv {
+	if !strings.HasSuffix(absPath, ".rex") {
+		return nil
+	}
+	base := strings.TrimSuffix(filepath.Base(absPath), ".rex")
+	if typechecker.TypeEnvForModule(base) != nil {
+		return typechecker.TypeEnvForModule(base)
+	}
+	dir := filepath.Base(filepath.Dir(absPath))
+	dotted := dir + "." + base
+	if typechecker.TypeEnvForModule(dotted) != nil {
+		return typechecker.TypeEnvForModule(dotted)
+	}
+	return nil
+}
+
+// buildGoProgram compiles an IR program to a Go binary in a temp dir.
+// Returns the binary path and a cleanup function that removes the temp dir.
+func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, testMode bool) (string, func()) {
+	// Emit Go source
+	var goSrc string
+	var err error
+	if testMode {
+		goSrc, err = codegen.EmitGoTests(prog, typeEnv)
+	} else {
+		goSrc, err = codegen.EmitGo(prog, typeEnv)
+	}
+	if err != nil {
+		printErr("Codegen error", err)
+		os.Exit(1)
+	}
+
+	// Create temp build directory
+	buildDir, err := os.MkdirTemp("", "rex-build-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating build dir: %v\n", err)
+		os.Exit(1)
+	}
+	cleanup := func() { os.RemoveAll(buildDir) }
+
+	// Write main.go
+	goFile := filepath.Join(buildDir, "main.go")
+	if err := os.WriteFile(goFile, []byte(goSrc), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing Go source: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Write go.mod
+	base := strings.TrimSuffix(filepath.Base(path), ".rex")
+	goMod := fmt.Sprintf("module rex_%s\n\ngo 1.24\n", base)
+	if err := os.WriteFile(filepath.Join(buildDir, "go.mod"), []byte(goMod), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing go.mod: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Extract runtime
+	if err := os.WriteFile(filepath.Join(buildDir, "runtime.go"), []byte(codegen.RuntimeSource()), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing runtime.go: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Extract companion files for needed stdlib modules
+	modules := codegen.NeededModules(prog, typeEnv)
+	for _, mod := range modules {
+		src := stdlib.GoCompanion(mod)
+		if src != "" {
+			p := filepath.Join(buildDir, "stdlib_"+strings.ToLower(mod)+".go")
+			if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing companion file: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+
+	// Build
+	binaryPath := filepath.Join(buildDir, "program")
+	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
+	cmd.Dir = buildDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "go build failed: %v\n%s\nGenerated Go source: %s\n", err, out, goFile)
+		os.Exit(1)
+	}
+
+	return binaryPath, cleanup
+}
+
 func readSourceWithOverlay(path string) (string, error) {
 	base, err := os.ReadFile(path)
 	if err != nil {
@@ -556,7 +768,7 @@ func compileFile(path string) {
 		os.Exit(1)
 	}
 
-	if err := eval.ValidateToplevel(exprs); err != nil {
+	if err := parser.ValidateToplevel(exprs); err != nil {
 		printErr("Syntax error", err)
 		os.Exit(1)
 	}
@@ -640,70 +852,22 @@ func compileGoFile(path string) {
 		os.Exit(1)
 	}
 
-	// Parse
-	exprs, err := parser.Parse(string(source))
+	prog, typeEnv, err := compileToIR(string(source), path, false)
 	if err != nil {
-		printErr("Parse error", err)
 		os.Exit(1)
 	}
 
-	if err := eval.ValidateToplevel(exprs); err != nil {
-		printErr("Syntax error", err)
-		os.Exit(1)
-	}
-
-	if err := parser.ValidateIndentation(exprs); err != nil {
-		printErr("Indentation error", err)
-		os.Exit(1)
-	}
-
-	exprs, err = typechecker.ReorderToplevel(exprs)
-	if err != nil {
-		printErr("Type error", err)
-		os.Exit(1)
-	}
-
-	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
-	if err != nil {
-		printErr("Type error", err)
-		os.Exit(1)
-	}
-	handleWarnings(path, warnings)
-
-	// Resolve module imports
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
-	if err != nil {
-		printErr("Import resolution error", err)
-		os.Exit(1)
-	}
-	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
-	allExprs := append(importInfo.Decls, userExprs...)
-
-	// Lower to IR
-	l := ir.NewLowerer()
-	prog, err := l.LowerProgram(allExprs)
-	if err != nil {
-		printErr("IR error", err)
-		os.Exit(1)
-	}
-
-	// Tree shake
-	prog = ir.Shake(prog)
-
-	// Emit Go source
 	goSrc, err := codegen.EmitGo(prog, typeEnv)
 	if err != nil {
 		printErr("Codegen error", err)
 		os.Exit(1)
 	}
 
-	// Determine output paths
 	base := strings.TrimSuffix(filepath.Base(path), ".rex")
 	goDir := base + "_go"
 	goFile := filepath.Join(goDir, "main.go")
 	binaryPath := base
 
-	// Create output directory
 	if err := os.MkdirAll(goDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating directory: %v\n", err)
 		os.Exit(1)
@@ -714,15 +878,31 @@ func compileGoFile(path string) {
 		os.Exit(1)
 	}
 
-	// Create a go.mod for the generated code
+	// Extract runtime
+	if err := os.WriteFile(filepath.Join(goDir, "runtime.go"), []byte(codegen.RuntimeSource()), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing runtime.go: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Extract companion files
+	modules := codegen.NeededModules(prog, typeEnv)
+	for _, mod := range modules {
+		src := stdlib.GoCompanion(mod)
+		if src != "" {
+			p := filepath.Join(goDir, "stdlib_"+strings.ToLower(mod)+".go")
+			if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing companion file: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+
 	goMod := fmt.Sprintf("module rex_%s\n\ngo 1.24\n", base)
-	goModFile := filepath.Join(goDir, "go.mod")
-	if err := os.WriteFile(goModFile, []byte(goMod), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(goDir, "go.mod"), []byte(goMod), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing go.mod: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Build with go build
 	absOutput, _ := filepath.Abs(binaryPath)
 	cmd := exec.Command("go", "build", "-o", absOutput, ".")
 	cmd.Dir = goDir
@@ -754,7 +934,7 @@ func compileJSFile(path string) {
 		os.Exit(1)
 	}
 
-	if err := eval.ValidateToplevel(exprs); err != nil {
+	if err := parser.ValidateToplevel(exprs); err != nil {
 		printErr("Syntax error", err)
 		os.Exit(1)
 	}
@@ -831,44 +1011,16 @@ func runFile(path string, programArgs []string) {
 		os.Exit(1)
 	}
 
-	// Parse
-	exprs, err := parser.Parse(source)
+	// Frontend: parse → typecheck → IR
+	prog, typeEnv, err := compileToIR(source, path, false)
 	if err != nil {
-		printErr("Lexer/Parse error", err)
-		os.Exit(1)
+		os.Exit(1) // errors already printed by compileToIR
 	}
-
-	// Validate no bare expressions at top level
-	if err := eval.ValidateToplevel(exprs); err != nil {
-		printErr("Syntax error", err)
-		os.Exit(1)
-	}
-
-	// Validate indentation
-	if err := parser.ValidateIndentation(exprs); err != nil {
-		printErr("Indentation error", err)
-		os.Exit(1)
-	}
-
-	// Reorder top-level bindings by dependency
-	exprs, err = typechecker.ReorderToplevel(exprs)
-	if err != nil {
-		printErr("Type error", err)
-		os.Exit(1)
-	}
-
-	// Type check
-	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
-	if err != nil {
-		printErr("Type error", err)
-		os.Exit(1)
-	}
-	handleWarnings(path, warnings)
 
 	// Validate main exists and unifies with List String -> Int
 	mainScheme, ok := typeEnv["main"]
 	if !ok {
-		printErr("Type error", fmt.Errorf("no main function — add 'export let main args = ...'"))
+		printErr("Type error", fmt.Errorf("no main function — add 'export main args = ...'"))
 		os.Exit(1)
 	}
 	scheme, ok := mainScheme.(types.Scheme)
@@ -883,15 +1035,20 @@ func runFile(path string, programArgs []string) {
 		os.Exit(1)
 	}
 
-	// Evaluate
-	result, err := eval.RunProgram(exprs, programArgs)
-	if err != nil {
-		printErr("Runtime error", err)
+	// Compile to Go and execute
+	binary, cleanup := buildGoProgram(prog, typeEnv, path, false)
+	defer cleanup()
+
+	cmd := exec.Command(binary, programArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
-	}
-	exitCode := result.(eval.VInt).V
-	if exitCode != 0 {
-		os.Exit(exitCode)
 	}
 }
 
@@ -899,372 +1056,39 @@ func runFile(path string, programArgs []string) {
 // runTests
 // ---------------------------------------------------------------------------
 
-func runTests(path string, only string) (int, []eval.FailedTest) {
+func runTests(path string, only string) bool {
 	setupSrcRoot(path)
 
 	src, err := readSourceWithOverlay(path)
 	if err != nil {
 		printTestErr(path, "error", err)
-		return 1, nil
+		return false
 	}
 
-	// Detect if this is a stdlib file and inject extra builtins/type-env
-	var extraBuiltins map[string]eval.Value
-	var extraTypeEnv typechecker.TypeEnv
-
-	absPath, _ := filepath.Abs(path)
-	moduleName := stdlibModuleForPath(absPath)
-	if moduleName != "" {
-		extraBuiltins = eval.BuiltinsForModule(moduleName)
-		extraTypeEnv = typechecker.TypeEnvForModule(moduleName)
-	}
-
-	// Parse
-	exprs, err := parser.Parse(src)
+	// Frontend: parse → typecheck → IR (test mode)
+	prog, typeEnv, err := compileToIR(src, path, true)
 	if err != nil {
-		printTestErr(path, "Parse error", err)
-		return 1, nil
+		return false // errors already printed
 	}
 
-	// Validate no bare expressions at top level
-	if err := eval.ValidateToplevel(exprs); err != nil {
-		printTestErr(path, "Syntax error", err)
-		return 1, nil
-	}
+	// Compile and run tests
+	binary, cleanup := buildGoProgram(prog, typeEnv, path, true)
+	defer cleanup()
 
-	// Validate indentation
-	if err := parser.ValidateIndentation(exprs); err != nil {
-		printTestErr(path, "Indentation error", err)
-		return 1, nil
-	}
-
-	// Reorder top-level bindings by dependency
-	exprs, err = typechecker.ReorderToplevel(exprs)
-	if err != nil {
-		printTestErr(path, "Type error", err)
-		return 1, nil
-	}
-
-	// Type check with optional extra env
-	var warnings []typechecker.Warning
-	if extraTypeEnv != nil {
-		if _, warnings, err = typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv); err != nil {
-			printTestErr(path, "Type error", err)
-			return 1, nil
-		}
+	var cmd *exec.Cmd
+	if only != "" {
+		cmd = exec.Command(binary, only)
 	} else {
-		if _, warnings, err = typechecker.CheckProgram(exprs); err != nil {
-			printTestErr(path, "Type error", err)
-			return 1, nil
-		}
+		cmd = exec.Command(binary)
 	}
-	handleWarnings(path, warnings)
-
-	_, failed, failedNames, err := eval.RunTests(exprs, nil, extraBuiltins, path, only)
-	if err != nil {
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return false
+		}
 		printTestErr(path, "error", err)
-		return 1, nil
+		return false
 	}
-	return failed, failedNames
+	return true
 }
-
-// ---------------------------------------------------------------------------
-// showTypes
-// ---------------------------------------------------------------------------
-
-// showTypes prints the types of all top-level bindings in a file or stdlib module.
-func showTypes(target string) {
-	// Check if target is a stdlib module (starts with "Std:")
-	if strings.HasPrefix(target, "Std:") {
-		result, err := typechecker.CheckModule(target)
-		if err != nil {
-			printErr("Type error", err)
-			os.Exit(1)
-		}
-		printTypeEnv(result.Env)
-		return
-	}
-
-	// Otherwise treat as a .rex file
-	setupSrcRoot(target)
-
-	source, err := os.ReadFile(target)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-		os.Exit(1)
-	}
-
-	exprs, err := parser.Parse(string(source))
-	if err != nil {
-		printErr("Parse error", err)
-		os.Exit(1)
-	}
-
-	if err := eval.ValidateToplevel(exprs); err != nil {
-		printErr("Syntax error", err)
-		os.Exit(1)
-	}
-
-	if err := parser.ValidateIndentation(exprs); err != nil {
-		printErr("Indentation error", err)
-		os.Exit(1)
-	}
-
-	exprs, err = typechecker.ReorderToplevel(exprs)
-	if err != nil {
-		printErr("Type error", err)
-		os.Exit(1)
-	}
-
-	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
-	if err != nil {
-		printErr("Type error", err)
-		os.Exit(1)
-	}
-	handleWarnings(target, warnings)
-
-	// Collect top-level names from the AST (in order)
-	names := collectToplevelNames(exprs)
-
-	for _, name := range names {
-		v, ok := typeEnv[name]
-		if !ok {
-			continue
-		}
-		scheme, ok := v.(types.Scheme)
-		if !ok {
-			continue
-		}
-		fmt.Printf("%s : %s\n", name, types.SchemeToString(scheme))
-	}
-}
-
-// collectToplevelNames returns the names of all top-level bindings in AST order.
-func collectToplevelNames(exprs []ast.Expr) []string {
-	seen := map[string]bool{}
-	var names []string
-	add := func(name string) {
-		if !seen[name] && !strings.HasPrefix(name, "__") && name != "_" {
-			seen[name] = true
-			names = append(names, name)
-		}
-	}
-	for _, expr := range exprs {
-		switch e := expr.(type) {
-		case ast.Let:
-			if e.InExpr == nil {
-				add(e.Name)
-			}
-		case ast.LetRec:
-			if e.InExpr == nil {
-				for _, b := range e.Bindings {
-					add(b.Name)
-				}
-			}
-		case ast.TypeDecl:
-			for _, ctor := range e.Ctors {
-				add(ctor.Name)
-			}
-			if len(e.RecordFields) > 0 {
-				add(e.Name)
-			}
-		}
-	}
-	return names
-}
-
-// printTypeEnv prints a TypeEnv sorted alphabetically.
-func printTypeEnv(env typechecker.TypeEnv) {
-	var names []string
-	for name := range env {
-		if !strings.HasPrefix(name, "__") {
-			names = append(names, name)
-		}
-	}
-	sortStrings(names)
-	for _, name := range names {
-		scheme, ok := env[name].(types.Scheme)
-		if !ok {
-			continue
-		}
-		fmt.Printf("%s : %s\n", name, types.SchemeToString(scheme))
-	}
-}
-
-// sortStrings sorts a string slice in place.
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
-}
-
-// stdlibModuleForPath detects if path is inside the embedded stdlib.
-// Returns the module name (e.g. "List") or empty string.
-func stdlibModuleForPath(absPath string) string {
-	if !strings.HasSuffix(absPath, ".rex") {
-		return ""
-	}
-	// Try the base name first (e.g., "List" from "List.rex")
-	base := strings.TrimSuffix(filepath.Base(absPath), ".rex")
-	if _, err := stdlib.Source(base); err == nil {
-		return base
-	}
-	// Try parent.base for subdirectory modules (e.g., "Http.Server" from "Http/Server.rex")
-	dir := filepath.Base(filepath.Dir(absPath))
-	dotted := dir + "." + base
-	if _, err := stdlib.Source(dotted); err == nil {
-		return dotted
-	}
-	return ""
-}
-
-// ---------------------------------------------------------------------------
-// REPL
-// ---------------------------------------------------------------------------
-
-func replHistoryPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".rexlang_history")
-}
-
-func repl() {
-	fmt.Println("RexLang v0.1.0 (Go)")
-	fmt.Println("Press Enter on a blank line to evaluate. Ctrl-D to exit.")
-	fmt.Println()
-
-	preludeTC, err := typechecker.LoadPreludeTC()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load prelude: %v\n", err)
-		os.Exit(1)
-	}
-	evalEnv, err := eval.LoadPreludeForREPL(nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load prelude: %v\n", err)
-		os.Exit(1)
-	}
-	typeEnv := preludeTC.Env.Clone()
-	typeDefs := typechecker.CopyTypeDefs(preludeTC.TypeDefs)
-	tc := typechecker.NewTypeChecker()
-
-	rl, err := readline.NewEx(&readline.Config{
-		Prompt:          "rex> ",
-		HistoryFile:     replHistoryPath(),
-		InterruptPrompt: "^C",
-		EOFPrompt:       "",
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize readline: %v\n", err)
-		os.Exit(1)
-	}
-	defer rl.Close()
-
-	var buf []string
-
-	for {
-		if len(buf) > 0 {
-			rl.SetPrompt("  .. ")
-		} else {
-			rl.SetPrompt("rex> ")
-		}
-
-		line, err := rl.Readline()
-		if err == readline.ErrInterrupt {
-			if len(buf) > 0 {
-				buf = buf[:0]
-				continue
-			}
-			break
-		}
-		if err == io.EOF {
-			fmt.Println()
-			break
-		}
-		if err != nil {
-			break
-		}
-
-		if strings.TrimSpace(line) != "" {
-			buf = append(buf, line)
-			continue
-		}
-		if len(buf) == 0 {
-			continue
-		}
-
-		source := strings.Join(buf, "\n") + "\n"
-		buf = buf[:0]
-
-		exprs, err := parser.Parse(source)
-		if err != nil {
-			fmt.Printf("Parse error: %v\n", err)
-			continue
-		}
-
-		for _, expr := range exprs {
-			res, err := tc.InferToplevel(typeEnv, typeDefs, types.Subst{}, expr)
-			if err != nil {
-				fmt.Printf("Type error: %v\n", err)
-				break
-			}
-			typeEnv = res.Env
-			typeDefs = res.TypeDefs
-
-			// Print any warnings from the typechecker
-			if len(tc.Warnings) > 0 {
-				for _, w := range tc.Warnings {
-					fmt.Fprintf(os.Stderr, "%sWarning%s: %s\n", colorYellow, colorReset, w.Msg)
-				}
-				tc.Warnings = tc.Warnings[:0]
-			}
-
-			val, newEnv, err := eval.EvalToplevel(evalEnv, expr, nil)
-			if err != nil {
-				fmt.Printf("Runtime error: %v\n", err)
-				break
-			}
-			evalEnv = newEnv
-
-			// Skip display for declarations
-			switch expr.(type) {
-			case ast.TypeDecl, ast.Import, ast.Export, ast.TraitDecl, ast.ImplDecl, ast.TestDecl, ast.TypeAnnotation:
-				continue
-			}
-
-			var name string
-			switch x := expr.(type) {
-			case ast.Let:
-				name = x.Name
-			case ast.LetRec:
-				name = x.Bindings[len(x.Bindings)-1].Name
-			case ast.LetPat:
-				name = "_"
-			default:
-				name = "it"
-			}
-			// Use scheme display if available (shows constraints)
-			tyStr := types.TypeToString(res.Ty)
-			lookupName := name
-			if name == "it" {
-				// For bare variable expressions, look up the scheme by var name
-				if v, ok := expr.(ast.Var); ok {
-					lookupName = v.Name
-				}
-			}
-			if lookupName != "it" && lookupName != "_" {
-				if s, ok := typeEnv[lookupName].(types.Scheme); ok {
-					tyStr = types.SchemeToString(s)
-				}
-			}
-			fmt.Printf("%s : %s\n", name, tyStr)
-			fmt.Printf("=> %s\n", eval.ValueToString(val))
-		}
-	}
-}
-
-// Stubs to detect lexer error vs others
-var _ = lexer.Tokenize

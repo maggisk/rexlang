@@ -13,21 +13,130 @@ import (
 	"github.com/maggisk/rexlang/internal/types"
 )
 
+// ---------------------------------------------------------------------------
+// External builtins — companion file pattern
+// ---------------------------------------------------------------------------
+
+// companionFuncName converts a mangled external name to the companion function name.
+// "Std$String$length" → "Stdlib_String_length"
+func companionFuncName(name string) string {
+	s := strings.TrimPrefix(name, "Std$")
+	s = strings.ReplaceAll(s, "$", "_")
+	s = strings.ReplaceAll(s, ".", "_")
+	return "Stdlib_" + s
+}
+
+// externalModule extracts the module name from a mangled external name.
+// "Std$String$length" → "String", "Std$Http$Server$httpServe" → "Http.Server"
+func externalModule(name string) string {
+	parts := strings.Split(name, "$")
+	if len(parts) < 3 {
+		return ""
+	}
+	// First element is namespace ("Std"), last is local name, middle elements form module name
+	return strings.Join(parts[1:len(parts)-1], ".")
+}
+
+// NeededModules returns the set of stdlib module names that need companion files.
+// Only includes modules where the external's type was successfully resolved.
+func NeededModules(prog *ir.Program, typeEnv typechecker.TypeEnv) []string {
+	g := newGoGen(typeEnv, false)
+	g.analyze(prog)
+	var modules []string
+	for mod := range g.neededModules {
+		modules = append(modules, mod)
+	}
+	return modules
+}
+
+// returnKind inspects a Rex return type and returns "simple", "maybe", or "result".
+// Only uses "result" when the error type is String — otherwise the companion
+// constructs the full Result ADT itself and the wrapper passes through ("simple").
+func returnKind(ty types.Type) string {
+	if ty == nil {
+		return "simple"
+	}
+	tc, ok := ty.(types.TCon)
+	if !ok {
+		return "simple"
+	}
+	switch tc.Name {
+	case "Maybe":
+		return "maybe"
+	case "Result":
+		if len(tc.Args) >= 2 {
+			if errTc, ok := tc.Args[1].(types.TCon); ok && errTc.Name == "String" {
+				return "result"
+			}
+		}
+		return "simple"
+	}
+	return "simple"
+}
+
+// resultOkIsUnit returns true if the Result's ok type is Unit.
+func resultOkIsUnit(ty types.Type) bool {
+	tc, ok := ty.(types.TCon)
+	if !ok || tc.Name != "Result" || len(tc.Args) < 1 {
+		return false
+	}
+	okTy := tc.Args[0]
+	otc, ok := okTy.(types.TCon)
+	return ok && otc.Name == "Unit"
+}
+
+// goTypeForExternalParam maps a Rex type to the Go type used in companion function parameters.
+func goTypeForExternalParam(ty types.Type) string {
+	if ty == nil {
+		return "any"
+	}
+	tc, ok := ty.(types.TCon)
+	if !ok {
+		return "any" // type variable
+	}
+	switch tc.Name {
+	case "Int":
+		return "int64"
+	case "Float":
+		return "float64"
+	case "String":
+		return "string"
+	case "Bool":
+		return "bool"
+	case "List":
+		return "*RexList"
+	default:
+		return "any"
+	}
+}
+
 // EmitGo converts an IR program to Go source code.
 func EmitGo(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
-	g := &goGen{
-		buf:          &strings.Builder{},
-		typeEnv:      typeEnv,
-		funcs:        make(map[string]*goFuncInfo),
-		adts:         make(map[string]*goAdtInfo),
-		ctorToAdt:    make(map[string]*goCtorInfo),
-		records:      make(map[string]*goRecordInfo),
-		traitImpls:   make(map[string][]goImplCase), // "Trait:Method" -> cases
-		usedBuiltins: make(map[string]bool),
-		locals:       make(map[string]bool),
-		knownTypes:   map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
-	}
+	g := newGoGen(typeEnv, false)
 	return g.emit(prog)
+}
+
+// EmitGoTests converts an IR program to Go source code with a test runner.
+func EmitGoTests(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
+	g := newGoGen(typeEnv, true)
+	return g.emit(prog)
+}
+
+func newGoGen(typeEnv typechecker.TypeEnv, testMode bool) *goGen {
+	return &goGen{
+		buf:           &strings.Builder{},
+		typeEnv:       typeEnv,
+		funcs:         make(map[string]*goFuncInfo),
+		adts:          make(map[string]*goAdtInfo),
+		ctorToAdt:     make(map[string]*goCtorInfo),
+		records:          make(map[string]*goRecordInfo),
+		recordsByOrigName: make(map[string]*goRecordInfo),
+		traitImpls:    make(map[string][]goImplCase),
+		locals:        make(map[string]bool),
+		knownTypes:    map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
+		neededModules: make(map[string]bool),
+		testMode:      testMode,
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -35,11 +144,12 @@ func EmitGo(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) {
 // ---------------------------------------------------------------------------
 
 type goFuncInfo struct {
-	name    string
-	arity   int
-	params  []goParamInfo
-	retType types.Type
-	body    ir.Expr
+	name       string
+	arity      int
+	params     []goParamInfo
+	retType    types.Type
+	body       ir.Expr
+	isExternal bool
 }
 
 type goParamInfo struct {
@@ -60,7 +170,8 @@ type goCtorInfo struct {
 }
 
 type goRecordInfo struct {
-	name       string
+	name       string // Go name (possibly renamed with _2 suffix)
+	origName   string // original IR name (before collision rename)
 	fieldNames []string
 	fieldTypes []types.Type
 }
@@ -81,23 +192,28 @@ type goGen struct {
 	funcs        map[string]*goFuncInfo
 	adts         map[string]*goAdtInfo
 	ctorToAdt    map[string]*goCtorInfo
-	records      map[string]*goRecordInfo
-	traitImpls   map[string][]goImplCase
-	usedBuiltins map[string]bool
-	locals       map[string]bool
-	tempCounter  int
+	records          map[string]*goRecordInfo
+	recordsByOrigName map[string]*goRecordInfo // original IR name → record info (before collision rename)
+	allRecords       []*goRecordInfo           // all records including colliding names
+	traitImpls map[string][]goImplCase
+	locals      map[string]bool
+	tempCounter int
 
 	// trait method names → dispatch function names
 	traitMethodNames map[string]string // "myShow" → "dispatch_myshow_myShow"
 	knownTypes       map[string]bool   // types defined in the program (for filtering dispatch cases)
 
-	// track what features are used
-	usesConcurrencyBuiltins bool // spawn/send/receive/self/call
-	usesLists               bool
-	usesTuples              map[int]bool
-	usesStringConcat        bool
-	usesShow                bool
-	usesStringInterp        bool
+	// external companion file support
+	neededModules map[string]bool // stdlib modules needed by externals
+
+	// test mode support
+	testMode  bool
+	testFuncs []testFuncInfo
+}
+
+type testFuncInfo struct {
+	name     string
+	funcName string // Go function name
 }
 
 func (g *goGen) fresh() string {
@@ -141,15 +257,16 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 	// Phase 2: emit
 	out := &strings.Builder{}
 
-	// Emit package + imports
+	// Emit package + imports (minimal — runtime.go has the heavy imports)
 	out.WriteString("package main\n\n")
-	out.WriteString(g.emitImports())
+	if g.testMode {
+		out.WriteString("import (\n\t\"fmt\"\n\t\"os\"\n\t\"strings\"\n)\n\n")
+	} else {
+		out.WriteString("import \"os\"\n\n")
+	}
 
 	// Emit type definitions (ADTs, records, tuples)
 	out.WriteString(g.emitTypeDefinitions())
-
-	// Emit runtime helpers
-	out.WriteString(g.emitRuntimeHelpers())
 
 	// Emit trait dispatch functions
 	out.WriteString(g.emitTraitDispatchers())
@@ -163,11 +280,43 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 	}
 
 	// Emit Go main()
-	out.WriteString("\nfunc main() {\n")
-	out.WriteString("\tos.Exit(int(rex_main(nil).(int64)))\n")
-	out.WriteString("}\n")
+	if g.testMode {
+		g.emitTestMain(out)
+	} else {
+		out.WriteString("\nfunc main() {\n")
+		out.WriteString("\tos.Exit(int(rex_main(nil).(int64)))\n")
+		out.WriteString("}\n")
+	}
 
 	return out.String(), nil
+}
+
+func (g *goGen) emitTestMain(out *strings.Builder) {
+	out.WriteString("\nfunc main() {\n")
+	out.WriteString("\tvar only string\n")
+	out.WriteString("\tif len(os.Args) > 1 { only = os.Args[1] }\n")
+	out.WriteString("\tpassed, failed, skipped := 0, 0, 0\n")
+	for _, tf := range g.testFuncs {
+		fmt.Fprintf(out, "\tif only != \"\" && !strings.Contains(%q, only) {\n", tf.name)
+		fmt.Fprintf(out, "\t\tskipped++\n")
+		fmt.Fprintf(out, "\t} else {\n")
+		fmt.Fprintf(out, "\t\tfunc() {\n")
+		fmt.Fprintf(out, "\t\t\tdefer func() {\n")
+		fmt.Fprintf(out, "\t\t\t\tif r := recover(); r != nil {\n")
+		fmt.Fprintf(out, "\t\t\t\t\tfmt.Fprintf(os.Stderr, \"FAIL: %%s — %%v\\n\", %q, r)\n", tf.name)
+		fmt.Fprintf(out, "\t\t\t\t\tfailed++\n")
+		fmt.Fprintf(out, "\t\t\t\t}\n")
+		fmt.Fprintf(out, "\t\t\t}()\n")
+		fmt.Fprintf(out, "\t\t\t%s()\n", tf.funcName)
+		fmt.Fprintf(out, "\t\t\tpassed++\n")
+		fmt.Fprintf(out, "\t\t}()\n")
+		fmt.Fprintf(out, "\t}\n")
+	}
+	out.WriteString("\tfmt.Printf(\"%d passed, %d failed\", passed, failed)\n")
+	out.WriteString("\tif skipped > 0 { fmt.Printf(\", %d skipped\", skipped) }\n")
+	out.WriteString("\tfmt.Println()\n")
+	out.WriteString("\tif failed > 0 { os.Exit(1) }\n")
+	out.WriteString("}\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +324,6 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 // ---------------------------------------------------------------------------
 
 func (g *goGen) analyze(prog *ir.Program) {
-	g.usesTuples = make(map[int]bool)
 	g.traitMethodNames = make(map[string]string)
 
 	// First pass: collect trait method names from DImpl declarations
@@ -205,21 +353,43 @@ func (g *goGen) analyze(prog *ir.Program) {
 		case ir.DType:
 			g.knownTypes[d.Name] = true
 			if len(d.Fields) > 0 {
-				// Record type
-				ri := &goRecordInfo{name: d.Name}
+				// Record type — disambiguate collisions with a counter suffix
+				name := d.Name
+				if _, exists := g.records[name]; exists {
+					for i := 2; ; i++ {
+						candidate := fmt.Sprintf("%s_%d", name, i)
+						if _, exists := g.records[candidate]; !exists {
+							name = candidate
+							break
+						}
+					}
+				}
+				ri := &goRecordInfo{name: name, origName: d.Name}
 				for _, f := range d.Fields {
 					ri.fieldNames = append(ri.fieldNames, f.Name)
 					ri.fieldTypes = append(ri.fieldTypes, f.Ty)
 				}
-				g.records[d.Name] = ri
+				g.allRecords = append(g.allRecords, ri)
+				g.records[name] = ri
+				g.recordsByOrigName[d.Name] = ri
 			} else if len(d.Ctors) > 0 {
-				// ADT
-				ai := &goAdtInfo{name: d.Name}
+				// ADT — disambiguate collisions with a counter suffix (same as records)
+				name := d.Name
+				if _, exists := g.adts[name]; exists {
+					for i := 2; ; i++ {
+						candidate := fmt.Sprintf("%s_%d", name, i)
+						if _, exists := g.adts[candidate]; !exists {
+							name = candidate
+							break
+						}
+					}
+				}
+				ai := &goAdtInfo{name: name}
 				for i, c := range d.Ctors {
 					ci := goCtorInfo{
 						name:     c.Name,
 						tag:      i,
-						typeName: d.Name,
+						typeName: name,
 					}
 					for _, t := range c.ArgTypes {
 						ci.fieldTypes = append(ci.fieldTypes, t)
@@ -227,7 +397,7 @@ func (g *goGen) analyze(prog *ir.Program) {
 					ai.ctors = append(ai.ctors, ci)
 					g.ctorToAdt[c.Name] = &ai.ctors[len(ai.ctors)-1]
 				}
-				g.adts[d.Name] = ai
+				g.adts[name] = ai
 			}
 
 		case ir.DImpl:
@@ -239,6 +409,22 @@ func (g *goGen) analyze(prog *ir.Program) {
 					funcName: funcName,
 				})
 				g.scanExpr(m.Body)
+			}
+
+		case ir.DExternal:
+			fi := g.analyzeExternal(d.Name)
+			if fi != nil {
+				g.funcs[d.Name] = fi
+			}
+
+		case ir.DTest:
+			if g.testMode {
+				funcName := fmt.Sprintf("rex_test_%d", len(g.testFuncs))
+				g.testFuncs = append(g.testFuncs, testFuncInfo{
+					name:     d.Name,
+					funcName: funcName,
+				})
+				g.scanExpr(d.Body)
 			}
 		}
 	}
@@ -288,6 +474,56 @@ func (g *goGen) analyzeFuncFromBinding(b ir.RecBinding) *goFuncInfo {
 	return fi
 }
 
+// analyzeExternal extracts type info from typeEnv for an external declaration.
+func (g *goGen) analyzeExternal(name string) *goFuncInfo {
+	// Look up type from typeEnv. The typeEnv uses local names (e.g. "println")
+	// while the IR uses prefixed names (e.g. "Std$IO$println").
+	// Try prefixed first, then fall back to local name.
+	localName := name
+	if idx := strings.LastIndex(name, "$"); idx >= 0 {
+		localName = name[idx+1:]
+	}
+	s, ok := g.typeEnv[name]
+	if !ok {
+		s, ok = g.typeEnv[localName]
+	}
+	if !ok {
+		// Try the typechecker's module cache for transitively imported externals
+		s = typechecker.LookupModuleType(name)
+		if s == nil {
+			return nil // type not available — skip this external
+		}
+	}
+	scheme, ok := s.(types.Scheme)
+	if !ok {
+		return nil
+	}
+
+	// Track needed module (only after type lookup succeeds).
+	mod := externalModule(name)
+	if mod != "" {
+		g.neededModules[mod] = true
+	}
+
+	fi := &goFuncInfo{name: name, isExternal: true}
+	ty := scheme.Ty
+	for {
+		tc, ok := ty.(types.TCon)
+		if !ok || tc.Name != "Fun" || len(tc.Args) != 2 {
+			break
+		}
+		fi.params = append(fi.params, goParamInfo{
+			name: fmt.Sprintf("p%d", fi.arity),
+			ty:   tc.Args[0],
+		})
+		fi.arity++
+		ty = tc.Args[1]
+	}
+	fi.retType = ty
+
+	return fi
+}
+
 // paramType extracts the parameter type from a function type.
 func paramType(ty types.Type) types.Type {
 	if tc, ok := ty.(types.TCon); ok && tc.Name == "Fun" && len(tc.Args) == 2 {
@@ -334,34 +570,13 @@ func (g *goGen) scanExpr(expr ir.Expr) {
 	}
 }
 
-func (g *goGen) scanAtom(a ir.Atom) {
-	if v, ok := a.(ir.AVar); ok {
-		switch v.Name {
-		case "println", "print":
-			g.usedBuiltins[v.Name] = true
-		case "showInt", "showFloat":
-			g.usedBuiltins[v.Name] = true
-			g.usesShow = true
-		case "not", "error", "todo", "toString":
-			g.usedBuiltins[v.Name] = true
-		case "spawn", "send", "receive", "self", "call":
-			g.usesConcurrencyBuiltins = true
-		}
-	}
-}
+func (g *goGen) scanAtom(a ir.Atom) {}
 
 func (g *goGen) scanCExpr(c ir.CExpr) {
 	switch c := c.(type) {
 	case ir.CApp:
 		g.scanAtom(c.Func)
 		g.scanAtom(c.Arg)
-	case ir.CBinop:
-		if c.Op == "Cons" {
-			g.usesLists = true
-		}
-		if c.Op == "Concat" {
-			g.usesStringConcat = true
-		}
 	case ir.CIf:
 		g.scanExpr(c.Then)
 		g.scanExpr(c.Else)
@@ -371,13 +586,8 @@ func (g *goGen) scanCExpr(c ir.CExpr) {
 		}
 	case ir.CLambda:
 		g.scanExpr(c.Body)
-	case ir.CList:
-		g.usesLists = true
-	case ir.CTuple:
-		g.usesTuples[len(c.Items)] = true
-	case ir.CStringInterp:
-		g.usesStringInterp = true
-		g.usesShow = true
+	case ir.CAssert:
+		g.scanAtom(c.Expr)
 	}
 }
 
@@ -385,26 +595,8 @@ func (g *goGen) scanCExpr(c ir.CExpr) {
 // Imports
 // ---------------------------------------------------------------------------
 
-func (g *goGen) emitImports() string {
-	// Always need os (for os.Exit), fmt and strconv (for rex_display)
-	imports := []string{`"fmt"`, `"os"`, `"strconv"`}
-
-	// Only import "strings" when list display uses strings.Join
-	if g.usesLists {
-		imports = append(imports, `"strings"`)
-	}
-	if g.usesConcurrencyBuiltins {
-		imports = append(imports, `"runtime"`, `"sync"`)
-	}
-
-	var b strings.Builder
-	b.WriteString("import (\n")
-	for _, imp := range imports {
-		fmt.Fprintf(&b, "\t%s\n", imp)
-	}
-	b.WriteString(")\n\n")
-	return b.String()
-}
+// emitImports is no longer needed — runtime.go carries the imports.
+// main.go only needs "fmt" and "os" which are emitted inline in emit().
 
 // ---------------------------------------------------------------------------
 // Type definitions
@@ -444,27 +636,6 @@ func (g *goGen) emitTypeDefinitions() string {
 		b.WriteString("}\n\n")
 	}
 
-	// Tuple structs
-	for arity := range g.usesTuples {
-		if arity < 2 {
-			continue
-		}
-		name := fmt.Sprintf("Tuple%d", arity)
-		fmt.Fprintf(&b, "type %s struct {\n", name)
-		for i := 0; i < arity; i++ {
-			fmt.Fprintf(&b, "\tF%d any\n", i)
-		}
-		b.WriteString("}\n\n")
-	}
-
-	// List type
-	if g.usesLists {
-		b.WriteString("type RexList struct {\n")
-		b.WriteString("\tHead any\n")
-		b.WriteString("\tTail *RexList\n")
-		b.WriteString("}\n\n")
-	}
-
 	return b.String()
 }
 
@@ -472,227 +643,9 @@ func (g *goGen) emitTypeDefinitions() string {
 // Runtime helpers
 // ---------------------------------------------------------------------------
 
-func (g *goGen) emitRuntimeHelpers() string {
-	var b strings.Builder
-
-	// Structural equality
-	b.WriteString("func rex_eq(a, b any) bool {\n")
-	b.WriteString("\tswitch av := a.(type) {\n")
-	b.WriteString("\tcase int64:\n")
-	b.WriteString("\t\tbv, ok := b.(int64); return ok && av == bv\n")
-	b.WriteString("\tcase float64:\n")
-	b.WriteString("\t\tbv, ok := b.(float64); return ok && av == bv\n")
-	b.WriteString("\tcase string:\n")
-	b.WriteString("\t\tbv, ok := b.(string); return ok && av == bv\n")
-	b.WriteString("\tcase bool:\n")
-	b.WriteString("\t\tbv, ok := b.(bool); return ok && av == bv\n")
-	b.WriteString("\tcase nil:\n")
-	b.WriteString("\t\treturn b == nil\n")
-	if g.usesLists {
-		b.WriteString("\tcase *RexList:\n")
-		b.WriteString("\t\tbv, ok := b.(*RexList)\n")
-		b.WriteString("\t\tif !ok { return false }\n")
-		b.WriteString("\t\tif av == nil && bv == nil { return true }\n")
-		b.WriteString("\t\tif av == nil || bv == nil { return false }\n")
-		b.WriteString("\t\treturn rex_eq(av.Head, bv.Head) && rex_eq(av.Tail, bv.Tail)\n")
-	}
-	b.WriteString("\tdefault:\n")
-	b.WriteString("\t\treturn false\n")
-	b.WriteString("\t}\n")
-	b.WriteString("}\n\n")
-
-	// Structural comparison (for <, >, <=, >=)
-	b.WriteString("func rex_compare(a, b any) int {\n")
-	b.WriteString("\tswitch av := a.(type) {\n")
-	b.WriteString("\tcase int64:\n")
-	b.WriteString("\t\tbv := b.(int64)\n")
-	b.WriteString("\t\tif av < bv { return -1 }\n")
-	b.WriteString("\t\tif av > bv { return 1 }\n")
-	b.WriteString("\t\treturn 0\n")
-	b.WriteString("\tcase float64:\n")
-	b.WriteString("\t\tbv := b.(float64)\n")
-	b.WriteString("\t\tif av < bv { return -1 }\n")
-	b.WriteString("\t\tif av > bv { return 1 }\n")
-	b.WriteString("\t\treturn 0\n")
-	b.WriteString("\tcase string:\n")
-	b.WriteString("\t\tbv := b.(string)\n")
-	b.WriteString("\t\tif av < bv { return -1 }\n")
-	b.WriteString("\t\tif av > bv { return 1 }\n")
-	b.WriteString("\t\treturn 0\n")
-	b.WriteString("\tcase bool:\n")
-	b.WriteString("\t\tbv := b.(bool)\n")
-	b.WriteString("\t\tai, bi := 0, 0\n")
-	b.WriteString("\t\tif av { ai = 1 }\n")
-	b.WriteString("\t\tif bv { bi = 1 }\n")
-	b.WriteString("\t\tif ai < bi { return -1 }\n")
-	b.WriteString("\t\tif ai > bi { return 1 }\n")
-	b.WriteString("\t\treturn 0\n")
-	b.WriteString("\t}\n")
-	b.WriteString("\treturn 0\n")
-	b.WriteString("}\n\n")
-
-	// println / print builtins
-	if g.usedBuiltins["println"] {
-		b.WriteString("func rex_println(v any) any {\n")
-		b.WriteString("\tfmt.Println(rex_display(v))\n")
-		b.WriteString("\treturn nil\n")
-		b.WriteString("}\n\n")
-	}
-	if g.usedBuiltins["print"] {
-		b.WriteString("func rex_print(v any) any {\n")
-		b.WriteString("\tfmt.Print(rex_display(v))\n")
-		b.WriteString("\treturn nil\n")
-		b.WriteString("}\n\n")
-	}
-
-	// display helper (always emitted since rex_eq might need it for debug)
-	b.WriteString("func rex_display(v any) string {\n")
-	b.WriteString("\tswitch val := v.(type) {\n")
-	b.WriteString("\tcase nil:\n")
-	b.WriteString("\t\treturn \"()\"\n")
-	b.WriteString("\tcase int64:\n")
-	b.WriteString("\t\treturn strconv.FormatInt(val, 10)\n")
-	b.WriteString("\tcase float64:\n")
-	b.WriteString("\t\treturn strconv.FormatFloat(val, 'g', -1, 64)\n")
-	b.WriteString("\tcase string:\n")
-	b.WriteString("\t\treturn val\n")
-	b.WriteString("\tcase bool:\n")
-	b.WriteString("\t\tif val { return \"true\" }\n")
-	b.WriteString("\t\treturn \"false\"\n")
-	if g.usesLists {
-		b.WriteString("\tcase *RexList:\n")
-		b.WriteString("\t\tif val == nil { return \"[]\" }\n")
-		b.WriteString("\t\tvar parts []string\n")
-		b.WriteString("\t\tfor l := val; l != nil; l = l.Tail {\n")
-		b.WriteString("\t\t\tparts = append(parts, rex_display(l.Head))\n")
-		b.WriteString("\t\t}\n")
-		b.WriteString("\t\treturn \"[\" + strings.Join(parts, \", \") + \"]\"\n")
-	}
-	b.WriteString("\tdefault:\n")
-	b.WriteString("\t\treturn fmt.Sprintf(\"%v\", val)\n")
-	b.WriteString("\t}\n")
-	b.WriteString("}\n\n")
-
-	// showInt / showFloat builtins
-	if g.usedBuiltins["showInt"] {
-		b.WriteString("func rex_showInt(v any) any {\n")
-		b.WriteString("\treturn strconv.FormatInt(v.(int64), 10)\n")
-		b.WriteString("}\n\n")
-	}
-	if g.usedBuiltins["showFloat"] {
-		b.WriteString("func rex_showFloat(v any) any {\n")
-		b.WriteString("\treturn strconv.FormatFloat(v.(float64), 'g', -1, 64)\n")
-		b.WriteString("}\n\n")
-	}
-
-	// error / todo builtins
-	if g.usedBuiltins["error"] {
-		b.WriteString("func rex_error(msg any) any {\n")
-		b.WriteString("\tpanic(fmt.Sprintf(\"error: %s\", msg.(string)))\n")
-		b.WriteString("}\n\n")
-	}
-	if g.usedBuiltins["todo"] {
-		b.WriteString("func rex_todo(msg any) any {\n")
-		b.WriteString("\tpanic(fmt.Sprintf(\"TODO: %s\", msg.(string)))\n")
-		b.WriteString("}\n\n")
-	}
-
-	// not builtin
-	if g.usedBuiltins["not"] {
-		b.WriteString("func rex_not(v any) any {\n")
-		b.WriteString("\treturn !v.(bool)\n")
-		b.WriteString("}\n\n")
-	}
-
-	// Actor/concurrency runtime
-	if g.usesConcurrencyBuiltins {
-		b.WriteString("type RexPid struct {\n")
-		b.WriteString("\tch chan any\n")
-		b.WriteString("\tid int64\n")
-		b.WriteString("}\n\n")
-
-		b.WriteString("var rexPidCounter int64\n")
-		b.WriteString("var rexPidMu sync.Mutex\n\n")
-
-		// Goroutine-local self Pid: each goroutine stores its Pid in a sync.Map
-		// keyed by a unique goroutine token passed via closure.
-		b.WriteString("var rexGoroutineSelf sync.Map // goroutine token -> *RexPid\n\n")
-
-		b.WriteString("func rexNextPidID() int64 {\n")
-		b.WriteString("\trexPidMu.Lock()\n")
-		b.WriteString("\trexPidCounter++\n")
-		b.WriteString("\tid := rexPidCounter\n")
-		b.WriteString("\trexPidMu.Unlock()\n")
-		b.WriteString("\treturn id\n")
-		b.WriteString("}\n\n")
-
-		// The main goroutine's pid (for receive/self in main)
-		b.WriteString("var rexMainPid = &RexPid{ch: make(chan any, 1024), id: 0}\n\n")
-
-		b.WriteString("func rexGoroutineID() int64 {\n")
-		b.WriteString("\tvar buf [64]byte\n")
-		b.WriteString("\tn := runtime.Stack(buf[:], false)\n")
-		b.WriteString("\ts := string(buf[:n])\n")
-		b.WriteString("\t// \"goroutine 123 [...]\"\n")
-		b.WriteString("\ts = s[len(\"goroutine \"):]\n")
-		b.WriteString("\tfor i := 0; i < len(s); i++ {\n")
-		b.WriteString("\t\tif s[i] < '0' || s[i] > '9' {\n")
-		b.WriteString("\t\t\ts = s[:i]\n")
-		b.WriteString("\t\t\tbreak\n")
-		b.WriteString("\t\t}\n")
-		b.WriteString("\t}\n")
-		b.WriteString("\tid, _ := strconv.ParseInt(s, 10, 64)\n")
-		b.WriteString("\treturn id\n")
-		b.WriteString("}\n\n")
-
-		// init: register main goroutine's pid
-		b.WriteString("func init() {\n")
-		b.WriteString("\trexGoroutineSelf.Store(rexGoroutineID(), rexMainPid)\n")
-		b.WriteString("}\n\n")
-
-		b.WriteString("func rexGetSelf() *RexPid {\n")
-		b.WriteString("\tv, ok := rexGoroutineSelf.Load(rexGoroutineID())\n")
-		b.WriteString("\tif !ok { return rexMainPid }\n")
-		b.WriteString("\treturn v.(*RexPid)\n")
-		b.WriteString("}\n\n")
-
-		// spawn : (() -> b) -> Pid a
-		b.WriteString("func rex_spawn(f any) any {\n")
-		b.WriteString("\tpid := &RexPid{ch: make(chan any, 1024), id: rexNextPidID()}\n")
-		b.WriteString("\tgo func() {\n")
-		b.WriteString("\t\trexGoroutineSelf.Store(rexGoroutineID(), pid)\n")
-		b.WriteString("\t\tf.(func(any) any)(nil)\n")
-		b.WriteString("\t}()\n")
-		b.WriteString("\treturn pid\n")
-		b.WriteString("}\n\n")
-
-		// send : Pid a -> a -> ()
-		b.WriteString("func rex_send(pid any, msg any) any {\n")
-		b.WriteString("\tpid.(*RexPid).ch <- msg\n")
-		b.WriteString("\treturn nil\n")
-		b.WriteString("}\n\n")
-
-		// call : Pid b -> (Pid a -> b) -> a
-		b.WriteString("func rex_call(targetPid any, msgFn any) any {\n")
-		b.WriteString("\treplyPid := &RexPid{ch: make(chan any, 1), id: rexNextPidID()}\n")
-		b.WriteString("\tfn := msgFn.(func(any) any)\n")
-		b.WriteString("\tmsg := fn(replyPid)\n")
-		b.WriteString("\ttargetPid.(*RexPid).ch <- msg\n")
-		b.WriteString("\treturn <-replyPid.ch\n")
-		b.WriteString("}\n\n")
-	}
-
-	// Partial application helpers
-	b.WriteString("func rex__apply(f any, arg any) any {\n")
-	b.WriteString("\tswitch fn := f.(type) {\n")
-	b.WriteString("\tcase func(any) any:\n")
-	b.WriteString("\t\treturn fn(arg)\n")
-	b.WriteString("\tdefault:\n")
-	b.WriteString("\t\tpanic(\"rex__apply: not a function\")\n")
-	b.WriteString("\t}\n")
-	b.WriteString("}\n\n")
-
-	return b.String()
+// RuntimeSource returns the static Go runtime extracted to every build directory.
+func RuntimeSource() string {
+	return runtimeSource
 }
 
 // ---------------------------------------------------------------------------
@@ -766,8 +719,14 @@ func (g *goGen) emitDecl(d ir.Decl) error {
 		return g.emitDLetRec(d)
 	case ir.DImpl:
 		return g.emitDImpl(d)
-	case ir.DType, ir.DTrait, ir.DImport, ir.DTest:
-		// handled in analyze or skipped
+	case ir.DExternal:
+		return g.emitDExternal(d.Name)
+	case ir.DTest:
+		if g.testMode {
+			return g.emitDTest(d)
+		}
+		return nil
+	case ir.DType, ir.DTrait, ir.DImport:
 		return nil
 	default:
 		return nil
@@ -795,8 +754,8 @@ func (g *goGen) emitDLet(d ir.DLet) error {
 	goName := goFuncName(d.Name)
 
 	if fi.arity == 0 {
-		// Top-level value (not a function) — emit as var
-		g.buf.WriteString(fmt.Sprintf("var %s = ", goName))
+		// Top-level value (not a function) — emit as var any to keep polymorphic
+		g.buf.WriteString(fmt.Sprintf("var %s any = ", goName))
 		g.locals = make(map[string]bool)
 		if err := g.emitExprInline(fi.body); err != nil {
 			return err
@@ -858,6 +817,92 @@ func (g *goGen) emitDLetRec(d ir.DLetRec) error {
 
 		g.buf.WriteString("}\n\n")
 		g.indent = 0
+	}
+	return nil
+}
+
+func (g *goGen) emitDExternal(name string) error {
+	fi := g.funcs[name]
+	if fi == nil {
+		return nil
+	}
+
+	goName := goFuncName(name)
+	compName := companionFuncName(name)
+
+	if fi.arity == 0 {
+		// Zero-arity: variable
+		fmt.Fprintf(g.buf, "var %s any = %s\n\n", goName, compName)
+		return nil
+	}
+
+	// Determine wrapper pattern from return type
+	rk := returnKind(fi.retType)
+
+	// Emit function signature: func rex_Name(p0 any, p1 any, ...) any {
+	fmt.Fprintf(g.buf, "func %s(", goName)
+	for i := range fi.params {
+		if i > 0 {
+			g.buf.WriteString(", ")
+		}
+		fmt.Fprintf(g.buf, "p%d any", i)
+	}
+	g.buf.WriteString(") any {\n")
+
+	// Build companion call arguments with type assertions
+	var callArgs strings.Builder
+	for i, p := range fi.params {
+		if i > 0 {
+			callArgs.WriteString(", ")
+		}
+		goTy := goTypeForExternalParam(p.ty)
+		if goTy == "any" {
+			fmt.Fprintf(&callArgs, "p%d", i)
+		} else {
+			fmt.Fprintf(&callArgs, "p%d.(%s)", i, goTy)
+		}
+	}
+	call := fmt.Sprintf("%s(%s)", compName, callArgs.String())
+
+	switch rk {
+	case "maybe":
+		fmt.Fprintf(g.buf, "\tval := %s\n", call)
+		g.buf.WriteString("\tif val == nil { return Rex_Maybe_Nothing{} }\n")
+		g.buf.WriteString("\treturn Rex_Maybe_Just{F0: *val}\n")
+
+	case "result":
+		if resultOkIsUnit(fi.retType) {
+			fmt.Fprintf(g.buf, "\terr := %s\n", call)
+			g.buf.WriteString("\tif err != nil { return Rex_Result_Err{F0: err.Error()} }\n")
+			g.buf.WriteString("\treturn Rex_Result_Ok{F0: nil}\n")
+		} else {
+			fmt.Fprintf(g.buf, "\tval, err := %s\n", call)
+			g.buf.WriteString("\tif err != nil { return Rex_Result_Err{F0: err.Error()} }\n")
+			g.buf.WriteString("\treturn Rex_Result_Ok{F0: val}\n")
+		}
+
+	default:
+		fmt.Fprintf(g.buf, "\treturn %s\n", call)
+	}
+
+	g.buf.WriteString("}\n\n")
+	return nil
+}
+
+func (g *goGen) emitDTest(d ir.DTest) error {
+	// Find the test info from analyze phase
+	for _, ti := range g.testFuncs {
+		if ti.name == d.Name {
+			fmt.Fprintf(g.buf, "func %s() {\n", ti.funcName)
+			g.indent = 1
+			g.locals = make(map[string]bool)
+			if err := g.emitExprStmt(d.Body, false); err != nil {
+				return err
+			}
+			g.buf.WriteString("}\n\n")
+			g.indent = 0
+			return nil
+		}
 	}
 	return nil
 }
@@ -931,6 +976,13 @@ func (g *goGen) emitExprStmt(expr ir.Expr, isReturn bool) error {
 		return g.emitCExprStmt(e.C, isReturn)
 
 	case ir.ELet:
+		// CAssert bindings: emit as statement (no variable needed)
+		if _, isAssert := e.Bind.(ir.CAssert); isAssert {
+			if err := g.emitCExprStmt(e.Bind, false); err != nil {
+				return err
+			}
+			return g.emitExprStmt(e.Body, isReturn)
+		}
 		varName := goVarName(e.Name)
 		// Use explicit any type to avoid Go type issues when value is used polymorphically
 		g.wn("var %s any = ", varName)
@@ -1004,6 +1056,12 @@ func (g *goGen) emitCExprStmt(c ir.CExpr, isReturn bool) error {
 
 	case ir.CMatch:
 		return g.emitMatch(c, isReturn)
+
+	case ir.CAssert:
+		g.wn("if !(")
+		g.emitAtom(c.Expr)
+		fmt.Fprintf(g.buf, ".(bool)) { panic(\"assert failed at line %d\") }\n", c.Line)
+		return nil
 
 	default:
 		if isReturn {
@@ -1095,6 +1153,13 @@ func (g *goGen) emitCExprInline(c ir.CExpr) error {
 
 	case ir.CStringInterp:
 		return g.emitStringInterp(c)
+
+	case ir.CAssert:
+		// As inline expression, wrap in IIFE
+		g.buf.WriteString("func() any { if !(")
+		g.emitAtom(c.Expr)
+		fmt.Fprintf(g.buf, ".(bool)) { panic(\"assert failed at line %d\") }; return nil }()", c.Line)
+		return nil
 	}
 	return fmt.Errorf("unknown cexpr type: %T", c)
 }
@@ -1109,21 +1174,10 @@ func (g *goGen) emitApp(c ir.CApp) error {
 		funcName = v.Name
 	}
 
-	// Known builtins
+	// Core builtins (available without import)
 	switch funcName {
 	case "__id":
-		// Identity function — just return the argument
 		g.emitAtom(c.Arg)
-		return nil
-	case "println":
-		g.buf.WriteString("rex_println(")
-		g.emitAtom(c.Arg)
-		g.buf.WriteString(")")
-		return nil
-	case "print":
-		g.buf.WriteString("rex_print(")
-		g.emitAtom(c.Arg)
-		g.buf.WriteString(")")
 		return nil
 	case "showInt":
 		g.buf.WriteString("rex_showInt(")
@@ -1132,12 +1186,6 @@ func (g *goGen) emitApp(c ir.CApp) error {
 		return nil
 	case "showFloat":
 		g.buf.WriteString("rex_showFloat(")
-		g.emitAtom(c.Arg)
-		g.buf.WriteString(")")
-		return nil
-	case "toString":
-		// toString : a -> String — same as rex_display
-		g.buf.WriteString("rex_display(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
 		return nil
@@ -1155,31 +1203,6 @@ func (g *goGen) emitApp(c ir.CApp) error {
 		g.buf.WriteString("rex_todo(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
-		return nil
-	case "spawn":
-		g.buf.WriteString("rex_spawn(")
-		g.emitAtom(c.Arg)
-		g.buf.WriteString(")")
-		return nil
-	case "send":
-		// send is curried: send pid msg → partial app
-		g.buf.WriteString("func(_msg any) any { return rex_send(")
-		g.emitAtom(c.Arg)
-		g.buf.WriteString(", _msg) }")
-		return nil
-	case "receive":
-		// receive takes () and returns the next message from the current goroutine's mailbox
-		g.buf.WriteString("<-rexGetSelf().ch")
-		return nil
-	case "self":
-		// self returns the current goroutine's Pid
-		g.buf.WriteString("rexGetSelf()")
-		return nil
-	case "call":
-		// call is curried: call pid fn → partial app
-		g.buf.WriteString("func(_fn any) any { return rex_call(")
-		g.emitAtom(c.Arg)
-		g.buf.WriteString(", _fn) }")
 		return nil
 	}
 
@@ -1412,7 +1435,15 @@ func (g *goGen) emitCtor(c ir.CCtor) error {
 // ---------------------------------------------------------------------------
 
 func (g *goGen) emitRecord(c ir.CRecord) error {
+	// Look up the (possibly renamed) record to get the correct Go struct name
 	structName := goTypeName(c.TypeName)
+	var fieldNames []string
+	for _, f := range c.Fields {
+		fieldNames = append(fieldNames, f.Name)
+	}
+	if ri := g.findRecordByOrigName(c.TypeName, fieldNames); ri != nil {
+		structName = goTypeName(ri.name)
+	}
 	fmt.Fprintf(g.buf, "%s{", structName)
 	for i, f := range c.Fields {
 		if i > 0 {
@@ -1445,22 +1476,87 @@ func (g *goGen) findRecordForField(field string) *goRecordInfo {
 			}
 		}
 	}
+	// Also check allRecords for colliding names
+	for _, ri := range g.allRecords {
+		for _, fn := range ri.fieldNames {
+			if fn == field {
+				return ri
+			}
+		}
+	}
+	return nil
+}
+
+// findRecordByOrigName finds a record by its original IR name and field names.
+// When multiple records share the same original name (collision), it matches on fields.
+func (g *goGen) findRecordByOrigName(origName string, fieldNames []string) *goRecordInfo {
+	var candidates []*goRecordInfo
+	for _, ri := range g.allRecords {
+		if ri.origName == origName {
+			candidates = append(candidates, ri)
+		}
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+	// Multiple records with same original name — match by field names
+	for _, ri := range candidates {
+		if len(ri.fieldNames) == len(fieldNames) {
+			match := true
+			for i, fn := range ri.fieldNames {
+				if fn != fieldNames[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				return ri
+			}
+		}
+	}
+	// Fallback
+	if len(candidates) > 0 {
+		return candidates[0]
+	}
 	return nil
 }
 
 func (g *goGen) emitRecordUpdate(c ir.CRecordUpdate) error {
-	// Resolve record type from the first update's field name
+	// Resolve record type: try Ty annotation, then record atom's type, then field name lookup
 	var recTypeName string
-	if len(c.Updates) > 0 {
+	if tc, ok := c.Ty.(types.TCon); ok {
+		recTypeName = tc.Name
+	}
+	if recTypeName == "" {
+		// Try the record atom's type
+		if v, ok := c.Record.(ir.AVar); ok && v.Ty != nil {
+			if tc, ok := v.Ty.(types.TCon); ok {
+				recTypeName = tc.Name
+			}
+		}
+	}
+	if recTypeName == "" && len(c.Updates) > 0 {
 		ri := g.findRecordForField(c.Updates[0].Path[0])
 		if ri != nil {
 			recTypeName = ri.name
 		}
 	}
 	if recTypeName == "" {
-		return fmt.Errorf("cannot determine record type for update")
+		field := ""
+		if len(c.Updates) > 0 {
+			field = c.Updates[0].Path[0]
+		}
+		return fmt.Errorf("cannot determine record type for update (field=%q)", field)
 	}
 
+	// Map to the (possibly renamed) Go struct name via field matching
+	if len(c.Updates) > 0 {
+		if ri := g.findRecordForField(c.Updates[0].Path[0]); ri != nil {
+			recTypeName = ri.name
+		}
+	} else if ri, ok := g.recordsByOrigName[recTypeName]; ok {
+		recTypeName = ri.name
+	}
 	structName := goTypeName(recTypeName)
 	g.buf.WriteString("func() any {\n")
 	g.indent++
@@ -1613,6 +1709,7 @@ func (g *goGen) emitMatch(c ir.CMatch, isReturn bool) error {
 			g.indent++
 			for _, b := range bindings {
 				g.w("%s := %s", goVarName(b.name), b.expr)
+				g.w("_ = %s", goVarName(b.name))
 				g.locals[b.name] = true
 			}
 			if err := g.emitExprStmt(arm.Body, isReturn); err != nil {
@@ -1633,6 +1730,7 @@ func (g *goGen) emitMatch(c ir.CMatch, isReturn bool) error {
 		g.indent++
 		for _, b := range bindings {
 			g.w("%s := %s", goVarName(b.name), b.expr)
+			g.w("_ = %s", goVarName(b.name))
 			g.locals[b.name] = true
 		}
 		if err := g.emitExprStmt(arm.Body, isReturn); err != nil {
@@ -1751,11 +1849,18 @@ func (g *goGen) patternCondition(scrutExpr string, pat ir.Pattern) (string, []pa
 		return strings.Join(conds, " && "), bindings
 
 	case ir.PRecord:
-		ri := g.records[p.TypeName]
+		var fieldNames []string
+		for _, f := range p.Fields {
+			fieldNames = append(fieldNames, f.Name)
+		}
+		ri := g.findRecordByOrigName(p.TypeName, fieldNames)
+		if ri == nil {
+			ri = g.records[p.TypeName]
+		}
 		if ri == nil {
 			return "true", nil
 		}
-		structName := goTypeName(p.TypeName)
+		structName := goTypeName(ri.name)
 		var bindings []patBinding
 		var conds []string
 		for _, f := range p.Fields {
@@ -1838,29 +1943,8 @@ func (g *goGen) atomStr(a ir.Atom) string {
 		return "nil"
 	case ir.AVar:
 		name := a.Name
-		// Actor builtins as values
-		if g.usesConcurrencyBuiltins {
-			switch name {
-			case "self":
-				return "rexGetSelf()"
-			case "receive":
-				return "func(_ any) any { return <-rexGetSelf().ch }"
-			case "spawn":
-				return "func(f any) any { return rex_spawn(f) }"
-			case "send":
-				return "func(pid any) any { return func(msg any) any { return rex_send(pid, msg) } }"
-			case "call":
-				return "func(pid any) any { return func(fn any) any { return rex_call(pid, fn) } }"
-			}
-		}
-		// Builtins as values (when passed as function arguments)
+		// Core builtins as values (when passed as function arguments)
 		switch name {
-		case "println":
-			return "func(v any) any { return rex_println(v) }"
-		case "print":
-			return "func(v any) any { return rex_print(v) }"
-		case "toString":
-			return "func(v any) any { return rex_display(v) }"
 		case "showInt":
 			return "func(v any) any { return rex_showInt(v) }"
 		case "showFloat":
@@ -1883,6 +1967,10 @@ func (g *goGen) atomStr(a ir.Atom) string {
 			// Constructor with fields — return as a curried function
 			return g.ctorAsClosure(ci)
 		}
+		// Check if it's a known record type used as a positional constructor
+		if ri, ok := g.recordsByOrigName[name]; ok {
+			return g.recordAsClosure(ri)
+		}
 		// Check if it's a known top-level function
 		if fi, ok := g.funcs[name]; ok {
 			if !g.locals[name] {
@@ -1893,6 +1981,10 @@ func (g *goGen) atomStr(a ir.Atom) string {
 				// Zero-arity top-level binding — use goFuncName for rex_ prefix
 				return goFuncName(name)
 			}
+		}
+		// Module-qualified names (contain $) always use goFuncName for the rex_ prefix
+		if strings.Contains(name, "$") {
+			return goFuncName(name)
 		}
 		return goVarName(name)
 	}
@@ -1917,6 +2009,30 @@ func (g *goGen) ctorAsClosure(ci *goCtorInfo) string {
 	}
 	result := fmt.Sprintf("%s{%s}", structName, strings.Join(fields, ", "))
 	// Wrap from inside out
+	for i := n - 1; i >= 0; i-- {
+		result = fmt.Sprintf("func(%s any) any { return %s }", params[i], result)
+	}
+	return result
+}
+
+func (g *goGen) recordAsClosure(ri *goRecordInfo) string {
+	structName := goTypeName(ri.name)
+	n := len(ri.fieldNames)
+	if n == 0 {
+		return structName + "{}"
+	}
+	// Build params
+	var params []string
+	for i := 0; i < n; i++ {
+		params = append(params, fmt.Sprintf("a%d", i))
+	}
+	// Build struct creation with named fields
+	var fields []string
+	for i, p := range params {
+		fields = append(fields, fmt.Sprintf("%s: %s", goExportedField(ri.fieldNames[i]), p))
+	}
+	result := fmt.Sprintf("%s{%s}", structName, strings.Join(fields, ", "))
+	// Wrap from inside out for currying
 	for i := n - 1; i >= 0; i-- {
 		result = fmt.Sprintf("func(%s any) any { return %s }", params[i], result)
 	}
@@ -2093,6 +2209,8 @@ func goSanitize(name string) string {
 		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '_':
 			b.WriteRune(c)
 		case c == '.':
+			b.WriteString("__")
+		case c == '$':
 			b.WriteString("__")
 		case c == ':':
 			b.WriteString("_")

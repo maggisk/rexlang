@@ -123,6 +123,8 @@ func cexprToString(c CExpr, level int) string {
 			parts[i] = atomToString(a)
 		}
 		return fmt.Sprintf("interp(%s)", strings.Join(parts, " ++ "))
+	case CAssert:
+		return fmt.Sprintf("assert(%s)", atomToString(e.Expr))
 	default:
 		return fmt.Sprintf("<?%T>", c)
 	}
@@ -202,6 +204,8 @@ func DeclToString(d Decl) string {
 		return fmt.Sprintf("import %s", decl.Module)
 	case DTest:
 		return fmt.Sprintf("test %q = %s", decl.Name, exprToString(decl.Body, 1))
+	case DExternal:
+		return fmt.Sprintf("external %s", decl.Name)
 	default:
 		return fmt.Sprintf("<?%T>", d)
 	}

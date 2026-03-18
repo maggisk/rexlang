@@ -173,6 +173,14 @@ func (CList) cexprNode()         {}
 func (CTuple) cexprNode()        {}
 func (CStringInterp) cexprNode() {}
 
+// CAssert checks that an expression is true, panicking with a line number if not.
+type CAssert struct {
+	Expr Atom
+	Line int
+}
+
+func (CAssert) cexprNode() {}
+
 // ---------------------------------------------------------------------------
 // Expressions — the top-level ANF form
 // ---------------------------------------------------------------------------
@@ -340,13 +348,20 @@ type DTest struct {
 	Body Expr
 }
 
-func (DLet) declNode()    {}
-func (DLetRec) declNode() {}
-func (DType) declNode()   {}
-func (DTrait) declNode()  {}
-func (DImpl) declNode()   {}
-func (DImport) declNode() {}
-func (DTest) declNode()   {}
+// DExternal is a host-language builtin declaration (from `external name : Type`).
+type DExternal struct {
+	Name string     // mangled name (e.g. "Std$String$length")
+	Ty   types.Type // resolved type from typechecker (may be nil if not resolved)
+}
+
+func (DLet) declNode()      {}
+func (DLetRec) declNode()   {}
+func (DType) declNode()     {}
+func (DTrait) declNode()    {}
+func (DImpl) declNode()     {}
+func (DImport) declNode()   {}
+func (DTest) declNode()     {}
+func (DExternal) declNode() {}
 
 // Program is the complete lowered program.
 type Program struct {

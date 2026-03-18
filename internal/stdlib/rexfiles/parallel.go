@@ -1,7 +1,7 @@
-package rexfiles
+//go:build ignore
+
+package main
 
 import "runtime"
 
-var ParallelFFI = map[string]any{
-	"numCPU": runtime.NumCPU(),
-}
+var Stdlib_Parallel_numCPU = int64(runtime.NumCPU())

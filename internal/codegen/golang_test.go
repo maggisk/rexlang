@@ -4,15 +4,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/parser"
 	"github.com/maggisk/rexlang/internal/typechecker"
 )
 
 // compileGoCode runs the full pipeline: parse → typecheck → resolve → lower → Go source.
-func compileGoCode(t *testing.T, code string) string {
+// Returns Go source and the needed stdlib modules.
+func compileGoCode(t *testing.T, code string) (string, []string) {
 	t.Helper()
 	exprs, err := parser.Parse(code)
 	if err != nil {
@@ -34,17 +37,20 @@ func compileGoCode(t *testing.T, code string) string {
 		t.Fatalf("lower error: %v", err)
 	}
 	prog = ir.Shake(prog)
+
+	modules := NeededModules(prog, typeEnv)
+
 	goSrc, err := EmitGo(prog, typeEnv)
 	if err != nil {
 		t.Fatalf("EmitGo error: %v", err)
 	}
-	return goSrc
+	return goSrc, modules
 }
 
 // runGo compiles Rex source to Go, builds, and runs it, returning the exit code and stdout.
 func runGo(t *testing.T, code string) (int, string) {
 	t.Helper()
-	goSrc := compileGoCode(t, code)
+	goSrc, modules := compileGoCode(t, code)
 
 	dir := t.TempDir()
 	goFile := filepath.Join(dir, "main.go")
@@ -55,6 +61,23 @@ func runGo(t *testing.T, code string) (int, string) {
 	}
 	if err := os.WriteFile(goMod, []byte("module test\n\ngo 1.24\n"), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
+	}
+
+	// Extract runtime
+	rtFile := filepath.Join(dir, "runtime.go")
+	if err := os.WriteFile(rtFile, []byte(RuntimeSource()), 0644); err != nil {
+		t.Fatalf("write runtime.go: %v", err)
+	}
+
+	// Extract companion files for needed stdlib modules
+	for _, mod := range modules {
+		src := stdlib.GoCompanion(mod)
+		if src != "" {
+			path := filepath.Join(dir, "stdlib_"+strings.ToLower(mod)+".go")
+			if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+				t.Fatalf("write companion file: %v", err)
+			}
+		}
 	}
 
 	binary := filepath.Join(dir, "program")

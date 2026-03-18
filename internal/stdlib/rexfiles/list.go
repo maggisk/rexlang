@@ -1,44 +1,23 @@
-package rexfiles
+//go:build ignore
 
-import (
-	"sort"
+package main
 
-	"github.com/maggisk/rexlang/internal/eval"
-)
+import "sort"
 
-var ListFFI = map[string]any{
-	"sortWith": eval.Curried2("sortWith", func(cmpFn, lstV eval.Value) (eval.Value, error) {
-		lst, ok := lstV.(eval.VList)
-		if !ok {
-			return nil, &eval.RuntimeError{Msg: "sortWith: expected list"}
-		}
-		items := make([]eval.Value, len(lst.Items))
-		copy(items, lst.Items)
-		var sortErr error
-		sort.SliceStable(items, func(i, j int) bool {
-			if sortErr != nil {
-				return false
-			}
-			partial, err := eval.ApplyValue(cmpFn, items[i])
-			if err != nil {
-				sortErr = err
-				return false
-			}
-			result, err := eval.ApplyValue(partial, items[j])
-			if err != nil {
-				sortErr = err
-				return false
-			}
-			ctor, ok := result.(eval.VCtor)
-			if !ok {
-				sortErr = &eval.RuntimeError{Msg: "sortWith: comparison must return Ordering"}
-				return false
-			}
-			return ctor.Name == "LT"
-		})
-		if sortErr != nil {
-			return nil, sortErr
-		}
-		return eval.VList{Items: items}, nil
-	}),
+func Stdlib_List_sortWith(cmpFn any, lst *RexList) *RexList {
+	var items []any
+	for l := lst; l != nil; l = l.Tail {
+		items = append(items, l.Head)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		partial := rex__apply(cmpFn, items[i])
+		result := rex__apply(partial, items[j])
+		_, ok := result.(Rex_Ordering_LT)
+		return ok
+	})
+	var result *RexList
+	for i := len(items) - 1; i >= 0; i-- {
+		result = &RexList{Head: items[i], Tail: result}
+	}
+	return result
 }

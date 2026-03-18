@@ -1,21 +1,31 @@
-package rexfiles
+//go:build ignore
 
-import "github.com/maggisk/rexlang/internal/eval"
+package main
 
-var ResultFFI = map[string]any{
-	"try": eval.MakeBuiltin("try", func(fnV eval.Value) (eval.Value, error) {
-		val, err := eval.ApplyValue(fnV, eval.VUnit{})
-		if err != nil {
-			if re, ok := err.(*eval.RuntimeError); ok {
-				switch re.Msg {
-				case "division by zero":
-					return eval.VCtor{Name: "Err", Args: []eval.Value{eval.VCtor{Name: "DivisionByZero"}}}, nil
-				case "modulo by zero":
-					return eval.VCtor{Name: "Err", Args: []eval.Value{eval.VCtor{Name: "ModuloByZero"}}}, nil
+import (
+	"runtime"
+	"strings"
+)
+
+// Stdlib_Result_try executes a thunk and catches division/modulo-by-zero panics,
+// returning the full Result ADT directly (since the error type is RuntimeError, not String).
+func Stdlib_Result_try(thunk any) (result any) {
+	defer func() {
+		if r := recover(); r != nil {
+			if re, ok := r.(runtime.Error); ok {
+				msg := re.Error()
+				switch {
+				case strings.Contains(msg, "divide by zero"):
+					result = Rex_Result_Err{F0: Rex_RuntimeError_DivisionByZero{}}
+					return
+				case strings.Contains(msg, "modulo by zero"):
+					result = Rex_Result_Err{F0: Rex_RuntimeError_ModuloByZero{}}
+					return
 				}
 			}
-			return nil, err
+			panic(r) // re-panic for non-div/mod errors
 		}
-		return eval.VCtor{Name: "Ok", Args: []eval.Value{val}}, nil
-	}),
+	}()
+	val := rex__apply(thunk, nil)
+	return Rex_Result_Ok{F0: val}
 }

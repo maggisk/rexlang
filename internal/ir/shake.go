@@ -8,6 +8,28 @@ func Shake(prog *Program) *Program {
 	return ShakeFrom(prog, "main")
 }
 
+// ShakeForTests removes declarations not transitively reachable from test bodies.
+// Like Shake but uses test function references as roots instead of "main".
+func ShakeForTests(prog *Program) *Program {
+	// Collect all roots from test bodies
+	var roots []string
+	for _, d := range prog.Decls {
+		if dt, ok := d.(DTest); ok {
+			roots = append(roots, collectRefs(dt.Body)...)
+		}
+	}
+	// Also include _ bindings (side-effect only top-level expressions)
+	for _, d := range prog.Decls {
+		if dl, ok := d.(DLet); ok && dl.Name == "_" {
+			roots = append(roots, collectRefs(dl.Body)...)
+		}
+	}
+	if len(roots) == 0 {
+		return prog // no tests, keep everything
+	}
+	return ShakeFrom(prog, roots...)
+}
+
 // ShakeFrom removes declarations not transitively reachable from the given root(s).
 func ShakeFrom(prog *Program, roots ...string) *Program {
 	// Collect all top-level function bodies for reference scanning
@@ -24,6 +46,9 @@ func ShakeFrom(prog *Program, roots ...string) *Program {
 			for _, b := range dl.Bindings {
 				funcBodies[b.Name] = funcBody{cexpr: b.Bind}
 			}
+		case DExternal:
+			// Register externals so they can be discovered as reachable
+			funcBodies[dl.Name] = funcBody{}
 		}
 	}
 
@@ -71,6 +96,10 @@ func ShakeFrom(prog *Program, roots ...string) *Program {
 					kept = append(kept, d)
 					break
 				}
+			}
+		case DExternal:
+			if reachable[dl.Name] {
+				kept = append(kept, d)
 			}
 		default:
 			// DType, DTrait, DImpl, DImport, DTest — always keep
@@ -153,6 +182,8 @@ func collectCExprRefs(c CExpr, refs *[]string) {
 		for _, a := range e.Parts {
 			collectAtomRefs(a, refs)
 		}
+	case CAssert:
+		collectAtomRefs(e.Expr, refs)
 	}
 }
 

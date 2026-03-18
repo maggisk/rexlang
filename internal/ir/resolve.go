@@ -167,6 +167,12 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 				for _, b := range d.Bindings {
 					topNames[b.Name] = true
 				}
+			case ast.ExternalDecl:
+				topNames[d.Name] = true
+			case ast.TypeDecl:
+				// Note: constructors are NOT prefixed because type declarations
+				// keep their original names. Constructors are resolved by the
+				// type system, not by name prefixing.
 			}
 		}
 		r.modTopNames[imp.Module] = topNames
@@ -195,7 +201,7 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 		}
 
 		// Extract declarations, prefixing function names to avoid collisions.
-		// Type declarations and constructors keep their original names.
+		// Type declarations keep their original names (resolved by the type system).
 		for _, me := range modExprs {
 			switch d := me.(type) {
 			case ast.TestDecl, ast.Export, ast.TypeAnnotation, ast.Import:
@@ -218,6 +224,9 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 			case ast.TraitDecl:
 				r.decls = append(r.decls, d)
 			case ast.ImplDecl:
+				r.decls = append(r.decls, d)
+			case ast.ExternalDecl:
+				d.Name = prefix + d.Name
 				r.decls = append(r.decls, d)
 			}
 		}

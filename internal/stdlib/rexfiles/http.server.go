@@ -1,91 +1,73 @@
-package rexfiles
+//go:build ignore
+
+package main
 
 import (
 	"fmt"
 	"io"
 	"net/http"
-
-	"github.com/maggisk/rexlang/internal/eval"
 )
 
-var HttpServerFFI = map[string]any{
-	"httpServe": eval.Curried2("httpServe", func(portV, handlerV eval.Value) (eval.Value, error) {
-		port, err := eval.AsInt(portV)
-		if err != nil {
-			return nil, err
+// Stdlib_Http_Server_httpServe starts an HTTP server.
+// The handler is a Rex closure: Request -> Response.
+// Returns error for the standard Result () String wrapper.
+func Stdlib_Http_Server_httpServe(port int64, handler any) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Build header list
+		var headers *RexList
+		for k, vals := range r.Header {
+			for i := len(vals) - 1; i >= 0; i-- {
+				headers = &RexList{Head: Tuple2{F0: k, F1: vals[i]}, Tail: headers}
+			}
 		}
 
-		mux := http.NewServeMux()
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			headerItems := make([]eval.Value, 0, len(r.Header))
-			for k, vals := range r.Header {
-				for _, v := range vals {
-					headerItems = append(headerItems, eval.VTuple{Items: []eval.Value{eval.VString{V: k}, eval.VString{V: v}}})
-				}
+		// Build query list
+		var query *RexList
+		for k, vals := range r.URL.Query() {
+			for i := len(vals) - 1; i >= 0; i-- {
+				query = &RexList{Head: Tuple2{F0: k, F1: vals[i]}, Tail: query}
 			}
+		}
 
-			queryItems := make([]eval.Value, 0, len(r.URL.Query()))
-			for k, vals := range r.URL.Query() {
-				for _, v := range vals {
-					queryItems = append(queryItems, eval.VTuple{Items: []eval.Value{eval.VString{V: k}, eval.VString{V: v}}})
-				}
-			}
+		bodyBytes, _ := io.ReadAll(r.Body)
 
-			bodyBytes, _ := io.ReadAll(r.Body)
+		req := Rex_Request{
+			Method:  r.Method,
+			Path:    r.URL.Path,
+			Headers: headers,
+			Body:    string(bodyBytes),
+			Query:   query,
+		}
 
-			reqRecord := eval.VRecord{
-				TypeName: "Request",
-				Fields: map[string]eval.Value{
-					"method":  eval.VString{V: r.Method},
-					"path":    eval.VString{V: r.URL.Path},
-					"headers": eval.VList{Items: headerItems},
-					"body":    eval.VString{V: string(bodyBytes)},
-					"query":   eval.VList{Items: queryItems},
-				},
-			}
+		respV := rex__apply(handler, req)
+		resp := respV.(Rex_Response)
 
-			respV, err := eval.ApplyValue(handlerV, reqRecord)
-			if err != nil {
-				w.WriteHeader(500)
-				w.Write([]byte("Internal Server Error: " + err.Error()))
-				return
-			}
-
-			resp, ok := respV.(eval.VRecord)
-			if !ok {
-				w.WriteHeader(500)
-				w.Write([]byte("handler did not return a Response record"))
-				return
-			}
-
-			if hdrs, ok := resp.Fields["headers"].(eval.VList); ok {
-				for _, item := range hdrs.Items {
-					if tup, ok := item.(eval.VTuple); ok && len(tup.Items) == 2 {
-						if name, ok := tup.Items[0].(eval.VString); ok {
-							if val, ok := tup.Items[1].(eval.VString); ok {
-								w.Header().Set(name.V, val.V)
-							}
+		// Write response headers
+		if hdrs, ok := resp.Headers.(*RexList); ok {
+			for l := hdrs; l != nil; l = l.Tail {
+				if tup, ok := l.Head.(Tuple2); ok {
+					if name, ok := tup.F0.(string); ok {
+						if val, ok := tup.F1.(string); ok {
+							w.Header().Set(name, val)
 						}
 					}
 				}
 			}
-
-			statusCode := 200
-			if s, ok := resp.Fields["status"].(eval.VInt); ok {
-				statusCode = s.V
-			}
-			w.WriteHeader(statusCode)
-
-			if body, ok := resp.Fields["body"].(eval.VString); ok {
-				w.Write([]byte(body.V))
-			}
-		})
-
-		addr := fmt.Sprintf(":%d", port)
-		fmt.Printf("Listening on http://localhost:%d\n", port)
-		if listenErr := http.ListenAndServe(addr, mux); listenErr != nil {
-			return eval.VCtor{Name: "Err", Args: []eval.Value{eval.VString{V: listenErr.Error()}}}, nil
 		}
-		return eval.VCtor{Name: "Ok", Args: []eval.Value{eval.VUnit{}}}, nil
-	}),
+
+		statusCode := int64(200)
+		if s, ok := resp.Status.(int64); ok {
+			statusCode = s
+		}
+		w.WriteHeader(int(statusCode))
+
+		if body, ok := resp.Body.(string); ok {
+			w.Write([]byte(body))
+		}
+	})
+
+	addr := fmt.Sprintf(":%d", port)
+	fmt.Printf("Listening on http://localhost:%d\n", port)
+	return http.ListenAndServe(addr, mux)
 }

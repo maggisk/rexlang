@@ -1,17 +1,10 @@
-package rexfiles
+//go:build ignore
 
-var BitwiseFFI = map[string]any{
-	"bitAnd":     Bitwise_bitAnd,
-	"bitOr":      Bitwise_bitOr,
-	"bitXor":     Bitwise_bitXor,
-	"bitNot":     Bitwise_bitNot,
-	"shiftLeft":  Bitwise_shiftLeft,
-	"shiftRight": Bitwise_shiftRight,
-}
+package main
 
-func Bitwise_bitAnd(a, b int) int    { return a & b }
-func Bitwise_bitOr(a, b int) int     { return a | b }
-func Bitwise_bitXor(a, b int) int    { return a ^ b }
-func Bitwise_bitNot(a int) int       { return ^a }
-func Bitwise_shiftLeft(a, n int) int  { return a << uint(n) }
-func Bitwise_shiftRight(a, n int) int { return a >> uint(n) }
+func Stdlib_Bitwise_bitAnd(a, b int64) int64    { return a & b }
+func Stdlib_Bitwise_bitOr(a, b int64) int64     { return a | b }
+func Stdlib_Bitwise_bitXor(a, b int64) int64    { return a ^ b }
+func Stdlib_Bitwise_bitNot(a int64) int64       { return ^a }
+func Stdlib_Bitwise_shiftLeft(a, n int64) int64  { return a << uint(n) }
+func Stdlib_Bitwise_shiftRight(a, n int64) int64 { return a >> uint(n) }

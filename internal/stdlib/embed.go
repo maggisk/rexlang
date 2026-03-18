@@ -10,6 +10,21 @@ import (
 //go:embed all:rexfiles
 var stdlibFS embed.FS
 
+// GoCompanion returns the Go companion source for a stdlib module (e.g. "String", "IO").
+// Returns "" if no companion file exists. Strips the //go:build ignore line.
+func GoCompanion(module string) string {
+	path := "rexfiles/" + strings.ToLower(module) + ".go"
+	data, err := fs.ReadFile(stdlibFS, path)
+	if err != nil {
+		return ""
+	}
+	src := string(data)
+	if strings.HasPrefix(src, "//go:build ignore\n") {
+		src = src[len("//go:build ignore\n"):]
+	}
+	return src
+}
+
 // Source returns the source code for a stdlib module by name (e.g. "Prelude", "Json.Decode").
 func Source(name string) (string, error) {
 	path := strings.ReplaceAll(name, ".", "/")

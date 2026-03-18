@@ -119,6 +119,9 @@ func (l *Lowerer) lowerToplevel(expr ast.Expr) (Decl, error) {
 		}
 		return DTest{Name: e.Name, Body: body}, nil
 
+	case ast.ExternalDecl:
+		return DExternal{Name: e.Name}, nil
+
 	case ast.Export, ast.TypeAnnotation:
 		// These are metadata — no IR equivalent needed
 		return nil, nil
@@ -271,7 +274,9 @@ func (l *Lowerer) lowerExpr(expr ast.Expr) (Expr, error) {
 
 	// --- Assert ---
 	case ast.Assert:
-		return l.lowerExpr(e.Expr)
+		return l.normalize(e.Expr, func(a Atom) (Expr, error) {
+			return EComplex{C: CAssert{Expr: a, Line: e.Line}}, nil
+		})
 
 	// --- Declarations that can appear in expression position ---
 	case ast.TypeDecl, ast.TraitDecl, ast.ImplDecl, ast.Import, ast.Export, ast.TypeAnnotation:

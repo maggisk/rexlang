@@ -2674,6 +2674,28 @@ func TypeEnvForModule(name string) TypeEnv {
 	return typeEnvForModule(name)
 }
 
+// LookupModuleType looks up the type for a module-qualified name like "Std$String$replace"
+// or "Std$Http$Server$httpServe" (submodules).
+// Returns nil if the module or name is not found.
+func LookupModuleType(qualifiedName string) interface{} {
+	// Split on all "$": "Std$Http$Server$httpServe" → ["Std", "Http", "Server", "httpServe"]
+	parts := strings.Split(qualifiedName, "$")
+	if len(parts) < 3 || parts[0] != "Std" {
+		return nil
+	}
+	// Last element is the local name, middle elements form the module name joined by "."
+	localName := parts[len(parts)-1]
+	moduleName := strings.Join(parts[1:len(parts)-1], ".")
+
+	moduleCacheMu.Lock()
+	result, ok := moduleCache["Std:"+moduleName]
+	moduleCacheMu.Unlock()
+	if !ok {
+		return nil
+	}
+	return result.Env[localName]
+}
+
 // ---------------------------------------------------------------------------
 // Prelude cache
 // ---------------------------------------------------------------------------
@@ -2801,9 +2823,11 @@ func ReorderToplevel(exprs []ast.Expr) ([]ast.Expr, error) {
 	}
 
 	// First pass: collect all binding names so we know which annotations to pair.
-	// Also detect duplicate top-level definitions.
+	// Also detect duplicate top-level definitions and duplicate test names.
 	bindingNameSet := map[string]bool{}
 	bindingNameLine := map[string]int{} // first definition line for error messages
+	testNameSet := map[string]bool{}
+	testNameLine := map[string]int{}
 	for _, e := range exprs {
 		switch e := e.(type) {
 		case ast.Let:
@@ -2833,6 +2857,12 @@ func ReorderToplevel(exprs []ast.Expr) ([]ast.Expr, error) {
 					bindingNameSet[n] = true
 				}
 			}
+		case ast.TestDecl:
+			if testNameSet[e.Name] {
+				return nil, fmt.Errorf("duplicate test name '%s' (first defined at line %d)", e.Name, testNameLine[e.Name])
+			}
+			testNameSet[e.Name] = true
+			testNameLine[e.Name] = e.Line
 		}
 	}
 

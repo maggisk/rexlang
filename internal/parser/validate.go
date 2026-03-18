@@ -6,6 +6,23 @@ import (
 	"github.com/maggisk/rexlang/internal/ast"
 )
 
+// ValidateToplevel checks that only declarations appear at the top level.
+// Bare expressions are rejected — only let, type, trait, impl, import, export,
+// test, type annotations, and external declarations are allowed.
+func ValidateToplevel(exprs []ast.Expr) error {
+	for _, expr := range exprs {
+		switch expr.(type) {
+		case ast.Let, ast.LetPat, ast.LetRec, ast.TypeDecl,
+			ast.TraitDecl, ast.ImplDecl, ast.Import, ast.Export,
+			ast.TestDecl, ast.TypeAnnotation, ast.ExternalDecl:
+			// OK
+		default:
+			return fmt.Errorf("bare expression at top level — only declarations (name = ..., type, trait, impl, import, export, test) are allowed")
+		}
+	}
+	return nil
+}
+
 // ValidateIndentation walks the AST and checks that bodies are indented
 // relative to their headers (match arms, if/then/else, let bindings).
 // Returns the first error found, or nil.

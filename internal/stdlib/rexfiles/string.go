@@ -1,155 +1,154 @@
-package rexfiles
+//go:build ignore
+
+package main
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf8"
-
-	"github.com/maggisk/rexlang/internal/eval"
 )
 
-var StringFFI = map[string]any{
-	"length":       String_length,
-	"toUpper":      String_toUpper,
-	"toLower":      String_toLower,
-	"trim":         String_trim,
-	"trimLeft":     String_trimLeft,
-	"trimRight":    String_trimRight,
-	"split":        String_split,
-	"join":         String_join,
-	"contains":     String_contains,
-	"startsWith":   String_startsWith,
-	"endsWith":     String_endsWith,
-	"charAt":       String_charAt,
-	"substring":    String_substring,
-	"indexOf":      String_indexOf,
-	"replace":      String_replace,
-	"take":         String_take,
-	"drop":         String_drop,
-	"repeat":       String_repeat,
-	"padLeft":      String_padLeft,
-	"padRight":     String_padRight,
-	"words":        String_words,
-	"lines":        String_lines,
-	"charCode":     String_charCode,
-	"fromCharCode": String_fromCharCode,
-	"parseInt":     String_parseInt,
-	"parseFloat":   String_parseFloat,
-	"reverse":      String_reverse,
-	"toList":       String_toList,
-	"fromList":     String_fromList,
-	// toString is polymorphic — handles multiple value types
-	"toString": eval.MakeBuiltin("toString", func(v eval.Value) (eval.Value, error) {
-		switch val := v.(type) {
-		case eval.VInt:
-			return eval.VString{V: fmt.Sprintf("%d", val.V)}, nil
-		case eval.VFloat:
-			return eval.VString{V: eval.FloatToStr(val.V)}, nil
-		case eval.VBool:
-			if val.V {
-				return eval.VString{V: "true"}, nil
-			}
-			return eval.VString{V: "false"}, nil
-		case eval.VString:
-			return v, nil
-		}
-		return nil, &eval.RuntimeError{Msg: "toString: cannot convert " + eval.ValueToString(v)}
-	}),
+func Stdlib_String_length(s string) int64 {
+	return int64(utf8.RuneCountInString(s))
 }
 
-func String_length(s string) int       { return utf8.RuneCountInString(s) }
-func String_toUpper(s string) string   { return strings.ToUpper(s) }
-func String_toLower(s string) string   { return strings.ToLower(s) }
-func String_trim(s string) string      { return strings.TrimSpace(s) }
-func String_trimLeft(s string) string  { return strings.TrimLeft(s, " \t\n\r") }
-func String_trimRight(s string) string { return strings.TrimRight(s, " \t\n\r") }
+func Stdlib_String_toUpper(s string) string   { return strings.ToUpper(s) }
+func Stdlib_String_toLower(s string) string   { return strings.ToLower(s) }
+func Stdlib_String_trim(s string) string      { return strings.TrimSpace(s) }
+func Stdlib_String_trimLeft(s string) string  { return strings.TrimLeft(s, " \t\n\r") }
+func Stdlib_String_trimRight(s string) string { return strings.TrimRight(s, " \t\n\r") }
 
-func String_split(sep, s string) []string         { return strings.Split(s, sep) }
-func String_join(sep string, lst []string) string  { return strings.Join(lst, sep) }
+func Stdlib_String_split(sep, s string) *RexList {
+	parts := strings.Split(s, sep)
+	var list *RexList
+	for i := len(parts) - 1; i >= 0; i-- {
+		list = &RexList{Head: parts[i], Tail: list}
+	}
+	return list
+}
 
-func String_contains(sub, s string) bool          { return strings.Contains(s, sub) }
-func String_startsWith(prefix, s string) bool     { return strings.HasPrefix(s, prefix) }
-func String_endsWith(suffix, s string) bool       { return strings.HasSuffix(s, suffix) }
+func Stdlib_String_join(sep string, lst *RexList) string {
+	var parts []string
+	for l := lst; l != nil; l = l.Tail {
+		parts = append(parts, l.Head.(string))
+	}
+	return strings.Join(parts, sep)
+}
 
-func String_charAt(idx int, s string) *string {
+func Stdlib_String_contains(sub, s string) bool   { return strings.Contains(s, sub) }
+func Stdlib_String_startsWith(pfx, s string) bool { return strings.HasPrefix(s, pfx) }
+func Stdlib_String_endsWith(sfx, s string) bool   { return strings.HasSuffix(s, sfx) }
+
+func Stdlib_String_charAt(idx int64, s string) *string {
 	runes := []rune(s)
-	if idx >= 0 && idx < len(runes) {
-		result := string(runes[idx])
+	i := int(idx)
+	if i >= 0 && i < len(runes) {
+		result := string(runes[i])
 		return &result
 	}
 	return nil
 }
 
-func String_substring(start, end int, s string) string {
+func Stdlib_String_substring(start, end int64, s string) string {
 	runes := []rune(s)
 	n := len(runes)
-	sc := clampInt(start, 0, n)
-	ec := clampInt(end, 0, n)
+	sc, ec := int(start), int(end)
+	if sc < 0 {
+		sc = 0
+	}
+	if sc > n {
+		sc = n
+	}
+	if ec < 0 {
+		ec = 0
+	}
+	if ec > n {
+		ec = n
+	}
 	return string(runes[sc:ec])
 }
 
-func String_indexOf(needle, haystack string) *int {
+func Stdlib_String_indexOf(needle, haystack string) *int64 {
 	byteIdx := strings.Index(haystack, needle)
 	if byteIdx == -1 {
 		return nil
 	}
-	runeIdx := utf8.RuneCountInString(haystack[:byteIdx])
-	return &runeIdx
+	idx := int64(utf8.RuneCountInString(haystack[:byteIdx]))
+	return &idx
 }
 
-func String_replace(find, repl, s string) string {
+func Stdlib_String_replace(find, repl, s string) string {
 	return strings.ReplaceAll(s, find, repl)
 }
 
-func String_take(n int, s string) string {
+func Stdlib_String_take(n int64, s string) string {
 	runes := []rune(s)
-	end := clampInt(n, 0, len(runes))
+	end := int(n)
+	if end < 0 {
+		end = 0
+	}
+	if end > len(runes) {
+		end = len(runes)
+	}
 	return string(runes[:end])
 }
 
-func String_drop(n int, s string) string {
+func Stdlib_String_drop(n int64, s string) string {
 	runes := []rune(s)
-	start := clampInt(n, 0, len(runes))
+	start := int(n)
+	if start < 0 {
+		start = 0
+	}
+	if start > len(runes) {
+		start = len(runes)
+	}
 	return string(runes[start:])
 }
 
-func String_repeat(n int, s string) string {
-	if n < 0 {
-		n = 0
+func Stdlib_String_repeat(n int64, s string) string {
+	count := int(n)
+	if count < 0 {
+		count = 0
 	}
-	return strings.Repeat(s, n)
+	return strings.Repeat(s, count)
 }
 
-func String_padLeft(width int, pad, s string) string {
+func Stdlib_String_padLeft(width int64, pad, s string) string {
 	padRunes := []rune(pad)
 	if len(padRunes) == 0 {
 		return s
 	}
-	fillRune := padRunes[0]
 	runes := []rune(s)
-	for len(runes) < width {
-		runes = append([]rune{fillRune}, runes...)
+	w := int(width)
+	for len(runes) < w {
+		runes = append([]rune{padRunes[0]}, runes...)
 	}
 	return string(runes)
 }
 
-func String_padRight(width int, pad, s string) string {
+func Stdlib_String_padRight(width int64, pad, s string) string {
 	padRunes := []rune(pad)
 	if len(padRunes) == 0 {
 		return s
 	}
-	fillRune := padRunes[0]
 	runes := []rune(s)
-	for len(runes) < width {
-		runes = append(runes, fillRune)
+	w := int(width)
+	for len(runes) < w {
+		runes = append(runes, padRunes[0])
 	}
 	return string(runes)
 }
 
-func String_words(s string) []string { return strings.Fields(s) }
+func Stdlib_String_words(s string) *RexList {
+	parts := strings.Fields(s)
+	var list *RexList
+	for i := len(parts) - 1; i >= 0; i-- {
+		list = &RexList{Head: parts[i], Tail: list}
+	}
+	return list
+}
 
-func String_lines(s string) []string {
+func Stdlib_String_lines(s string) *RexList {
 	if s == "" {
 		return nil
 	}
@@ -158,19 +157,23 @@ func String_lines(s string) []string {
 	if len(parts) > 0 && parts[len(parts)-1] == "" {
 		parts = parts[:len(parts)-1]
 	}
-	return parts
+	var list *RexList
+	for i := len(parts) - 1; i >= 0; i-- {
+		list = &RexList{Head: parts[i], Tail: list}
+	}
+	return list
 }
 
-func String_charCode(s string) *int {
+func Stdlib_String_charCode(s string) *int64 {
 	if s == "" {
 		return nil
 	}
 	r, _ := utf8.DecodeRuneInString(s)
-	code := int(r)
+	code := int64(r)
 	return &code
 }
 
-func String_fromCharCode(code int) *string {
+func Stdlib_String_fromCharCode(code int64) *string {
 	if code < 0 || code > 0x10FFFF {
 		return nil
 	}
@@ -178,25 +181,26 @@ func String_fromCharCode(code int) *string {
 	return &s
 }
 
-func String_parseInt(s string) *int {
-	s = strings.TrimSpace(s)
-	i, err := strconv.Atoi(s)
+func Stdlib_String_parseInt(s string) *int64 {
+	str := strings.TrimSpace(s)
+	i, err := strconv.Atoi(str)
 	if err != nil {
 		return nil
 	}
-	return &i
+	v := int64(i)
+	return &v
 }
 
-func String_parseFloat(s string) *float64 {
-	s = strings.TrimSpace(s)
-	f, err := strconv.ParseFloat(s, 64)
+func Stdlib_String_parseFloat(s string) *float64 {
+	str := strings.TrimSpace(s)
+	f, err := strconv.ParseFloat(str, 64)
 	if err != nil {
 		return nil
 	}
 	return &f
 }
 
-func String_reverse(s string) string {
+func Stdlib_String_reverse(s string) string {
 	runes := []rune(s)
 	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
 		runes[i], runes[j] = runes[j], runes[i]
@@ -204,29 +208,23 @@ func String_reverse(s string) string {
 	return string(runes)
 }
 
-func String_toList(s string) []string {
+func Stdlib_String_toList(s string) *RexList {
 	runes := []rune(s)
-	result := make([]string, len(runes))
-	for i, r := range runes {
-		result[i] = string(r)
+	var list *RexList
+	for i := len(runes) - 1; i >= 0; i-- {
+		list = &RexList{Head: string(runes[i]), Tail: list}
 	}
-	return result
+	return list
 }
 
-func String_fromList(lst []string) string {
-	var buf strings.Builder
-	for _, s := range lst {
-		buf.WriteString(s)
+func Stdlib_String_fromList(lst *RexList) string {
+	var b strings.Builder
+	for l := lst; l != nil; l = l.Tail {
+		b.WriteString(l.Head.(string))
 	}
-	return buf.String()
+	return b.String()
 }
 
-func clampInt(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
+func Stdlib_String_toString(v any) string {
+	return rex_display(v)
 }

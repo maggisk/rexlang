@@ -1,14 +1,10 @@
-package rexfiles
+//go:build ignore
+
+package main
 
 import "os"
 
-var EnvFFI = map[string]any{
-	"getEnv":   Env_getEnv,
-	"getEnvOr": Env_getEnvOr,
-	// "args" is special — needs programArgs, handled in BuiltinsForModule
-}
-
-func Env_getEnv(name string) *string {
+func Stdlib_Env_getEnv(name string) *string {
 	val, ok := os.LookupEnv(name)
 	if !ok {
 		return nil
@@ -16,7 +12,7 @@ func Env_getEnv(name string) *string {
 	return &val
 }
 
-func Env_getEnvOr(name, def string) string {
+func Stdlib_Env_getEnvOr(name, def string) string {
 	val, ok := os.LookupEnv(name)
 	if !ok {
 		return def
