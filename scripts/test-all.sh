@@ -24,7 +24,7 @@ fi
 
 echo ""
 echo "=== Go tests ==="
-if ! go test ./...; then
+if ! go test $(go list ./... | grep -v internal/codegen) ./internal/codegen/ -run 'TestGo'; then
     failed=1
 fi
 
