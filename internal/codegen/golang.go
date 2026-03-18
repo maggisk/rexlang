@@ -1133,9 +1133,9 @@ func (g *goGen) emitCExprStmt(c ir.CExpr, isReturn bool) error {
 		return g.emitMatch(c, isReturn)
 
 	case ir.CAssert:
-		g.wn("if !(")
+		g.wn("if !(any(")
 		g.emitAtom(c.Expr)
-		fmt.Fprintf(g.buf, ".(bool)) { panic(\"assert failed at line %d\") }\n", c.Line)
+		fmt.Fprintf(g.buf, ").(bool)) { panic(\"assert failed at line %d\") }\n", c.Line)
 		return nil
 
 	default:
@@ -1231,9 +1231,9 @@ func (g *goGen) emitCExprInline(c ir.CExpr) error {
 
 	case ir.CAssert:
 		// As inline expression, wrap in IIFE
-		g.buf.WriteString("func() any { if !(")
+		g.buf.WriteString("func() any { if !(any(")
 		g.emitAtom(c.Expr)
-		fmt.Fprintf(g.buf, ".(bool)) { panic(\"assert failed at line %d\") }; return nil }()", c.Line)
+		fmt.Fprintf(g.buf, ").(bool)) { panic(\"assert failed at line %d\") }; return nil }()", c.Line)
 		return nil
 	}
 	return fmt.Errorf("unknown cexpr type: %T", c)
@@ -1631,9 +1631,36 @@ func (g *goGen) emitRecordUpdate(c ir.CRecordUpdate) error {
 		}
 	}
 	if recTypeName == "" && len(c.Updates) > 0 {
-		ri := g.findRecordForField(c.Updates[0].Path[0])
-		if ri != nil {
-			recTypeName = ri.name
+		// Find a record that has ALL updated fields (avoids collision between records with overlapping fields)
+		var updateFields []string
+		for _, u := range c.Updates {
+			updateFields = append(updateFields, u.Path[0])
+		}
+		for _, ri := range g.allRecords {
+			hasAll := true
+			for _, uf := range updateFields {
+				found := false
+				for _, fn := range ri.fieldNames {
+					if fn == uf {
+						found = true
+						break
+					}
+				}
+				if !found {
+					hasAll = false
+					break
+				}
+			}
+			if hasAll {
+				recTypeName = ri.name
+				break
+			}
+		}
+		if recTypeName == "" {
+			ri := g.findRecordForField(c.Updates[0].Path[0])
+			if ri != nil {
+				recTypeName = ri.name
+			}
 		}
 	}
 	if recTypeName == "" {
@@ -1644,12 +1671,8 @@ func (g *goGen) emitRecordUpdate(c ir.CRecordUpdate) error {
 		return fmt.Errorf("cannot determine record type for update (field=%q)", field)
 	}
 
-	// Map to the (possibly renamed) Go struct name via field matching
-	if len(c.Updates) > 0 {
-		if ri := g.findRecordForField(c.Updates[0].Path[0]); ri != nil {
-			recTypeName = ri.name
-		}
-	} else if ri, ok := g.recordsByOrigName[recTypeName]; ok {
+	// Map to the (possibly renamed) Go struct name
+	if ri, ok := g.recordsByOrigName[recTypeName]; ok {
 		recTypeName = ri.name
 	}
 	structName := goTypeName(recTypeName)
