@@ -1868,7 +1868,7 @@ func (g *goGen) patternCondition(scrutExpr string, pat ir.Pattern) (string, []pa
 		return "true", nil
 
 	case ir.PNil:
-		return fmt.Sprintf("%s.(*RexList) == nil || %s == nil", scrutExpr, scrutExpr), nil
+		return fmt.Sprintf("(%s.(*RexList) == nil || %s == nil)", scrutExpr, scrutExpr), nil
 
 	case ir.PCons:
 		listVar := g.fresh()

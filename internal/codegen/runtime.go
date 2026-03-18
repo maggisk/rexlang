@@ -101,7 +101,11 @@ func rex_display(v any) string {
 	case int64:
 		return strconv.FormatInt(val, 10)
 	case float64:
-		return strconv.FormatFloat(val, 'g', -1, 64)
+		s := strconv.FormatFloat(val, 'g', -1, 64)
+		if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
+			s += ".0"
+		}
+		return s
 	case string:
 		return val
 	case bool:
@@ -128,7 +132,12 @@ func rex_showInt(v any) any {
 }
 
 func rex_showFloat(v any) any {
-	return strconv.FormatFloat(v.(float64), 'g', -1, 64)
+	s := strconv.FormatFloat(v.(float64), 'g', -1, 64)
+	// Ensure floats always have a decimal point (e.g., "1" → "1.0")
+	if !strings.Contains(s, ".") && !strings.Contains(s, "e") && !strings.Contains(s, "E") {
+		s += ".0"
+	}
+	return s
 }
 
 func rex_not(v any) any {
