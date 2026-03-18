@@ -23,7 +23,11 @@
 //	atom ::= var | int | float | string | bool | unit
 package ir
 
-import "github.com/maggisk/rexlang/internal/types"
+import (
+	"strings"
+
+	"github.com/maggisk/rexlang/internal/types"
+)
 
 // ---------------------------------------------------------------------------
 // Atoms — values that don't require further evaluation
@@ -362,6 +366,148 @@ func (DImpl) declNode()     {}
 func (DImport) declNode()   {}
 func (DTest) declNode()     {}
 func (DExternal) declNode() {}
+
+// PrefixExternals adds a module qualifier to all DExternal names and their
+// references throughout the program. Used when testing a stdlib file directly
+// (e.g., Bitwise.rex) so that "bitAnd" becomes "Std$Bitwise$bitAnd".
+func PrefixExternals(prog *Program, moduleName string) {
+	prefix := "Std$" + strings.ReplaceAll(moduleName, ".", "$") + "$"
+
+	// Collect bare external names to rename
+	renames := map[string]string{}
+	for i, d := range prog.Decls {
+		if ext, ok := d.(DExternal); ok {
+			if !strings.Contains(ext.Name, "$") {
+				newName := prefix + ext.Name
+				renames[ext.Name] = newName
+				ext.Name = newName
+				prog.Decls[i] = ext
+			}
+		}
+	}
+	if len(renames) == 0 {
+		return
+	}
+
+	// Rename all AVar references throughout the program
+	for i, d := range prog.Decls {
+		prog.Decls[i] = renameDecl(d, renames)
+	}
+}
+
+func renameDecl(d Decl, renames map[string]string) Decl {
+	switch d := d.(type) {
+	case DLet:
+		d.Body = renameExpr(d.Body, renames)
+		return d
+	case DLetRec:
+		for i, b := range d.Bindings {
+			d.Bindings[i].Bind = renameCExpr(b.Bind, renames)
+		}
+		return d
+	case DImpl:
+		for i, m := range d.Methods {
+			d.Methods[i].Body = renameExpr(m.Body, renames)
+		}
+		return d
+	case DTest:
+		d.Body = renameExpr(d.Body, renames)
+		return d
+	}
+	return d
+}
+
+func renameExpr(e Expr, renames map[string]string) Expr {
+	switch e := e.(type) {
+	case EAtom:
+		e.A = renameAtom(e.A, renames)
+		return e
+	case EComplex:
+		e.C = renameCExpr(e.C, renames)
+		return e
+	case ELet:
+		e.Bind = renameCExpr(e.Bind, renames)
+		e.Body = renameExpr(e.Body, renames)
+		return e
+	case ELetRec:
+		for i, b := range e.Bindings {
+			e.Bindings[i].Bind = renameCExpr(b.Bind, renames)
+		}
+		e.Body = renameExpr(e.Body, renames)
+		return e
+	}
+	return e
+}
+
+func renameCExpr(c CExpr, renames map[string]string) CExpr {
+	switch e := c.(type) {
+	case CApp:
+		e.Func = renameAtom(e.Func, renames)
+		e.Arg = renameAtom(e.Arg, renames)
+		return e
+	case CIf:
+		e.Cond = renameAtom(e.Cond, renames)
+		e.Then = renameExpr(e.Then, renames)
+		e.Else = renameExpr(e.Else, renames)
+		return e
+	case CLambda:
+		e.Body = renameExpr(e.Body, renames)
+		return e
+	case CMatch:
+		e.Scrutinee = renameAtom(e.Scrutinee, renames)
+		for i, arm := range e.Arms {
+			e.Arms[i].Body = renameExpr(arm.Body, renames)
+		}
+		return e
+	case CBinop:
+		e.Left = renameAtom(e.Left, renames)
+		e.Right = renameAtom(e.Right, renames)
+		return e
+	case CCtor:
+		for i, a := range e.Args {
+			e.Args[i] = renameAtom(a, renames)
+		}
+		return e
+	case CRecord:
+		for i, f := range e.Fields {
+			e.Fields[i].Value = renameAtom(f.Value, renames)
+		}
+		return e
+	case CRecordUpdate:
+		e.Record = renameAtom(e.Record, renames)
+		for i, u := range e.Updates {
+			e.Updates[i].Value = renameAtom(u.Value, renames)
+		}
+		return e
+	case CFieldAccess:
+		e.Record = renameAtom(e.Record, renames)
+		return e
+	case CList:
+		for i, a := range e.Items {
+			e.Items[i] = renameAtom(a, renames)
+		}
+		return e
+	case CTuple:
+		for i, a := range e.Items {
+			e.Items[i] = renameAtom(a, renames)
+		}
+		return e
+	case CAssert:
+		e.Expr = renameAtom(e.Expr, renames)
+		return e
+	}
+	return c
+}
+
+func renameAtom(a Atom, renames map[string]string) Atom {
+	if v, ok := a.(AVar); ok {
+		if newName, ok := renames[v.Name]; ok {
+			v.Name = newName
+			return v
+		}
+	}
+	return a
+}
 
 // Program is the complete lowered program.
 type Program struct {

@@ -258,8 +258,10 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 
 	// Emit package + imports (minimal — runtime.go has the heavy imports)
 	out.WriteString("package main\n\n")
-	if g.testMode {
+	if g.testMode && len(g.testFuncs) > 0 {
 		out.WriteString("import (\n\t\"fmt\"\n\t\"os\"\n\t\"strings\"\n)\n\n")
+	} else if g.testMode {
+		out.WriteString("import \"fmt\"\n\n")
 	} else {
 		out.WriteString("import \"os\"\n\n")
 	}
@@ -292,6 +294,11 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 
 func (g *goGen) emitTestMain(out *strings.Builder) {
 	out.WriteString("\nfunc main() {\n")
+	if len(g.testFuncs) == 0 {
+		out.WriteString("\tfmt.Println(\"0 passed, 0 failed\")\n")
+		out.WriteString("}\n")
+		return
+	}
 	out.WriteString("\tvar only string\n")
 	out.WriteString("\tif len(os.Args) > 1 { only = os.Args[1] }\n")
 	out.WriteString("\tpassed, failed, skipped := 0, 0, 0\n")

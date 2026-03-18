@@ -649,6 +649,11 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 		return nil, nil, err
 	}
 
+	// If testing a stdlib file directly, prefix bare external names with module qualifier
+	if stdlibModName := stdlibModuleName(path); stdlibModName != "" {
+		ir.PrefixExternals(prog, stdlibModName)
+	}
+
 	if testMode {
 		prog = ir.ShakeForTests(prog)
 	} else {
@@ -656,6 +661,25 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 	}
 
 	return prog, typeEnv, nil
+}
+
+// stdlibModuleName returns the stdlib module name for a file path, or "" if not a stdlib file.
+// e.g., ".../rexfiles/Bitwise.rex" → "Bitwise", ".../rexfiles/Http.Server.rex" → "Http.Server"
+func stdlibModuleName(path string) string {
+	absPath, _ := filepath.Abs(path)
+	if !strings.HasSuffix(absPath, ".rex") {
+		return ""
+	}
+	base := strings.TrimSuffix(filepath.Base(absPath), ".rex")
+	if typechecker.TypeEnvForModule(base) != nil {
+		return base
+	}
+	dir := filepath.Base(filepath.Dir(absPath))
+	dotted := dir + "." + base
+	if typechecker.TypeEnvForModule(dotted) != nil {
+		return dotted
+	}
+	return ""
 }
 
 // stdlibExtraTypeEnv returns extra type environment for stdlib module testing.
