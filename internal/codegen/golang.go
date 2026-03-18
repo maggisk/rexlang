@@ -178,6 +178,7 @@ type goRecordInfo struct {
 type goImplCase struct {
 	typeName string
 	funcName string
+	arity    int
 }
 
 // ---------------------------------------------------------------------------
@@ -413,9 +414,26 @@ func (g *goGen) analyze(prog *ir.Program) {
 			for _, m := range d.Methods {
 				key := d.TraitName + ":" + m.Name
 				funcName := fmt.Sprintf("impl_%s_%s_%s", d.TraitName, d.TargetTypeName, m.Name)
+				// Count arity by counting nested lambdas in the method body
+				arity := 0
+				body := m.Body
+				for {
+					if ec, ok := body.(ir.EComplex); ok {
+						if lam, ok := ec.C.(ir.CLambda); ok {
+							arity++
+							body = lam.Body
+							continue
+						}
+					}
+					break
+				}
+				if arity == 0 {
+					arity = 1
+				}
 				g.traitImpls[key] = append(g.traitImpls[key], goImplCase{
 					typeName: d.TargetTypeName,
 					funcName: funcName,
+					arity:    arity,
 				})
 				g.scanExpr(m.Body)
 			}
@@ -718,7 +736,19 @@ func (g *goGen) emitTraitDispatchers() string {
 			continue
 		}
 
+		// Determine arity from the first impl case
+		arity := 1
+		if len(filteredCases) > 0 {
+			arity = filteredCases[0].arity
+		}
+
 		fmt.Fprintf(&b, "func %s(args ...any) any {\n", dispatchName)
+		// Support curried calls for multi-arg methods (e.g., eq, compare)
+		if arity > 1 {
+			b.WriteString("\tif len(args) == 1 {\n")
+			fmt.Fprintf(&b, "\t\treturn func(b any) any { return %s(args[0], b) }\n", dispatchName)
+			b.WriteString("\t}\n")
+		}
 		b.WriteString("\tv := args[0]\n")
 		b.WriteString("\tswitch v.(type) {\n")
 		for _, c := range filteredCases {
@@ -1333,11 +1363,9 @@ func (g *goGen) emitBinop(c ir.CBinop) error {
 		}
 		return g.emitArithBinop(c, "/")
 	case "Mod":
-		// Avoid compile-time constant modulo by zero — use runtime variable
+		// Avoid compile-time constant modulo by zero — use explicit panic with distinct message
 		if isLiteralZero(c.Right) {
-			g.buf.WriteString("func() int64 { d := int64(0); return ")
-			g.emitAtomAsInt(c.Left)
-			g.buf.WriteString(" % d }()")
+			g.buf.WriteString("func() int64 { panic(\"runtime error: modulo by zero\") }()")
 			return nil
 		}
 		g.buf.WriteString("(")

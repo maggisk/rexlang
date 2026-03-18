@@ -12,14 +12,19 @@ import (
 func Std_Result_try(thunk any) (result any) {
 	defer func() {
 		if r := recover(); r != nil {
+			var msg string
 			if re, ok := r.(runtime.Error); ok {
-				msg := re.Error()
-				switch {
-				case strings.Contains(msg, "divide by zero"):
-					result = Rex_Result_Err{F0: Rex_RuntimeError_DivisionByZero{}}
-					return
-				case strings.Contains(msg, "modulo by zero"):
+				msg = re.Error()
+			} else if s, ok := r.(string); ok {
+				msg = s
+			}
+			if msg != "" {
+				if strings.Contains(msg, "modulo by zero") {
 					result = Rex_Result_Err{F0: Rex_RuntimeError_ModuloByZero{}}
+					return
+				}
+				if strings.Contains(msg, "divide by zero") {
+					result = Rex_Result_Err{F0: Rex_RuntimeError_DivisionByZero{}}
 					return
 				}
 			}
