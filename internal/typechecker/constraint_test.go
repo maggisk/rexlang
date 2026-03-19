@@ -227,6 +227,118 @@ func TestConstraintSortModuleScheme(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Nested trait constraint propagation
+// ---------------------------------------------------------------------------
+
+func TestNestedConstraintEqListFunctionFails(t *testing.T) {
+	// eq on a list of functions should fail -- functions do not have Eq
+	resetModuleCache()
+	code := `
+f = eq [(\x -> x)] [(\y -> y)]
+`
+	expectConstraintError(t, "eq_list_function", code, "no Eq instance", "->")
+}
+
+func TestNestedConstraintSortNestedListOK(t *testing.T) {
+	// sort [[1, 2], [3, 4]] should work -- List Int has Ord because Int has Ord
+	resetModuleCache()
+	code := `
+import Std:List (sort)
+
+test "sort nested lists" =
+    assert sort [[3, 4], [1, 2]] == [[1, 2], [3, 4]]
+`
+	expectOK(t, "sort_nested_lists", code)
+}
+
+func TestNestedConstraintPropagateToVar(t *testing.T) {
+	// A function that compares lists should propagate Eq to the element type
+	code := `
+f x = eq [x] [x]
+`
+	s := getScheme(t, code, "f")
+	str := types.SchemeToString(s)
+	if !strings.Contains(str, "Eq") {
+		t.Fatalf("expected Eq constraint on element type, got: %s", str)
+	}
+	if !strings.Contains(str, "=>") {
+		t.Fatalf("expected => in scheme, got: %s", str)
+	}
+}
+
+func TestNestedConstraintEqTupleFunctionFails(t *testing.T) {
+	// eq on tuple containing function should fail
+	resetModuleCache()
+	code := `
+f = eq (1, (\x -> x)) (2, (\y -> y))
+`
+	expectConstraintError(t, "eq_tuple_function", code, "no Eq instance", "->")
+}
+
+func TestNestedConstraintShowListOK(t *testing.T) {
+	// show [1, 2, 3] should work -- Int has Show
+	code := `
+f = show [1, 2, 3]
+`
+	expectOK(t, "show_list_int", code)
+}
+
+func TestNestedConstraintShowListFunctionFails(t *testing.T) {
+	// show [(\x -> x)] should fail -- functions do not have Show
+	resetModuleCache()
+	code := `
+f = show [(\x -> x)]
+`
+	expectConstraintError(t, "show_list_function", code, "no Show instance", "->")
+}
+
+func TestNestedConstraintDeepNesting(t *testing.T) {
+	// eq on List (List Int) should work -- Int has Eq
+	code := `
+f = eq [[1]] [[2]]
+`
+	expectOK(t, "eq_nested_list", code)
+}
+
+func TestNestedConstraintDeepNestingFails(t *testing.T) {
+	// eq on List (List (Int -> Int)) should fail
+	resetModuleCache()
+	code := `
+f = eq [[(\x -> x)]] [[(\y -> y)]]
+`
+	expectConstraintError(t, "eq_deep_nested_function", code, "no Eq instance", "->")
+}
+
+func TestNestedConstraintMaybeOK(t *testing.T) {
+	// eq on Maybe Int should work
+	code := `
+import Std:Maybe (Just, Nothing)
+f = eq (Just 1) (Just 2)
+`
+	expectOK(t, "eq_maybe_int", code)
+}
+
+func TestNestedConstraintMaybeFunctionFails(t *testing.T) {
+	// eq on Maybe (Int -> Int) should fail
+	resetModuleCache()
+	code := `
+import Std:Maybe (Just, Nothing)
+f = eq (Just (\x -> x)) (Just (\y -> y))
+`
+	expectConstraintError(t, "eq_maybe_function", code, "no Eq instance", "->")
+}
+
+func TestNestedConstraintSortListFunctionFails(t *testing.T) {
+	// sort on list of functions should fail -- no Ord for functions
+	resetModuleCache()
+	code := `
+import Std:List (sort)
+f = sort [(\x -> x)]
+`
+	expectConstraintError(t, "sort_list_function", code, "no Ord instance", "->")
+}
+
+// ---------------------------------------------------------------------------
 // Record update on TVar
 // ---------------------------------------------------------------------------
 

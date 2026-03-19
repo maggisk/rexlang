@@ -183,21 +183,46 @@ func (tc *TypeChecker) resolveConstraints(s types.Subst, env TypeEnv, startIdx i
 	var result []types.Constraint
 	for _, c := range newConstraints {
 		resolved := types.ApplySubst(s, types.TVar{Name: c.Var})
-		switch t := resolved.(type) {
-		case types.TVar:
-			result = append(result, types.Constraint{Trait: c.Trait, Var: t.Name})
-		case types.TCon:
-			typeName := t.Name
-			if typeName == "Tuple" {
-				typeName = fmt.Sprintf("Tuple%d", len(t.Args))
-			}
-			key := c.Trait + ":" + typeName
-			if _, ok := instances[key]; !ok {
-				return nil, &types.TypeError{Msg: fmt.Sprintf("no %s instance for type %s", c.Trait, types.TypeToString(resolved))}
-			}
+		extra, err := checkTraitForType(c.Trait, resolved, instances)
+		if err != nil {
+			return nil, err
 		}
+		result = append(result, extra...)
 	}
 	return result, nil
+}
+
+// checkTraitForType checks that a type satisfies a trait constraint.
+// For type variables, it returns a constraint to propagate.
+// For concrete types, it checks that an instance exists and recursively
+// checks that all type arguments also satisfy the same trait.
+// This ensures e.g. Eq (List (Int -> Int)) fails because Int -> Int has no Eq.
+func checkTraitForType(trait string, ty types.Type, instances map[string]map[string]bool) ([]types.Constraint, error) {
+	switch t := ty.(type) {
+	case types.TVar:
+		return []types.Constraint{{Trait: trait, Var: t.Name}}, nil
+	case types.TCon:
+		typeName := t.Name
+		if typeName == "Tuple" {
+			typeName = fmt.Sprintf("Tuple%d", len(t.Args))
+		}
+		key := trait + ":" + typeName
+		if _, ok := instances[key]; !ok {
+			return nil, &types.TypeError{Msg: fmt.Sprintf("no %s instance for type %s", trait, types.TypeToString(ty))}
+		}
+		// Instance exists for the outer type. Now check each type argument
+		// also satisfies the same trait (e.g. Eq (List a) requires Eq a).
+		var result []types.Constraint
+		for _, arg := range t.Args {
+			extra, err := checkTraitForType(trait, arg, instances)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, extra...)
+		}
+		return result, nil
+	}
+	return nil, nil
 }
 
 // freshenType replaces all TVars in a type with fresh variables.
@@ -2305,8 +2330,6 @@ var (
 	moduleCache   = map[string]*ModuleResult{}
 	moduleCacheMu sync.Mutex
 
-
-
 	srcRoot   string // absolute path to src/ directory (empty if not set)
 	srcRootMu sync.Mutex
 
@@ -2684,8 +2707,6 @@ func typeDefsForModule(name string) map[string]types.Type {
 	}
 	return nil
 }
-
-
 
 // TypeEnvForModule is the exported version of typeEnvForModule.
 func TypeEnvForModule(name string) TypeEnv {

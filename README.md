@@ -444,8 +444,6 @@ match try (\_ -> 10 / 0)
         0
 ```
 
-- **Missing trait instance on inner types** — `[Int -> Int] == [Int -> Int]` passes because the outer type (`List`) has an `Eq` instance, but fails at runtime because `Int -> Int` doesn't. Full inner constraint propagation is planned.
-
 Non-exhaustive patterns are caught at compile time — `match` expressions on ADTs, bools, and lists must cover all constructors, and literal/tuple patterns require a catch-all `_ ->` arm. Refutable patterns in `let` bindings are also rejected. IO operations like `readFile` and `getEnv` don't crash — they return `Result` or `Maybe`. Actor mailboxes are unbounded (Erlang-style) so `send` never fails.
 
 ## Standard library
