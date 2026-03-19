@@ -200,7 +200,28 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func printErr(kind string, err error) {
+	if te, ok := err.(*types.TypeError); ok && te.Source != "" && te.Line > 0 {
+		printRichTypeError(kind, te)
+		return
+	}
 	fmt.Fprintf(os.Stderr, "%s%s%s: %v\n", colorRed, kind, colorReset, err)
+}
+
+// printRichTypeError prints an Elm-style error with source snippet.
+func printRichTypeError(kind string, te *types.TypeError) {
+	fmt.Fprintf(os.Stderr, "\n%s-- %s %s\n\n", colorRed, strings.ToUpper(kind), colorReset)
+	fmt.Fprintf(os.Stderr, "%s\n\n", te.Msg)
+	// Show source line
+	lines := strings.Split(te.Source, "\n")
+	if te.Line > 0 && te.Line <= len(lines) {
+		line := lines[te.Line-1]
+		fmt.Fprintf(os.Stderr, "  %s%d|%s %s\n", colorRed, te.Line, colorReset, line)
+	}
+	if te.Expected != "" && te.Found != "" {
+		fmt.Fprintf(os.Stderr, "\n  %sExpected%s: %s\n", colorRed, colorReset, te.Expected)
+		fmt.Fprintf(os.Stderr, "  %sFound%s:    %s\n", colorRed, colorReset, te.Found)
+	}
+	fmt.Fprintln(os.Stderr)
 }
 
 func printTestErr(path, kind string, err error) {
@@ -663,6 +684,9 @@ func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Progra
 	}
 	done()
 	if err != nil {
+		if te, ok := err.(*types.TypeError); ok {
+			te.Source = source
+		}
 		printErr("Type error", err)
 		return nil, nil, err
 	}
