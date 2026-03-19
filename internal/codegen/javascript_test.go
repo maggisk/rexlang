@@ -19,7 +19,7 @@ func compileJSCode(t *testing.T, code string) string {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	typeEnv, _, err := typechecker.CheckProgram(exprs)
+	typeEnv, _, err := typechecker.CheckProgram(exprs, "")
 	if err != nil {
 		t.Fatalf("typecheck error: %v", err)
 	}

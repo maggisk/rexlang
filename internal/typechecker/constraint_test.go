@@ -28,7 +28,7 @@ func getScheme(t *testing.T, code, name string) types.Scheme {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	env, _, err := CheckProgram(exprs)
+	env, _, err := CheckProgram(exprs, "")
 	if err != nil {
 		t.Fatalf("typecheck error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestConstraintSortModuleScheme(t *testing.T) {
 	// Verify sort carries Ord constraint after module loading
 	resetModuleCache()
 
-	result, err := CheckModule("Std:List")
+	result, err := CheckModule("Std:List", "")
 	if err != nil {
 		t.Fatalf("module error: %v", err)
 	}
