@@ -11,10 +11,10 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/codegen"
-	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
+	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/typechecker"
 	"github.com/maggisk/rexlang/internal/types"
 )
@@ -44,7 +44,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "       rex build [--out=<path>] <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex --compile-go <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex --compile [--target=browser] <file.rex>")
-		fmt.Fprintln(os.Stderr, "       rex init | install")
+		fmt.Fprintln(os.Stderr, "       rex init | install | search <query>")
 		os.Exit(1)
 	}
 
@@ -73,6 +73,10 @@ func main() {
 	}
 	if args[0] == "install" {
 		runInstall(args[1:])
+		return
+	}
+	if args[0] == "search" {
+		runSearch(args[1:])
 		return
 	}
 	if args[0] == "build" {
@@ -303,11 +307,13 @@ func runInstall(args []string) {
 		} else if len(args) >= 2 {
 			// rex install <url> <ref> — add a git dependency
 			addAndInstallDep(cwd, target, args[1])
-		} else {
-			fmt.Fprintln(os.Stderr, "Usage: rex install <path>")
-			fmt.Fprintln(os.Stderr, "       rex install <git-url> <ref>")
-			fmt.Fprintln(os.Stderr, "       rex install")
+		} else if isGitURL(target) {
+			fmt.Fprintln(os.Stderr, "Usage: rex install <git-url> <ref>")
+			fmt.Fprintln(os.Stderr, "       (git URLs require a ref — tag or commit)")
 			os.Exit(1)
+		} else {
+			// rex install <name> — look up in package registry
+			installFromRegistry(cwd, target)
 		}
 		return
 	}
