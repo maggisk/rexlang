@@ -225,14 +225,14 @@ func handleWarnings(path string, warnings []typechecker.Warning) {
 // ---------------------------------------------------------------------------
 
 // setupSrcRoot detects a src/ directory in cwd, validates the entry file if needed,
-// and sets the srcRoot for the typechecker. Also detects rex.toml and populates
+// and returns the srcRoot for user module resolution. Also detects rex.toml and populates
 // package roots.
-func setupSrcRoot(entryFile string) {
+func setupSrcRoot(entryFile string) string {
 	typechecker.SetTarget(targetMode)
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return
+		return ""
 	}
 
 	// Detect rex.toml and set up package roots
@@ -251,17 +251,17 @@ func setupSrcRoot(entryFile string) {
 	srcDir := filepath.Join(cwd, "src")
 	info, err := os.Stat(srcDir)
 	if err != nil || !info.IsDir() {
-		return
+		return ""
 	}
 	absEntry, err := filepath.Abs(entryFile)
 	if err != nil {
-		return
+		return ""
 	}
 	absSrc, _ := filepath.Abs(srcDir)
 	if !strings.HasPrefix(absEntry, absSrc+string(filepath.Separator)) {
-		return
+		return ""
 	}
-	typechecker.SetSrcRoot(absSrc)
+	return absSrc
 }
 
 // ---------------------------------------------------------------------------
@@ -530,7 +530,7 @@ func addAndInstallDep(projectRoot, gitURL, ref string) {
 // ---------------------------------------------------------------------------
 
 func showTypes(path string) {
-	setupSrcRoot(path)
+	srcRoot := setupSrcRoot(path)
 
 	source, err := readSourceWithOverlay(path)
 	if err != nil {
@@ -563,9 +563,9 @@ func showTypes(path string) {
 	var typeEnv typechecker.TypeEnv
 	var warnings []typechecker.Warning
 	if extraTypeEnv != nil {
-		typeEnv, warnings, err = typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv)
+		typeEnv, warnings, err = typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv, srcRoot)
 	} else {
-		typeEnv, warnings, err = typechecker.CheckProgram(exprs)
+		typeEnv, warnings, err = typechecker.CheckProgram(exprs, srcRoot)
 	}
 	if err != nil {
 		printErr("Type error", err)
@@ -608,7 +608,7 @@ func showTypes(path string) {
 
 // compileToIR runs the frontend pipeline: parse → validate → typecheck → IR.
 // Errors are printed to stderr; returns (nil, nil, err) on failure.
-func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.TypeEnv, error) {
+func compileToIR(source, path, srcRoot string, testMode bool) (*ir.Program, typechecker.TypeEnv, error) {
 	exprs, err := parser.Parse(source)
 	if err != nil {
 		printErr("Parse error", err)
@@ -638,9 +638,9 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 	var typeEnv typechecker.TypeEnv
 	var warnings []typechecker.Warning
 	if extraTypeEnv != nil {
-		typeEnv, warnings, err = typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv)
+		typeEnv, warnings, err = typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv, srcRoot)
 	} else {
-		typeEnv, warnings, err = typechecker.CheckProgram(exprs)
+		typeEnv, warnings, err = typechecker.CheckProgram(exprs, srcRoot)
 	}
 	if err != nil {
 		printErr("Type error", err)
@@ -648,7 +648,7 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 	}
 	handleWarnings(path, warnings)
 
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
+	importInfo, err := ir.ResolveImports(exprs, srcRoot, targetMode, packageRoots)
 	if err != nil {
 		printErr("Import resolution error", err)
 		return nil, nil, err
@@ -817,7 +817,7 @@ func readSourceWithOverlay(path string) (string, error) {
 // ---------------------------------------------------------------------------
 
 func compileFile(path string) {
-	setupSrcRoot(path)
+	srcRoot := setupSrcRoot(path)
 
 	source, err := readSourceWithOverlay(path)
 	if err != nil {
@@ -848,7 +848,7 @@ func compileFile(path string) {
 		os.Exit(1)
 	}
 
-	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
+	typeEnv, warnings, err := typechecker.CheckProgram(exprs, srcRoot)
 	if err != nil {
 		printErr("Type error", err)
 		os.Exit(1)
@@ -857,7 +857,7 @@ func compileFile(path string) {
 
 	// Resolve module imports: collect type/trait/impl/function declarations
 	// from imported modules so codegen has full program visibility.
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
+	importInfo, err := ir.ResolveImports(exprs, srcRoot, targetMode, packageRoots)
 	if err != nil {
 		printErr("Import resolution error", err)
 		os.Exit(1)
@@ -908,7 +908,7 @@ func compileFile(path string) {
 // ---------------------------------------------------------------------------
 
 func compileGoFile(path string) {
-	setupSrcRoot(path)
+	srcRoot := setupSrcRoot(path)
 
 	source, err := os.ReadFile(path)
 	if err != nil {
@@ -916,7 +916,7 @@ func compileGoFile(path string) {
 		os.Exit(1)
 	}
 
-	prog, typeEnv, err := compileToIR(string(source), path, false)
+	prog, typeEnv, err := compileToIR(string(source), path, srcRoot, false)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -984,7 +984,7 @@ func compileGoFile(path string) {
 // ---------------------------------------------------------------------------
 
 func compileJSFile(path string) {
-	setupSrcRoot(path)
+	srcRoot := setupSrcRoot(path)
 
 	source, err := readSourceWithOverlay(path)
 	if err != nil {
@@ -1014,14 +1014,14 @@ func compileJSFile(path string) {
 		os.Exit(1)
 	}
 
-	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
+	typeEnv, warnings, err := typechecker.CheckProgram(exprs, srcRoot)
 	if err != nil {
 		printErr("Type error", err)
 		os.Exit(1)
 	}
 	handleWarnings(path, warnings)
 
-	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
+	importInfo, err := ir.ResolveImports(exprs, srcRoot, targetMode, packageRoots)
 	if err != nil {
 		printErr("Import resolution error", err)
 		os.Exit(1)
@@ -1067,7 +1067,7 @@ func compileJSFile(path string) {
 // ---------------------------------------------------------------------------
 
 func runFile(path string, programArgs []string) {
-	setupSrcRoot(path)
+	srcRoot := setupSrcRoot(path)
 
 	source, err := readSourceWithOverlay(path)
 	if err != nil {
@@ -1076,7 +1076,7 @@ func runFile(path string, programArgs []string) {
 	}
 
 	// Frontend: parse → typecheck → IR
-	prog, typeEnv, err := compileToIR(source, path, false)
+	prog, typeEnv, err := compileToIR(source, path, srcRoot, false)
 	if err != nil {
 		os.Exit(1) // errors already printed by compileToIR
 	}
@@ -1120,7 +1120,7 @@ func runFile(path string, programArgs []string) {
 // ---------------------------------------------------------------------------
 
 func buildBinary(path string, outPath string) {
-	setupSrcRoot(path)
+	srcRoot := setupSrcRoot(path)
 
 	src, err := readSourceWithOverlay(path)
 	if err != nil {
@@ -1128,7 +1128,7 @@ func buildBinary(path string, outPath string) {
 		os.Exit(1)
 	}
 
-	prog, typeEnv, err := compileToIR(src, path, false)
+	prog, typeEnv, err := compileToIR(src, path, srcRoot, false)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -1166,14 +1166,15 @@ func runTestsBatch(files []string, only string) bool {
 		typeEnv typechecker.TypeEnv
 	}
 	var items []compiled
+	var srcRoot string
 	for _, path := range files {
-		setupSrcRoot(path)
+		srcRoot = setupSrcRoot(path)
 		src, err := readSourceWithOverlay(path)
 		if err != nil {
 			printTestErr(path, "error", err)
 			continue
 		}
-		prog, typeEnv, err := compileToIR(src, path, true)
+		prog, typeEnv, err := compileToIR(src, path, srcRoot, true)
 		if err != nil {
 			continue
 		}
@@ -1270,7 +1271,7 @@ func runTestsBatch(files []string, only string) bool {
 // ---------------------------------------------------------------------------
 
 func runTests(path string, only string) bool {
-	setupSrcRoot(path)
+	srcRoot := setupSrcRoot(path)
 
 	src, err := readSourceWithOverlay(path)
 	if err != nil {
@@ -1279,7 +1280,7 @@ func runTests(path string, only string) bool {
 	}
 
 	// Frontend: parse → typecheck → IR (test mode)
-	prog, typeEnv, err := compileToIR(src, path, true)
+	prog, typeEnv, err := compileToIR(src, path, srcRoot, true)
 	if err != nil {
 		return false // errors already printed
 	}

@@ -10,9 +10,9 @@ import (
 	"github.com/maggisk/rexlang/internal/parser"
 )
 
-// setupUserModule creates a temp src/ directory with the given module files,
-// sets the typechecker and eval src roots, and returns a cleanup function.
-func setupUserModule(t *testing.T, modules map[string]string) func() {
+// setupUserModule creates a temp src/ directory with the given module files
+// and returns the srcRoot path and a cleanup function.
+func setupUserModule(t *testing.T, modules map[string]string) (string, func()) {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "rexlang-opaque-test")
 	if err != nil {
@@ -31,16 +31,14 @@ func setupUserModule(t *testing.T, modules map[string]string) func() {
 			t.Fatal(err)
 		}
 	}
-	SetSrcRoot(srcDir)
-	return func() {
-		SetSrcRoot("")
+	return srcDir, func() {
 		os.RemoveAll(dir)
 	}
 }
 
 func TestOpaqueTypeBlocksConstructor(t *testing.T) {
 	resetModuleCache()
-	cleanup := setupUserModule(t, map[string]string{
+	srcRoot, cleanup := setupUserModule(t, map[string]string{
 		"Email": `
 export opaque type Email = Email String
 
@@ -68,7 +66,7 @@ y = toString x
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	_, _, err = CheckProgram(exprs)
+	_, _, err = CheckProgram(exprs, srcRoot)
 	if err != nil {
 		t.Fatalf("expected OK, got: %v", err)
 	}
@@ -76,7 +74,7 @@ y = toString x
 
 func TestOpaqueTypeBlocksDirectConstruction(t *testing.T) {
 	resetModuleCache()
-	cleanup := setupUserModule(t, map[string]string{
+	srcRoot, cleanup := setupUserModule(t, map[string]string{
 		"Email": `
 export opaque type Email = Email String
 
@@ -96,7 +94,7 @@ x = Email "test@example.com"
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	_, _, err = CheckProgram(exprs)
+	_, _, err = CheckProgram(exprs, srcRoot)
 	if err == nil {
 		t.Fatal("expected type error when using opaque constructor, got nil")
 	}
@@ -104,7 +102,7 @@ x = Email "test@example.com"
 
 func TestOpaqueTypeBlocksPatternMatch(t *testing.T) {
 	resetModuleCache()
-	cleanup := setupUserModule(t, map[string]string{
+	srcRoot, cleanup := setupUserModule(t, map[string]string{
 		"Email": `
 export opaque type Email = Email String
 
@@ -127,7 +125,7 @@ f e =
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	_, _, err = CheckProgram(exprs)
+	_, _, err = CheckProgram(exprs, srcRoot)
 	if err == nil {
 		t.Fatal("expected type error when pattern matching on opaque type, got nil")
 	}
@@ -135,7 +133,7 @@ f e =
 
 func TestOpaqueTypeInAnnotation(t *testing.T) {
 	resetModuleCache()
-	cleanup := setupUserModule(t, map[string]string{
+	srcRoot, cleanup := setupUserModule(t, map[string]string{
 		"Email": `
 export opaque type Email = Email String
 
@@ -164,7 +162,7 @@ process e = toString e
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	_, _, err = CheckProgram(exprs)
+	_, _, err = CheckProgram(exprs, srcRoot)
 	if err != nil {
 		t.Fatalf("expected OK with opaque type annotation, got: %v", err)
 	}
@@ -172,7 +170,7 @@ process e = toString e
 
 func TestOpaqueTypeCannotImportConstructor(t *testing.T) {
 	resetModuleCache()
-	cleanup := setupUserModule(t, map[string]string{
+	srcRoot, cleanup := setupUserModule(t, map[string]string{
 		"Email": `
 export opaque type Email = Email String
 
@@ -191,7 +189,7 @@ import Email (Email)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	_, _, err = CheckProgram(exprs)
+	_, _, err = CheckProgram(exprs, srcRoot)
 	if err == nil {
 		t.Fatal("expected error importing opaque constructor, got nil")
 	}
@@ -202,7 +200,7 @@ import Email (Email)
 
 func TestOpaqueRecordBlocksFieldAccess(t *testing.T) {
 	resetModuleCache()
-	cleanup := setupUserModule(t, map[string]string{
+	srcRoot, cleanup := setupUserModule(t, map[string]string{
 		"Token": `
 export opaque type Token = { value : String, kind : Int }
 
@@ -227,7 +225,7 @@ y = getValue x
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	_, _, err = CheckProgram(exprs)
+	_, _, err = CheckProgram(exprs, srcRoot)
 	if err != nil {
 		t.Fatalf("expected OK, got: %v", err)
 	}
@@ -235,7 +233,7 @@ y = getValue x
 
 func TestOpaqueRecordBlocksDirectFieldAccess(t *testing.T) {
 	resetModuleCache()
-	cleanup := setupUserModule(t, map[string]string{
+	srcRoot, cleanup := setupUserModule(t, map[string]string{
 		"Token": `
 export opaque type Token = { value : String, kind : Int }
 
@@ -256,7 +254,7 @@ y = x.value
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	_, _, err = CheckProgram(exprs)
+	_, _, err = CheckProgram(exprs, srcRoot)
 	if err == nil {
 		t.Fatal("expected error accessing opaque record field, got nil")
 	}
@@ -264,7 +262,7 @@ y = x.value
 
 func TestOpaqueADTMultipleConstructors(t *testing.T) {
 	resetModuleCache()
-	cleanup := setupUserModule(t, map[string]string{
+	srcRoot, cleanup := setupUserModule(t, map[string]string{
 		"Color": `
 export opaque type Color = Red | Green | Blue
 
@@ -301,7 +299,7 @@ y = name green
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	_, _, err = CheckProgram(exprs)
+	_, _, err = CheckProgram(exprs, srcRoot)
 	if err != nil {
 		t.Fatalf("expected OK, got: %v", err)
 	}
