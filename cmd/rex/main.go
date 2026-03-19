@@ -764,33 +764,31 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	}
 	buildDir := filepath.Join(root, ".cache", "rex-build")
 
-	// Clean and recreate
-	os.RemoveAll(buildDir)
+	// Create build dir (preserve existing for Go build cache)
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating build dir: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Track which files we write so we can clean up stale ones
+	written := map[string]bool{}
+
 	// Write main.go
 	goFile := filepath.Join(buildDir, "main.go")
-	if err := os.WriteFile(goFile, []byte(goSrc), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing Go source: %v\n", err)
-		os.Exit(1)
-	}
+	writeIfChanged(goFile, goSrc)
+	written[goFile] = true
 
 	// Write go.mod
 	base := strings.TrimSuffix(filepath.Base(path), ".rex")
 	goMod := fmt.Sprintf("module rex_%s\n\ngo 1.24\n", base)
-	if err := os.WriteFile(filepath.Join(buildDir, "go.mod"), []byte(goMod), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing go.mod: %v\n", err)
-		os.Exit(1)
-	}
+	goModPath := filepath.Join(buildDir, "go.mod")
+	writeIfChanged(goModPath, goMod)
+	written[goModPath] = true
 
 	// Extract runtime
-	if err := os.WriteFile(filepath.Join(buildDir, "runtime.go"), []byte(codegen.RuntimeSource()), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing runtime.go: %v\n", err)
-		os.Exit(1)
-	}
+	runtimePath := filepath.Join(buildDir, "runtime.go")
+	writeIfChanged(runtimePath, codegen.RuntimeSource())
+	written[runtimePath] = true
 
 	// Extract companion files for needed stdlib modules
 	modules := codegen.NeededModules(prog, typeEnv)
@@ -798,10 +796,17 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 		src := stdlib.GoCompanion(mod)
 		if src != "" {
 			p := filepath.Join(buildDir, "stdlib_"+strings.ToLower(strings.ReplaceAll(mod, ".", "_"))+".go")
-			if err := os.WriteFile(p, []byte(src), 0644); err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing companion file: %v\n", err)
-				os.Exit(1)
-			}
+			writeIfChanged(p, src)
+			written[p] = true
+		}
+	}
+
+	// Remove stale .go files from previous builds
+	entries, _ := os.ReadDir(buildDir)
+	for _, e := range entries {
+		p := filepath.Join(buildDir, e.Name())
+		if strings.HasSuffix(e.Name(), ".go") && !written[p] {
+			os.Remove(p)
 		}
 	}
 
@@ -818,6 +823,17 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	}
 
 	return binaryPath
+}
+
+// writeIfChanged writes content to a file only if the content differs from
+// what's already on disk. This preserves file modification times so that
+// Go's build cache can skip unchanged files.
+func writeIfChanged(path, content string) {
+	existing, err := os.ReadFile(path)
+	if err == nil && string(existing) == content {
+		return
+	}
+	os.WriteFile(path, []byte(content), 0644)
 }
 
 // resolveOverlayEntry detects when the user passes a target-overlay file
