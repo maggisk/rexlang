@@ -668,12 +668,7 @@ func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Progra
 		printErr("Indentation error", err)
 		return nil, nil, err
 	}
-	exprs, err = typechecker.ReorderToplevel(exprs)
 	done()
-	if err != nil {
-		printErr("Type error", err)
-		return nil, nil, err
-	}
 
 	// Detect if this is a stdlib file for extra type env
 	absPath, _ := filepath.Abs(path)
