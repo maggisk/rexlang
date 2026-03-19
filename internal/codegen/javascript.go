@@ -28,6 +28,8 @@ func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, jsBindings []ir.JsBin
 		knownTypes:       map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
 		jsBindings:       jsBindings,
 		moduleMode:       moduleMode,
+		usedStringFns:    make(map[string]bool),
+		usedTraitMethods: make(map[string]bool),
 	}
 	return g.emit(prog)
 }
@@ -84,11 +86,17 @@ type jsGen struct {
 	tempCounter      int
 
 	// track what features are used
-	usesConcurrency bool
-	usesJsFfi       bool              // browser: Std:Js FFI primitives
-	knownTypes      map[string]bool   // types defined in the program
-	jsBindings      []ir.JsBinding    // companion JS file bindings
-	moduleMode      string            // module compilation mode
+	usesConcurrency  bool
+	usesJsFfi        bool            // browser: Std:Js FFI primitives
+	knownTypes       map[string]bool // types defined in the program
+	jsBindings       []ir.JsBinding  // companion JS file bindings
+	moduleMode       string          // module compilation mode
+	usesEq           bool            // $eq function is needed
+	usesCompare      bool            // $compare function is needed
+	usesDisplay      bool            // $display function is needed
+	usesApply        bool            // $$apply is used (set during emit, not scan)
+	usedStringFns    map[string]bool // which $string* helpers are actually used
+	usedTraitMethods map[string]bool // which trait methods are actually dispatched
 }
 
 func (g *jsGen) fresh() string {
@@ -125,27 +133,20 @@ func (g *jsGen) raw(s string) {
 // ---------------------------------------------------------------------------
 
 func (g *jsGen) emit(prog *ir.Program) (string, error) {
-	// Phase 1: analyze
+	// Phase 1: analyze — collect type info, scan all expressions for feature usage
 	g.analyze(prog)
 
-	// Phase 2: emit module body
-	body := &strings.Builder{}
+	// Phase 2: emit top-level declarations to a temporary buffer to discover
+	// which runtime helpers are actually referenced during codegen (e.g. $$apply).
+	declBuf := &strings.Builder{}
+	g.buf = declBuf
 
-	// Emit runtime helpers
-	body.WriteString(g.emitRuntimeHelpers())
-
-	// Emit companion JS bindings (external FFI)
-	for _, b := range g.jsBindings {
-		fmt.Fprintf(body, "const %s = (() => {\n%s\n})();\n\n", b.MangledName, b.Source)
-	}
-
-	// Emit trait dispatch functions
-	body.WriteString(g.emitTraitDispatchers())
+	// Placeholder for trait dispatchers (actual dispatch emitted after impls)
+	g.emitTraitDispatchers()
 
 	// Emit top-level declarations.
 	// When overlay files shadow stubs, the same name appears multiple times.
 	// Keep only the last DLet/DLetRec definition for each name (overlay wins).
-	g.buf = body
 	lastDeclIdx := make(map[string]int)
 	for i, d := range prog.Decls {
 		switch d := d.(type) {
@@ -159,6 +160,10 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 			}
 		}
 	}
+
+	// Separate stdlib/imported declarations from user declarations with section comments
+	wroteStdlib := false
+	wroteUser := false
 	for i, d := range prog.Decls {
 		skip := false
 		switch d := d.(type) {
@@ -167,7 +172,6 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 				skip = true
 			}
 		case ir.DLetRec:
-			// Skip if ALL bindings in this group have a later definition
 			allLater := true
 			for _, b := range d.Bindings {
 				if lastDeclIdx[b.Name] == i {
@@ -182,6 +186,15 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 		if skip {
 			continue
 		}
+		// Add section comments for readability
+		isStdlib := isDeclStdlib(d)
+		if isStdlib && !wroteStdlib {
+			declBuf.WriteString("// --- Standard library ---\n\n")
+			wroteStdlib = true
+		} else if !isStdlib && !wroteUser && wroteStdlib {
+			declBuf.WriteString("// --- Application code ---\n\n")
+			wroteUser = true
+		}
 		if err := g.emitDecl(d); err != nil {
 			return "", err
 		}
@@ -190,8 +203,42 @@ func (g *jsGen) emit(prog *ir.Program) (string, error) {
 	// Emit trait dispatch functions (after all impls are collected)
 	g.emitAllDispatchers()
 
-	// Phase 3: wrap in module format
+	// Phase 3: now assemble the final output — runtime helpers first (informed
+	// by what we discovered during declaration emit), then declarations.
+	body := &strings.Builder{}
+
+	// Emit runtime helpers (only those actually used)
+	body.WriteString(g.emitRuntimeHelpers())
+
+	// Emit companion JS bindings (external FFI)
+	if len(g.jsBindings) > 0 {
+		body.WriteString("// --- External FFI bindings ---\n\n")
+		for _, b := range g.jsBindings {
+			fmt.Fprintf(body, "const %s = (() => {\n%s\n})();\n\n", b.MangledName, b.Source)
+		}
+	}
+
+	// Append declarations
+	body.WriteString(declBuf.String())
+
+	// Phase 4: wrap in module format
 	return g.wrapModule(body.String()), nil
+}
+
+// isDeclStdlib checks if a declaration comes from stdlib (has $ separator in name,
+// indicating a module-qualified name like Std$List$map).
+func isDeclStdlib(d ir.Decl) bool {
+	switch d := d.(type) {
+	case ir.DLet:
+		return strings.Contains(d.Name, "$")
+	case ir.DLetRec:
+		if len(d.Bindings) > 0 {
+			return strings.Contains(d.Bindings[0].Name, "$")
+		}
+	case ir.DImpl:
+		return true // trait impls are always from stdlib/prelude
+	}
+	return false
 }
 
 // wrapModule wraps the emitted JS body in the appropriate module format.
@@ -370,10 +417,73 @@ func jsFfiBuiltin(name string) string {
 func (g *jsGen) scanAtom(a ir.Atom) {
 	if v, ok := a.(ir.AVar); ok {
 		switch v.Name {
-		case "println", "print", "showInt", "showFloat", "not", "error", "todo", "toString":
+		case "println", "print":
+			g.usedBuiltins[v.Name] = true
+			g.usesDisplay = true
+		case "toString":
+			g.usedBuiltins[v.Name] = true
+			g.usesDisplay = true
+		case "showInt", "showFloat", "not", "error", "todo":
 			g.usedBuiltins[v.Name] = true
 		case "spawn", "send", "receive", "self", "call":
 			g.usesConcurrency = true
+		// String builtins — track individually
+		case "length":
+			g.usedStringFns["stringLength"] = true
+		case "toUpper":
+			g.usedStringFns["toUpper"] = true
+		case "toLower":
+			g.usedStringFns["toLower"] = true
+		case "trim":
+			g.usedStringFns["trim"] = true
+		case "trimLeft":
+			g.usedStringFns["trimLeft"] = true
+		case "trimRight":
+			g.usedStringFns["trimRight"] = true
+		case "reverse":
+			g.usedStringFns["stringReverse"] = true
+		case "split":
+			g.usedStringFns["split"] = true
+		case "join":
+			g.usedStringFns["join"] = true
+		case "contains":
+			g.usedStringFns["contains"] = true
+		case "startsWith":
+			g.usedStringFns["startsWith"] = true
+		case "endsWith":
+			g.usedStringFns["endsWith"] = true
+		case "replace":
+			g.usedStringFns["replace"] = true
+		case "substring":
+			g.usedStringFns["substring"] = true
+		case "repeat":
+			g.usedStringFns["repeat"] = true
+		case "charAt":
+			g.usedStringFns["charAt"] = true
+		case "indexOf":
+			g.usedStringFns["indexOf"] = true
+		case "padLeft":
+			g.usedStringFns["padLeft"] = true
+		case "padRight":
+			g.usedStringFns["padRight"] = true
+		case "words":
+			g.usedStringFns["words"] = true
+		case "lines":
+			g.usedStringFns["lines"] = true
+		case "charCode":
+			g.usedStringFns["charCode"] = true
+		case "fromCharCode":
+			g.usedStringFns["fromCharCode"] = true
+		case "parseInt":
+			g.usedStringFns["stringParseInt"] = true
+		case "parseFloat":
+			g.usedStringFns["stringParseFloat"] = true
+		case "toList":
+			g.usedStringFns["stringToList"] = true
+		case "fromList":
+			g.usedStringFns["stringFromList"] = true
+		case "toFloat":
+			g.usedStringFns["toFloat"] = true
 		default:
 			if jsFfiBuiltin(v.Name) != "" {
 				g.usesJsFfi = true
@@ -390,6 +500,13 @@ func (g *jsGen) scanCExpr(c ir.CExpr) {
 	case ir.CBinop:
 		g.scanAtom(c.Left)
 		g.scanAtom(c.Right)
+		// Track which runtime helpers are needed by binary operators
+		switch c.Op {
+		case "Eq", "Neq":
+			g.usesEq = true
+		case "Lt", "Gt", "Leq", "Geq":
+			g.usesCompare = true
+		}
 	case ir.CUnaryMinus:
 		g.scanAtom(c.Expr)
 	case ir.CIf:
@@ -427,6 +544,7 @@ func (g *jsGen) scanCExpr(c ir.CExpr) {
 			g.scanAtom(a)
 		}
 	case ir.CStringInterp:
+		g.usesDisplay = true
 		for _, a := range c.Parts {
 			g.scanAtom(a)
 		}
@@ -434,252 +552,131 @@ func (g *jsGen) scanCExpr(c ir.CExpr) {
 }
 
 // ---------------------------------------------------------------------------
-// Runtime helpers
+// Runtime helpers — only emit what is actually used
 // ---------------------------------------------------------------------------
 
 func (g *jsGen) emitRuntimeHelpers() string {
 	var b strings.Builder
 
-	// $eq: structural equality
-	b.WriteString(`function $eq(a, b) {
-  if (a === b) return true;
-  if (a === null || b === null) return a === b;
-  if (typeof a !== typeof b) return false;
-  if (typeof a === "object") {
-    if (a.$tag !== undefined && b.$tag !== undefined) {
-      if (a.$tag !== b.$tag) return false;
-      const ka = Object.keys(a), kb = Object.keys(b);
-      if (ka.length !== kb.length) return false;
-      for (const k of ka) { if (k !== "$tag" && !$eq(a[k], b[k])) return false; }
-      return true;
-    }
-    if (Array.isArray(a) && Array.isArray(b)) {
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++) { if (!$eq(a[i], b[i])) return false; }
-      return true;
-    }
-    const ka = Object.keys(a), kb = Object.keys(b);
-    if (ka.length !== kb.length) return false;
-    for (const k of ka) { if (!$eq(a[k], b[k])) return false; }
-    return true;
-  }
-  return false;
-}
+	needsRuntime := g.usesEq || g.usesCompare || g.usesDisplay || g.usesApply ||
+		len(g.usedBuiltins) > 0 || len(g.usedStringFns) > 0
 
-`)
+	if needsRuntime {
+		b.WriteString("// --- Rex runtime ---\n\n")
+	}
 
-	// $compare: structural comparison
-	b.WriteString(`function $compare(a, b) {
-  if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
-  if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
-  if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
-  return 0;
-}
+	// $eq: structural equality — only if == or != operators are used
+	if g.usesEq {
+		b.WriteString("function $eq(a, b) {\n  if (a === b) return true;\n  if (a === null || b === null) return a === b;\n  if (typeof a !== typeof b) return false;\n  if (typeof a === \"object\") {\n    if (a.$tag !== undefined && b.$tag !== undefined) {\n      if (a.$tag !== b.$tag) return false;\n      const ka = Object.keys(a), kb = Object.keys(b);\n      if (ka.length !== kb.length) return false;\n      for (const k of ka) { if (k !== \"$tag\" && !$eq(a[k], b[k])) return false; }\n      return true;\n    }\n    if (Array.isArray(a) && Array.isArray(b)) {\n      if (a.length !== b.length) return false;\n      for (let i = 0; i < a.length; i++) { if (!$eq(a[i], b[i])) return false; }\n      return true;\n    }\n    const ka = Object.keys(a), kb = Object.keys(b);\n    if (ka.length !== kb.length) return false;\n    for (const k of ka) { if (!$eq(a[k], b[k])) return false; }\n    return true;\n  }\n  return false;\n}\n\n")
+	}
 
-`)
+	// $compare: structural comparison — only if <, >, <=, >= operators are used
+	if g.usesCompare {
+		b.WriteString("function $compare(a, b) {\n  if (typeof a === \"number\" && typeof b === \"number\") return a < b ? -1 : a > b ? 1 : 0;\n  if (typeof a === \"string\" && typeof b === \"string\") return a < b ? -1 : a > b ? 1 : 0;\n  if (typeof a === \"boolean\" && typeof b === \"boolean\") return (a ? 1 : 0) - (b ? 1 : 0);\n  return 0;\n}\n\n")
+	}
 
-	// $display: convert any value to string
-	b.WriteString(`function $display(v) {
-  if (v === null) return "()";
-  if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(v);
-  if (typeof v === "string") return v;
-  if (typeof v === "boolean") return v ? "true" : "false";
-  if (Array.isArray(v)) return "(" + v.map($display).join(", ") + ")";
-  if (typeof v === "object") {
-    if (v.$tag === "Cons") {
-      const items = [];
-      let cur = v;
-      while (cur !== null && cur.$tag === "Cons") { items.push($display(cur.head)); cur = cur.tail; }
-      return "[" + items.join(", ") + "]";
-    }
-    if (v.$tag === "Nil") return "[]";
-    if (v.$tag !== undefined) {
-      const fields = Object.keys(v).filter(k => k !== "$tag" && k !== "$type");
-      if (fields.length === 0) return v.$tag;
-      return v.$tag + " " + fields.map(k => $display(v[k])).join(" ");
-    }
-    const entries = Object.entries(v);
-    return "{ " + entries.map(([k, val]) => k + " = " + $display(val)).join(", ") + " }";
-  }
-  return String(v);
-}
+	// $display: convert any value to string — only if println/print/toString/interpolation/error/todo are used
+	if g.usesDisplay {
+		b.WriteString("function $display(v) {\n  if (v === null) return \"()\";\n  if (typeof v === \"number\") return Number.isInteger(v) ? String(v) : String(v);\n  if (typeof v === \"string\") return v;\n  if (typeof v === \"boolean\") return v ? \"true\" : \"false\";\n  if (Array.isArray(v)) return \"(\" + v.map($display).join(\", \") + \")\";\n  if (typeof v === \"object\") {\n    if (v.$tag === \"Cons\") {\n      const items = [];\n      let cur = v;\n      while (cur !== null && cur.$tag === \"Cons\") { items.push($display(cur.head)); cur = cur.tail; }\n      return \"[\" + items.join(\", \") + \"]\";\n    }\n    if (v.$tag === \"Nil\") return \"[]\";\n    if (v.$tag !== undefined) {\n      const fields = Object.keys(v).filter(k => k !== \"$tag\" && k !== \"$type\");\n      if (fields.length === 0) return v.$tag;\n      return v.$tag + \" \" + fields.map(k => $display(v[k])).join(\" \");\n    }\n    const entries = Object.entries(v);\n    return \"{ \" + entries.map(([k, val]) => k + \" = \" + $display(val)).join(\", \") + \" }\";\n  }\n  return String(v);\n}\n\n")
+	}
 
-`)
+	// $$apply: generic function application — only if unknown function calls exist
+	if g.usesApply {
+		b.WriteString("function $$apply(f, arg) {\n  return f(arg);\n}\n\n")
+	}
 
-	// $$apply: apply a function to an argument
-	b.WriteString(`function $$apply(f, arg) {
-  return f(arg);
-}
+	// Individual builtins — only emit those that are used
+	var builtinLines []string
+	if g.usedBuiltins["println"] {
+		builtinLines = append(builtinLines, "function $println(v) { console.log($display(v)); return null; }")
+	}
+	if g.usedBuiltins["print"] {
+		builtinLines = append(builtinLines, "function $print(v) { console.log($display(v)); return null; }")
+	}
+	if g.usedBuiltins["showInt"] {
+		builtinLines = append(builtinLines, "function $showInt(v) { return String(v); }")
+	}
+	if g.usedBuiltins["showFloat"] {
+		builtinLines = append(builtinLines, "function $showFloat(v) { return String(v); }")
+	}
+	if g.usedBuiltins["not"] {
+		builtinLines = append(builtinLines, "function $not(v) { return !v; }")
+	}
+	if g.usedBuiltins["error"] {
+		builtinLines = append(builtinLines, "function $error(msg) { throw new Error(typeof msg === \"string\" ? msg : $display(msg)); }")
+	}
+	if g.usedBuiltins["todo"] {
+		builtinLines = append(builtinLines, "function $todo(msg) { throw new Error(\"TODO: \" + (typeof msg === \"string\" ? msg : $display(msg))); }")
+	}
+	if len(builtinLines) > 0 {
+		b.WriteString(strings.Join(builtinLines, "\n"))
+		b.WriteString("\n\n")
+	}
 
-`)
-
-	// Builtins
-	b.WriteString(`function $println(v) { console.log($display(v)); return null; }
-function $print(v) { console.log($display(v)); return null; }`)
-	b.WriteString(`
-function $showInt(v) { return String(v); }
-function $showFloat(v) { return String(v); }
-function $not(v) { return !v; }
-function $error(msg) { throw new Error(typeof msg === "string" ? msg : $display(msg)); }
-function $todo(msg) { throw new Error("TODO: " + (typeof msg === "string" ? msg : $display(msg))); }
-
-`)
-
-	// String builtins
-	b.WriteString(`function $stringLength(s) { return [...s].length; }
-function $toUpper(s) { return s.toUpperCase(); }
-function $toLower(s) { return s.toLowerCase(); }
-function $trim(s) { return s.trim(); }
-function $trimLeft(s) { return s.trimStart(); }
-function $trimRight(s) { return s.trimEnd(); }
-function $stringReverse(s) { return [...s].reverse().join(""); }
-function $split(sep, s) { return s.split(sep).reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
-function $join(sep, lst) {
-  const items = [];
-  let cur = lst;
-  while (cur !== null && cur.$tag === "Cons") { items.push(cur.head); cur = cur.tail; }
-  return items.join(sep);
-}
-function $contains(sub, s) { return s.includes(sub); }
-function $startsWith(pfx, s) { return s.startsWith(pfx); }
-function $endsWith(sfx, s) { return s.endsWith(sfx); }
-function $replace(from, to, s) { return s.split(from).join(to); }
-function $substring(start, end, s) { return [...s].slice(start, end).join(""); }
-function $repeat(n, s) { return s.repeat(n); }
-function $charAt(i, s) { const chars = [...s]; return i >= 0 && i < chars.length ? {$tag: "Just", _0: chars[i], $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }
-function $indexOf(sub, s) { const i = s.indexOf(sub); return i >= 0 ? {$tag: "Just", _0: i, $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }
-function $padLeft(n, ch, s) { return s.padStart(n, ch); }
-function $padRight(n, ch, s) { return s.padEnd(n, ch); }
-function $words(s) { const ws = s.trim().split(/\s+/).filter(x => x); return ws.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
-function $lines(s) { const ls = s.split(/\r?\n/); return ls.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
-function $charCode(s) { return s.codePointAt(0) || 0; }
-function $fromCharCode(n) { return String.fromCodePoint(n); }
-function $stringParseInt(s) { const n = parseInt(s, 10); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }
-function $stringParseFloat(s) { const n = parseFloat(s); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }
-function $stringToList(s) { return [...s].reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }
-function $stringFromList(lst) { const chars = []; let cur = lst; while (cur !== null && cur.$tag === "Cons") { chars.push(cur.head); cur = cur.tail; } return chars.join(""); }
-function $toFloat(n) { return n; }
-
-`)
-
+	// String builtins — only emit those that are actually referenced
+	g.emitUsedStringFns(&b)
 
 	// Concurrency runtime — synchronous CPS actors
 	if g.usesConcurrency {
-		b.WriteString(`// Actor runtime — direct function calls via CPS-transformed receive().
-// spawn(f) runs f, which sets pid._resume = (msg) => { ... } and returns.
-// send(pid, msg) calls pid._resume(msg) synchronously.
-// call(pid, msgFn) sends and reads the reply from a buffer.
-let _pidCounter = 0;
-let _currentPid = { ch: [], id: 0, _resume: null };
-
-function $spawn(f) {
-  const pid = { ch: [], id: ++_pidCounter, _resume: null };
-  const prevPid = _currentPid;
-  _currentPid = pid;
-  f(pid);
-  _currentPid = prevPid;
-  return pid;
-}
-
-function $send(pid, msg) {
-  if (pid._resume) {
-    const resume = pid._resume;
-    pid._resume = null;
-    const prevPid = _currentPid;
-    _currentPid = pid;
-    resume(msg);
-    _currentPid = prevPid;
-  } else {
-    pid.ch.push(msg);
-  }
-  return null;
-}
-
-function $receive_cps(pid, handler) {
-  if (pid.ch.length > 0) {
-    handler(pid.ch.shift());
-  } else {
-    pid._resume = handler;
-  }
-}
-
-function $call(targetPid, msgFn) {
-  const replyPid = { ch: [], id: ++_pidCounter, _resume: null };
-  const msg = msgFn(replyPid);
-  if (targetPid._resume) {
-    const resume = targetPid._resume;
-    targetPid._resume = null;
-    const prevPid = _currentPid;
-    _currentPid = targetPid;
-    resume(msg);
-    _currentPid = prevPid;
-  } else {
-    targetPid.ch.push(msg);
-  }
-  return replyPid.ch.shift();
-}
-
-function $getSelf() { return _currentPid; }
-
-`)
+		b.WriteString("// --- Actor runtime ---\nlet _pidCounter = 0;\nlet _currentPid = { ch: [], id: 0, _resume: null };\n\nfunction $spawn(f) {\n  const pid = { ch: [], id: ++_pidCounter, _resume: null };\n  const prevPid = _currentPid;\n  _currentPid = pid;\n  f(pid);\n  _currentPid = prevPid;\n  return pid;\n}\n\nfunction $send(pid, msg) {\n  if (pid._resume) {\n    const resume = pid._resume;\n    pid._resume = null;\n    const prevPid = _currentPid;\n    _currentPid = pid;\n    resume(msg);\n    _currentPid = prevPid;\n  } else {\n    pid.ch.push(msg);\n  }\n  return null;\n}\n\nfunction $receive_cps(pid, handler) {\n  if (pid.ch.length > 0) {\n    handler(pid.ch.shift());\n  } else {\n    pid._resume = handler;\n  }\n}\n\nfunction $call(targetPid, msgFn) {\n  const replyPid = { ch: [], id: ++_pidCounter, _resume: null };\n  const msg = msgFn(replyPid);\n  if (targetPid._resume) {\n    const resume = targetPid._resume;\n    targetPid._resume = null;\n    const prevPid = _currentPid;\n    _currentPid = targetPid;\n    resume(msg);\n    _currentPid = prevPid;\n  } else {\n    targetPid.ch.push(msg);\n  }\n  return replyPid.ch.shift();\n}\n\nfunction $getSelf() { return _currentPid; }\n\n")
 	}
 
 	// Js FFI runtime helpers
 	if g.usesJsFfi {
-		b.WriteString(`// Std:Js FFI helpers
-function $listToArray(lst) {
-  const arr = [];
-  while (lst !== null && lst.$tag === "Cons") { arr.push(lst.head); lst = lst.tail; }
-  return arr;
-}
-function $jsOk(v) { return {$tag: "Ok", $type: "Result", _0: v}; }
-function $jsErr(msg) { return {$tag: "Err", $type: "Result", _0: msg}; }
-function $jsGlobal(name) {
-  try { const v = globalThis[name]; if (v === undefined) return $jsErr("global not found: " + name); return $jsOk(v); }
-  catch(e) { return $jsErr(e.message); }
-}
-function $jsGet(prop, obj) {
-  try { return $jsOk(obj[prop]); }
-  catch(e) { return $jsErr(e.message); }
-}
-function $jsSet(prop, obj, val) {
-  try { obj[prop] = val; return $jsOk(null); }
-  catch(e) { return $jsErr(e.message); }
-}
-function $jsCall(method, args, obj) {
-  try { return $jsOk(obj[method](...$listToArray(args))); }
-  catch(e) { return $jsErr(e.message); }
-}
-function $jsNew(name, args) {
-  try { const C = globalThis[name]; if (!C) return $jsErr("constructor not found: " + name); return $jsOk(new C(...$listToArray(args))); }
-  catch(e) { return $jsErr(e.message); }
-}
-function $jsCallback(f) {
-  return (function() { return f(arguments[0] !== undefined ? arguments[0] : null); });
-}
-function $jsToString(v) {
-  if (typeof v === "string") return $jsOk(v);
-  return $jsErr("expected string, got " + typeof v);
-}
-function $jsToInt(v) {
-  if (typeof v === "number" && Number.isInteger(v)) return $jsOk(v);
-  return $jsErr("expected integer, got " + typeof v);
-}
-function $jsToFloat(v) {
-  if (typeof v === "number") return $jsOk(v);
-  return $jsErr("expected number, got " + typeof v);
-}
-function $jsToBool(v) {
-  if (typeof v === "boolean") return $jsOk(v);
-  return $jsErr("expected boolean, got " + typeof v);
-}
-
-`)
+		b.WriteString("// --- Std:Js FFI ---\nfunction $listToArray(lst) {\n  const arr = [];\n  while (lst !== null && lst.$tag === \"Cons\") { arr.push(lst.head); lst = lst.tail; }\n  return arr;\n}\nfunction $jsOk(v) { return {$tag: \"Ok\", $type: \"Result\", _0: v}; }\nfunction $jsErr(msg) { return {$tag: \"Err\", $type: \"Result\", _0: msg}; }\nfunction $jsGlobal(name) {\n  try { const v = globalThis[name]; if (v === undefined) return $jsErr(\"global not found: \" + name); return $jsOk(v); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsGet(prop, obj) {\n  try { return $jsOk(obj[prop]); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsSet(prop, obj, val) {\n  try { obj[prop] = val; return $jsOk(null); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsCall(method, args, obj) {\n  try { return $jsOk(obj[method](...$listToArray(args))); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsNew(name, args) {\n  try { const C = globalThis[name]; if (!C) return $jsErr(\"constructor not found: \" + name); return $jsOk(new C(...$listToArray(args))); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsCallback(f) {\n  return (function() { return f(arguments[0] !== undefined ? arguments[0] : null); });\n}\nfunction $jsToString(v) {\n  if (typeof v === \"string\") return $jsOk(v);\n  return $jsErr(\"expected string, got \" + typeof v);\n}\nfunction $jsToInt(v) {\n  if (typeof v === \"number\" && Number.isInteger(v)) return $jsOk(v);\n  return $jsErr(\"expected integer, got \" + typeof v);\n}\nfunction $jsToFloat(v) {\n  if (typeof v === \"number\") return $jsOk(v);\n  return $jsErr(\"expected number, got \" + typeof v);\n}\nfunction $jsToBool(v) {\n  if (typeof v === \"boolean\") return $jsOk(v);\n  return $jsErr(\"expected boolean, got \" + typeof v);\n}\n\n")
 	}
 
-	// (Virtual DOM runtime is now implemented in Html.browser.rex overlay)
-
 	return b.String()
+}
+
+// emitUsedStringFns emits only the string builtin functions that are actually referenced.
+func (g *jsGen) emitUsedStringFns(b *strings.Builder) {
+	if len(g.usedStringFns) == 0 {
+		return
+	}
+
+	type fnDef struct {
+		name string
+		code string
+	}
+	defs := []fnDef{
+		{"stringLength", "function $stringLength(s) { return [...s].length; }"},
+		{"toUpper", "function $toUpper(s) { return s.toUpperCase(); }"},
+		{"toLower", "function $toLower(s) { return s.toLowerCase(); }"},
+		{"trim", "function $trim(s) { return s.trim(); }"},
+		{"trimLeft", "function $trimLeft(s) { return s.trimStart(); }"},
+		{"trimRight", "function $trimRight(s) { return s.trimEnd(); }"},
+		{"stringReverse", "function $stringReverse(s) { return [...s].reverse().join(\"\"); }"},
+		{"split", "function $split(sep, s) { return s.split(sep).reduceRight((t, h) => ({$tag: \"Cons\", head: h, tail: t}), null); }"},
+		{"join", "function $join(sep, lst) {\n  const items = [];\n  let cur = lst;\n  while (cur !== null && cur.$tag === \"Cons\") { items.push(cur.head); cur = cur.tail; }\n  return items.join(sep);\n}"},
+		{"contains", "function $contains(sub, s) { return s.includes(sub); }"},
+		{"startsWith", "function $startsWith(pfx, s) { return s.startsWith(pfx); }"},
+		{"endsWith", "function $endsWith(sfx, s) { return s.endsWith(sfx); }"},
+		{"replace", "function $replace(from, to, s) { return s.split(from).join(to); }"},
+		{"substring", "function $substring(start, end, s) { return [...s].slice(start, end).join(\"\"); }"},
+		{"repeat", "function $repeat(n, s) { return s.repeat(n); }"},
+		{"charAt", "function $charAt(i, s) { const chars = [...s]; return i >= 0 && i < chars.length ? {$tag: \"Just\", _0: chars[i], $type: \"Maybe\"} : {$tag: \"Nothing\", $type: \"Maybe\"}; }"},
+		{"indexOf", "function $indexOf(sub, s) { const i = s.indexOf(sub); return i >= 0 ? {$tag: \"Just\", _0: i, $type: \"Maybe\"} : {$tag: \"Nothing\", $type: \"Maybe\"}; }"},
+		{"padLeft", "function $padLeft(n, ch, s) { return s.padStart(n, ch); }"},
+		{"padRight", "function $padRight(n, ch, s) { return s.padEnd(n, ch); }"},
+		{"words", "function $words(s) { const ws = s.trim().split(/\\s+/).filter(x => x); return ws.reduceRight((t, h) => ({$tag: \"Cons\", head: h, tail: t}), null); }"},
+		{"lines", "function $lines(s) { const ls = s.split(/\\r?\\n/); return ls.reduceRight((t, h) => ({$tag: \"Cons\", head: h, tail: t}), null); }"},
+		{"charCode", "function $charCode(s) { return s.codePointAt(0) || 0; }"},
+		{"fromCharCode", "function $fromCharCode(n) { return String.fromCodePoint(n); }"},
+		{"stringParseInt", "function $stringParseInt(s) { const n = parseInt(s, 10); return isNaN(n) ? {$tag: \"Nothing\", $type: \"Maybe\"} : {$tag: \"Just\", _0: n, $type: \"Maybe\"}; }"},
+		{"stringParseFloat", "function $stringParseFloat(s) { const n = parseFloat(s); return isNaN(n) ? {$tag: \"Nothing\", $type: \"Maybe\"} : {$tag: \"Just\", _0: n, $type: \"Maybe\"}; }"},
+		{"stringToList", "function $stringToList(s) { return [...s].reduceRight((t, h) => ({$tag: \"Cons\", head: h, tail: t}), null); }"},
+		{"stringFromList", "function $stringFromList(lst) { const chars = []; let cur = lst; while (cur !== null && cur.$tag === \"Cons\") { chars.push(cur.head); cur = cur.tail; } return chars.join(\"\"); }"},
+		{"toFloat", "function $toFloat(n) { return n; }"},
+	}
+
+	for _, d := range defs {
+		if g.usedStringFns[d.name] {
+			b.WriteString(d.code)
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteByte('\n')
 }
 
 // ---------------------------------------------------------------------------
@@ -688,16 +685,10 @@ function $jsToBool(v) {
 
 func (g *jsGen) emitTraitDispatchers() string {
 	var b strings.Builder
-
-	// First emit impl functions
-	// (these are emitted in emitDecl, but we need dispatch functions here)
-	// Dispatch functions will be emitted after impl functions.
-	// Let's collect all unique dispatch names.
 	dispatchers := make(map[string]bool)
 	for key := range g.traitImpls {
 		dispatchers[key] = true
 	}
-
 	return b.String()
 }
 
@@ -712,7 +703,6 @@ func (g *jsGen) emitDecl(d ir.Decl) error {
 	case ir.DLetRec:
 		return g.emitDLetRec(d)
 	case ir.DType:
-		// No type definitions needed in JS
 		return nil
 	case ir.DTrait:
 		return nil
@@ -727,7 +717,6 @@ func (g *jsGen) emitDecl(d ir.Decl) error {
 }
 
 func (g *jsGen) emitDLet(d ir.DLet) error {
-	// _ bindings: side-effect-only, always emit as IIFE
 	if d.Name == "_" {
 		g.wn("(() => {\n")
 		g.indent++
@@ -748,7 +737,6 @@ func (g *jsGen) emitDLet(d ir.DLet) error {
 	jsName := jsFuncName(d.Name)
 
 	if fi.arity == 0 {
-		// Top-level value (not a function) — emit as const
 		g.wn("const %s = ", jsName)
 		g.locals = make(map[string]bool)
 		if err := g.emitExprInline(fi.body); err != nil {
@@ -758,7 +746,6 @@ func (g *jsGen) emitDLet(d ir.DLet) error {
 		return nil
 	}
 
-	// Function
 	g.wn("function %s(", jsName)
 	wildcardIdx := 0
 	for i, p := range fi.params {
@@ -828,14 +815,12 @@ func (g *jsGen) emitDLetRec(d ir.DLetRec) error {
 }
 
 func (g *jsGen) emitDImpl(d ir.DImpl) error {
-	// Skip impls for types not in the program
 	if !g.knownTypes[d.TargetTypeName] {
 		return nil
 	}
 	for _, m := range d.Methods {
 		funcName := fmt.Sprintf("impl_%s_%s_%s", d.TraitName, d.TargetTypeName, m.Name)
 
-		// Unwrap lambda chain
 		var params []string
 		body := m.Body
 		for {
@@ -875,10 +860,8 @@ func (g *jsGen) emitDImpl(d ir.DImpl) error {
 }
 
 func (g *jsGen) emitAllDispatchers() {
-	// Collect all unique dispatch names and emit one function per method
 	emitted := make(map[string]bool)
 	for key := range g.traitImpls {
-		// key = "TraitName:methodName"
 		parts := strings.SplitN(key, ":", 2)
 		if len(parts) != 2 {
 			continue
@@ -889,7 +872,6 @@ func (g *jsGen) emitAllDispatchers() {
 			continue
 		}
 		emitted[dispatchName] = true
-		// Filter cases to only include types defined in the program
 		var filtered []jsImplCase
 		for _, c := range g.traitImpls[key] {
 			if g.knownTypes[c.typeName] {
@@ -903,8 +885,6 @@ func (g *jsGen) emitAllDispatchers() {
 }
 
 func (g *jsGen) emitDispatchFunction(name string, cases []jsImplCase) {
-	// We need to emit a curried dispatch function.
-	// The first arg is the value to dispatch on.
 	fmt.Fprintf(g.buf, "function %s(x) {\n", name)
 	g.indent = 1
 	for _, c := range cases {
@@ -922,11 +902,11 @@ func (g *jsGen) emitDispatchFunction(name string, cases []jsImplCase) {
 		case "Unit":
 			g.w(`if (x === null) return %s(x);`, c.funcName)
 		default:
-			// ADT or record — check $type field
 			g.w(`if (typeof x === "object" && x !== null && x.$type === %q) return %s(x);`, c.typeName, c.funcName)
 		}
 	}
 	g.w(`throw new Error("No trait instance for: " + $display(x));`)
+	g.usesDisplay = true
 	g.indent = 0
 	g.buf.WriteString("}\n\n")
 }
@@ -953,10 +933,8 @@ func (g *jsGen) emitExprStmt(expr ir.Expr, isReturn bool) error {
 		return g.emitCExprStmt(e.C, isReturn)
 
 	case ir.ELet:
-		// CPS transform for receive(pid): instead of blocking, set _resume callback
 		if g.usesConcurrency && isReceiveCall(e.Bind) {
 			varName := jsVarName(e.Name)
-			// Extract the pid argument from receive(pid)
 			app := e.Bind.(ir.CApp)
 			pidArg := g.atomStr(app.Arg)
 			g.w("$receive_cps(%s, (%s) => {", pidArg, varName)
@@ -984,7 +962,6 @@ func (g *jsGen) emitExprStmt(expr ir.Expr, isReturn bool) error {
 		return g.emitExprStmt(e.Body, isReturn)
 
 	case ir.ELetRec:
-		// Declare variables first, then assign (for mutual recursion)
 		for _, b := range e.Bindings {
 			g.w("let %s;", jsVarName(b.Name))
 			g.locals[b.Name] = true
@@ -1009,7 +986,6 @@ func (g *jsGen) emitExprInline(expr ir.Expr) error {
 	case ir.EComplex:
 		return g.emitCExprInline(e.C)
 	default:
-		// Complex expressions that need statements: wrap in IIFE
 		g.buf.WriteString("(() => {\n")
 		g.indent++
 		if err := g.emitExprStmt(expr, true); err != nil {
@@ -1063,18 +1039,14 @@ func (g *jsGen) emitCExprInline(c ir.CExpr) error {
 	switch c := c.(type) {
 	case ir.CApp:
 		return g.emitApp(c)
-
 	case ir.CBinop:
 		return g.emitBinop(c)
-
 	case ir.CUnaryMinus:
 		g.buf.WriteString("(-")
 		g.emitAtom(c.Expr)
 		g.buf.WriteString(")")
 		return nil
-
 	case ir.CIf:
-		// Inline if → ternary
 		g.buf.WriteString("(")
 		g.emitAtom(c.Cond)
 		g.buf.WriteString(" ? ")
@@ -1087,9 +1059,7 @@ func (g *jsGen) emitCExprInline(c ir.CExpr) error {
 		}
 		g.buf.WriteString(")")
 		return nil
-
 	case ir.CMatch:
-		// Inline match → IIFE
 		g.buf.WriteString("(() => {\n")
 		g.indent++
 		if err := g.emitMatch(c, true); err != nil {
@@ -1101,28 +1071,20 @@ func (g *jsGen) emitCExprInline(c ir.CExpr) error {
 		}
 		g.buf.WriteString("})()")
 		return nil
-
 	case ir.CLambda:
 		return g.emitLambda(c)
-
 	case ir.CCtor:
 		return g.emitCtor(c)
-
 	case ir.CRecord:
 		return g.emitRecord(c)
-
 	case ir.CFieldAccess:
 		return g.emitFieldAccess(c)
-
 	case ir.CRecordUpdate:
 		return g.emitRecordUpdate(c)
-
 	case ir.CList:
 		return g.emitList(c)
-
 	case ir.CTuple:
 		return g.emitTuple(c)
-
 	case ir.CStringInterp:
 		return g.emitStringInterp(c)
 	}
@@ -1133,11 +1095,8 @@ func (g *jsGen) emitCExprInline(c ir.CExpr) error {
 // Application
 // ---------------------------------------------------------------------------
 
-// emitStringBuiltin handles string/math builtins that might be shadowed by user code.
-// Returns true if the builtin was emitted, false if funcName is not a known builtin.
 func (g *jsGen) emitStringBuiltin(funcName string, c ir.CApp) bool {
 	switch funcName {
-	// 1-arg string builtins
 	case "length":
 		g.buf.WriteString("$stringLength(")
 		g.emitAtom(c.Arg)
@@ -1202,7 +1161,6 @@ func (g *jsGen) emitStringBuiltin(funcName string, c ir.CApp) bool {
 		g.buf.WriteString("$toFloat(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(")")
-	// 2-arg curried string builtins
 	case "split":
 		g.buf.WriteString("((_s) => $split(")
 		g.emitAtom(c.Arg)
@@ -1239,7 +1197,6 @@ func (g *jsGen) emitStringBuiltin(funcName string, c ir.CApp) bool {
 		g.buf.WriteString("((_end) => ((_s) => $substring(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _end, _s)))")
-	// 3-arg curried string builtins
 	case "replace":
 		g.buf.WriteString("((_to) => ((_s) => $replace(")
 		g.emitAtom(c.Arg)
@@ -1264,12 +1221,10 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		funcName = v.Name
 	}
 
-	// Check if name is a user-defined function or local (shadows builtins)
 	_, isUserFunc := g.funcs[funcName]
 	isLocal := g.locals[funcName]
 	isShadowed := isUserFunc || isLocal
 
-	// Known builtins
 	switch funcName {
 	case "__id":
 		g.emitAtom(c.Arg)
@@ -1316,14 +1271,12 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		return nil
 	}
 
-	// String/math builtins — only match if not shadowed by user-defined function
 	if !isShadowed {
 		if emitted := g.emitStringBuiltin(funcName, c); emitted {
 			return nil
 		}
 	}
 
-	// Actor builtins
 	switch funcName {
 	case "spawn":
 		g.buf.WriteString("$spawn(")
@@ -1331,25 +1284,21 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		g.buf.WriteString(")")
 		return nil
 	case "send":
-		// send is curried: send pid msg → partial app
 		g.buf.WriteString("((_msg) => $send(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _msg))")
 		return nil
 	case "receive":
-		// receive pid — read from pid's channel
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(".ch.shift()")
 		return nil
 	case "call":
-		// call is curried: call pid fn → partial app
 		g.buf.WriteString("((_fn) => $call(")
 		g.emitAtom(c.Arg)
 		g.buf.WriteString(", _fn))")
 		return nil
 	}
 
-	// Std:Js FFI builtins (may be module-prefixed as Std$Js$*)
 	if short := jsFfiBuiltin(funcName); short != "" {
 		switch short {
 		case "jsGlobal":
@@ -1408,7 +1357,6 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		}
 	}
 
-	// Trait method dispatch
 	if dispatchName, ok := g.traitMethodNames[funcName]; ok {
 		fmt.Fprintf(g.buf, "%s(", dispatchName)
 		g.emitAtom(c.Arg)
@@ -1416,7 +1364,6 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 		return nil
 	}
 
-	// Known top-level function: direct call or partial application
 	if fi, ok := g.funcs[funcName]; ok && fi.arity > 0 {
 		jsName := jsFuncName(funcName)
 		if fi.arity == 1 {
@@ -1430,6 +1377,7 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 	}
 
 	// Unknown / variable function: use $$apply
+	g.usesApply = true
 	g.buf.WriteString("$$apply(")
 	g.emitAtom(c.Func)
 	g.buf.WriteString(", ")
@@ -1469,21 +1417,18 @@ func (g *jsGen) emitBinop(c ir.CBinop) error {
 		g.buf.WriteString(" + ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
-		return nil
 	case "Sub":
 		g.buf.WriteString("(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(" - ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
-		return nil
 	case "Mul":
 		g.buf.WriteString("(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(" * ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
-		return nil
 	case "Div":
 		if isFloatType(c.Ty) {
 			g.buf.WriteString("(")
@@ -1492,93 +1437,82 @@ func (g *jsGen) emitBinop(c ir.CBinop) error {
 			g.emitAtom(c.Right)
 			g.buf.WriteString(")")
 		} else {
-			// Integer division: Math.trunc
 			g.buf.WriteString("Math.trunc(")
 			g.emitAtom(c.Left)
 			g.buf.WriteString(" / ")
 			g.emitAtom(c.Right)
 			g.buf.WriteString(")")
 		}
-		return nil
 	case "Mod":
 		g.buf.WriteString("(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(" % ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
-		return nil
 	case "Eq":
 		g.buf.WriteString("$eq(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
-		return nil
 	case "Neq":
 		g.buf.WriteString("!$eq(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
-		return nil
 	case "Lt":
 		g.buf.WriteString("($compare(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(") < 0)")
-		return nil
 	case "Gt":
 		g.buf.WriteString("($compare(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(") > 0)")
-		return nil
 	case "Leq":
 		g.buf.WriteString("($compare(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(") <= 0)")
-		return nil
 	case "Geq":
 		g.buf.WriteString("($compare(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(") >= 0)")
-		return nil
 	case "And":
 		g.buf.WriteString("(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(" && ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
-		return nil
 	case "Or":
 		g.buf.WriteString("(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(" || ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
-		return nil
 	case "Concat":
 		g.buf.WriteString("(")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(" + ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString(")")
-		return nil
 	case "Cons":
-		g.buf.WriteString(`{$tag: "Cons", head: `)
+		g.buf.WriteString("{$tag: \"Cons\", head: ")
 		g.emitAtom(c.Left)
 		g.buf.WriteString(", tail: ")
 		g.emitAtom(c.Right)
 		g.buf.WriteString("}")
-		return nil
+	default:
+		return fmt.Errorf("unknown binop: %s", c.Op)
 	}
-	return fmt.Errorf("unknown binop: %s", c.Op)
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1617,10 +1551,10 @@ func (g *jsGen) emitCtor(c ir.CCtor) error {
 		return fmt.Errorf("unknown constructor: %s", c.Name)
 	}
 	if len(c.Args) == 0 {
-		fmt.Fprintf(g.buf, `{$tag: %q, $type: %q}`, c.Name, ci.typeName)
+		fmt.Fprintf(g.buf, "{$tag: %q, $type: %q}", c.Name, ci.typeName)
 		return nil
 	}
-	fmt.Fprintf(g.buf, `{$tag: %q, $type: %q`, c.Name, ci.typeName)
+	fmt.Fprintf(g.buf, "{$tag: %q, $type: %q", c.Name, ci.typeName)
 	for i, a := range c.Args {
 		fmt.Fprintf(g.buf, ", _%d: ", i)
 		g.emitAtom(a)
@@ -1653,7 +1587,6 @@ func (g *jsGen) emitFieldAccess(c ir.CFieldAccess) error {
 }
 
 func (g *jsGen) emitRecordUpdate(c ir.CRecordUpdate) error {
-	// Separate single-field updates from nested updates
 	var simple []ir.FieldUpdate
 	var nested []ir.FieldUpdate
 	for _, u := range c.Updates {
@@ -1665,7 +1598,6 @@ func (g *jsGen) emitRecordUpdate(c ir.CRecordUpdate) error {
 	}
 
 	if len(nested) == 0 {
-		// Simple case: all single-field updates
 		g.buf.WriteString("{...")
 		g.emitAtom(c.Record)
 		for _, u := range simple {
@@ -1676,18 +1608,14 @@ func (g *jsGen) emitRecordUpdate(c ir.CRecordUpdate) error {
 		return nil
 	}
 
-	// Mixed or nested: use an IIFE to handle nested cloning
 	g.buf.WriteString("(() => { const __r = {...")
 	g.emitAtom(c.Record)
 	g.buf.WriteString("}")
-	// Apply simple updates
 	for _, u := range simple {
 		fmt.Fprintf(g.buf, "; __r.%s = ", u.Path[0])
 		g.emitAtom(u.Value)
 	}
-	// Apply nested updates: clone each intermediate level
 	for _, u := range nested {
-		// Clone intermediate records: __r.a = {...__r.a}, __r.a.b = {...__r.a.b}, etc.
 		for i := 0; i < len(u.Path)-1; i++ {
 			g.buf.WriteString("; __r")
 			for j := 0; j <= i; j++ {
@@ -1699,7 +1627,6 @@ func (g *jsGen) emitRecordUpdate(c ir.CRecordUpdate) error {
 			}
 			g.buf.WriteString("}")
 		}
-		// Set the leaf field
 		g.buf.WriteString("; __r")
 		for _, p := range u.Path {
 			fmt.Fprintf(g.buf, ".%s", p)
@@ -1720,11 +1647,10 @@ func (g *jsGen) emitList(c ir.CList) error {
 		g.buf.WriteString("null")
 		return nil
 	}
-	// Build cons list from right to left
-	g.buf.WriteString(`{$tag: "Cons", head: `)
+	g.buf.WriteString("{$tag: \"Cons\", head: ")
 	g.emitAtom(c.Items[0])
 	for i := 1; i < len(c.Items); i++ {
-		g.buf.WriteString(`, tail: {$tag: "Cons", head: `)
+		g.buf.WriteString(", tail: {$tag: \"Cons\", head: ")
 		g.emitAtom(c.Items[i])
 	}
 	g.buf.WriteString(", tail: null")
@@ -1741,7 +1667,7 @@ func (g *jsGen) emitList(c ir.CList) error {
 
 func (g *jsGen) emitTuple(c ir.CTuple) error {
 	if len(c.Items) == 0 {
-		g.buf.WriteString("null") // unit
+		g.buf.WriteString("null")
 		return nil
 	}
 	g.buf.WriteString("[")
@@ -1761,7 +1687,7 @@ func (g *jsGen) emitTuple(c ir.CTuple) error {
 
 func (g *jsGen) emitStringInterp(c ir.CStringInterp) error {
 	if len(c.Parts) == 0 {
-		g.buf.WriteString(`""`)
+		g.buf.WriteString("\"\"")
 		return nil
 	}
 	if len(c.Parts) == 1 {
@@ -1793,7 +1719,6 @@ func (g *jsGen) emitMatch(c ir.CMatch, isReturn bool) error {
 		cond, bindings := g.patternCondition(scrutVar, arm.Pat)
 
 		if cond == "" || cond == "true" {
-			// Unconditional (wildcard, variable)
 			if i > 0 {
 				g.w("} else {")
 			}
@@ -1831,7 +1756,7 @@ func (g *jsGen) emitMatch(c ir.CMatch, isReturn bool) error {
 	if len(c.Arms) > 0 {
 		g.w("} else {")
 		g.indent++
-		g.w(`throw new Error("non-exhaustive match");`)
+		g.w("throw new Error(\"non-exhaustive match\");")
 		g.indent--
 		g.w("}")
 	}
@@ -1847,39 +1772,29 @@ func (g *jsGen) patternCondition(scrutExpr string, pat ir.Pattern) (string, []js
 	switch p := pat.(type) {
 	case ir.PWild:
 		return "true", nil
-
 	case ir.PVar:
 		return "true", []jsPatBinding{{name: p.Name, expr: scrutExpr}}
-
 	case ir.PInt:
 		return fmt.Sprintf("$eq(%s, %d)", scrutExpr, p.Value), nil
-
 	case ir.PFloat:
 		return fmt.Sprintf("$eq(%s, %g)", scrutExpr, p.Value), nil
-
 	case ir.PString:
 		return fmt.Sprintf("$eq(%s, %q)", scrutExpr, p.Value), nil
-
 	case ir.PBool:
 		if p.Value {
 			return fmt.Sprintf("(%s === true)", scrutExpr), nil
 		}
 		return fmt.Sprintf("(%s === false)", scrutExpr), nil
-
 	case ir.PUnit:
 		return "true", nil
-
 	case ir.PNil:
 		return fmt.Sprintf("(%s === null)", scrutExpr), nil
-
 	case ir.PCons:
 		cond := fmt.Sprintf("(%s !== null && %s.$tag === \"Cons\")", scrutExpr, scrutExpr)
 		headExpr := fmt.Sprintf("%s.head", scrutExpr)
 		tailExpr := fmt.Sprintf("%s.tail", scrutExpr)
-
 		headCond, headBindings := g.patternCondition(headExpr, p.Head)
 		tailCond, tailBindings := g.patternCondition(tailExpr, p.Tail)
-
 		var allConds []string
 		allConds = append(allConds, cond)
 		if headCond != "" && headCond != "true" {
@@ -1888,13 +1803,10 @@ func (g *jsGen) patternCondition(scrutExpr string, pat ir.Pattern) (string, []js
 		if tailCond != "" && tailCond != "true" {
 			allConds = append(allConds, tailCond)
 		}
-
 		var bindings []jsPatBinding
 		bindings = append(bindings, headBindings...)
 		bindings = append(bindings, tailBindings...)
-
 		return strings.Join(allConds, " && "), bindings
-
 	case ir.PTuple:
 		var conds []string
 		var bindings []jsPatBinding
@@ -1911,18 +1823,15 @@ func (g *jsGen) patternCondition(scrutExpr string, pat ir.Pattern) (string, []js
 			cond = strings.Join(conds, " && ")
 		}
 		return cond, bindings
-
 	case ir.PCtor:
 		ci, ok := g.ctorToAdt[p.Name]
 		if !ok {
 			return "true", nil
 		}
 		_ = ci
-
 		var conds []string
 		var bindings []jsPatBinding
 		conds = append(conds, fmt.Sprintf("(typeof %s === \"object\" && %s !== null && %s.$tag === %q)", scrutExpr, scrutExpr, scrutExpr, p.Name))
-
 		for i, subPat := range p.Args {
 			fieldExpr := fmt.Sprintf("%s._%d", scrutExpr, i)
 			c, b := g.patternCondition(fieldExpr, subPat)
@@ -1931,9 +1840,7 @@ func (g *jsGen) patternCondition(scrutExpr string, pat ir.Pattern) (string, []js
 			}
 			bindings = append(bindings, b...)
 		}
-
 		return strings.Join(conds, " && "), bindings
-
 	case ir.PRecord:
 		var bindings []jsPatBinding
 		var conds []string
@@ -1979,7 +1886,6 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 		return "null"
 	case ir.AVar:
 		name := a.Name
-		// Actor builtins as values
 		if g.usesConcurrency {
 			switch name {
 			case "receive":
@@ -1992,7 +1898,6 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 				return "((pid) => (fn) => $call(pid, fn))"
 			}
 		}
-		// Js FFI builtins as values
 		if g.usesJsFfi {
 			if short := jsFfiBuiltin(name); short != "" {
 				switch short {
@@ -2023,7 +1928,6 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 				}
 			}
 		}
-		// Builtins as values
 		switch name {
 		case "println":
 			return "((v) => $println(v))"
@@ -2040,22 +1944,18 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 		case "error":
 			return "((v) => $error(v))"
 		}
-		// Check if it's a trait method
 		if dispatchName, ok := g.traitMethodNames[name]; ok {
 			return fmt.Sprintf("((a) => %s(a))", dispatchName)
 		}
-		// Check if it's a known ADT constructor
 		if ci, ok := g.ctorToAdt[name]; ok {
 			if len(ci.fieldTypes) == 0 {
-				return fmt.Sprintf(`{$tag: %q, $type: %q}`, name, ci.typeName)
+				return fmt.Sprintf("{$tag: %q, $type: %q}", name, ci.typeName)
 			}
 			return g.ctorAsClosure(ci)
 		}
-		// Check if it's a known record constructor
 		if ri, ok := g.records[name]; ok {
 			return g.recordCtorAsClosure(ri)
 		}
-		// Check if it's a known top-level function
 		if fi, ok := g.funcs[name]; ok {
 			if !g.locals[name] {
 				if fi.arity > 0 {
@@ -2064,7 +1964,6 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 				return jsFuncName(name)
 			}
 		}
-		// String/math builtins as values (after user-defined names)
 		switch name {
 		case "length":
 			return "((s) => $stringLength(s))"
@@ -2131,9 +2030,8 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 func (g *jsGen) ctorAsClosure(ci *jsCtorInfo) string {
 	n := len(ci.fieldTypes)
 	if n == 1 {
-		return fmt.Sprintf(`((a0) => ({$tag: %q, $type: %q, _0: a0}))`, ci.name, ci.typeName)
+		return fmt.Sprintf("((a0) => ({$tag: %q, $type: %q, _0: a0}))", ci.name, ci.typeName)
 	}
-	// Multi-field: curry
 	var params []string
 	for i := 0; i < n; i++ {
 		params = append(params, fmt.Sprintf("a%d", i))
@@ -2176,7 +2074,6 @@ func (g *jsGen) funcAsClosure(name string, fi *jsFuncInfo) string {
 	if fi.arity == 1 {
 		return fmt.Sprintf("((a) => %s(a))", jsName)
 	}
-	// Multi-arg: curry
 	var params []string
 	for i := 0; i < fi.arity; i++ {
 		params = append(params, fmt.Sprintf("_a%d", i))
@@ -2206,7 +2103,6 @@ var jsReserved = map[string]bool{
 }
 
 func jsFuncName(name string) string {
-	// Module-prefixed names (containing $) already have their prefix from ModulePrefix
 	if strings.Contains(name, "$") {
 		return jsSanitize(name)
 	}
@@ -2221,7 +2117,6 @@ func jsVarName(name string) string {
 	return s
 }
 
-// isReceiveCall checks if a CExpr is a call to the "receive" builtin.
 func isReceiveCall(c ir.CExpr) bool {
 	if app, ok := c.(ir.CApp); ok {
 		if v, ok := app.Func.(ir.AVar); ok {
@@ -2248,17 +2143,5 @@ func jsSanitize(name string) string {
 
 // EmitBrowserHTML generates a minimal HTML wrapper for a browser JS app.
 func EmitBrowserHTML(jsFileName string) string {
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Rex App</title>
-</head>
-<body>
-  <div id="app"></div>
-  <script src="%s"></script>
-</body>
-</html>
-`, jsFileName)
+	return fmt.Sprintf("<!DOCTYPE html>\n<html>\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>Rex App</title>\n</head>\n<body>\n  <div id=\"app\"></div>\n  <script src=\"%s\"></script>\n</body>\n</html>\n", jsFileName)
 }
