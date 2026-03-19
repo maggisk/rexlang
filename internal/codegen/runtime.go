@@ -6,6 +6,7 @@ const runtimeSource = `package main
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -310,9 +311,16 @@ func rexGetSelf() *RexPid {
 func rex_spawn(f any) any {
 	pid := &RexPid{ch: make(chan any, 1024), id: rexNextPidID(), done: make(chan struct{})}
 	go func() {
+		gid := rexGoroutineID()
+		rexGoroutineSelf.Store(gid, pid)
 		defer close(pid.done)
-		defer func() { recover() }() // don't crash monitors on panic
-		rexGoroutineSelf.Store(rexGoroutineID(), pid)
+		defer rexCallStacks.Delete(gid)
+		defer rexGoroutineSelf.Delete(gid)
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintln(os.Stderr, r)
+			}
+		}()
 		f.(func(any) any)(nil)
 	}()
 	return pid

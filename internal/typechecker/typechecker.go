@@ -207,7 +207,7 @@ func (tc *TypeChecker) checkTraitForType(trait string, ty types.Type, instances 
 			typeName = fmt.Sprintf("Tuple%d", len(t.Args))
 		}
 		// Functions never have Eq/Ord/Show instances
-		if typeName == "->" {
+		if typeName == "Fun" {
 			return nil, &types.TypeError{Msg: fmt.Sprintf("no %s instance for type %s", trait, types.TypeToString(ty))}
 		}
 		key := trait + ":" + typeName
