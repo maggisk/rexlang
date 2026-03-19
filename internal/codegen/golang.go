@@ -123,18 +123,18 @@ func EmitGoTests(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) 
 
 func newGoGen(typeEnv typechecker.TypeEnv, testMode bool) *goGen {
 	return &goGen{
-		buf:           &strings.Builder{},
-		typeEnv:       typeEnv,
-		funcs:         make(map[string]*goFuncInfo),
-		adts:          make(map[string]*goAdtInfo),
-		ctorToAdt:     make(map[string]*goCtorInfo),
-		records:          make(map[string]*goRecordInfo),
+		buf:               &strings.Builder{},
+		typeEnv:           typeEnv,
+		funcs:             make(map[string]*goFuncInfo),
+		adts:              make(map[string]*goAdtInfo),
+		ctorToAdt:         make(map[string]*goCtorInfo),
+		records:           make(map[string]*goRecordInfo),
 		recordsByOrigName: make(map[string]*goRecordInfo),
-		traitImpls:    make(map[string][]goImplCase),
-		locals:        make(map[string]bool),
-		knownTypes:    map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true, "List": true, "Tuple2": true, "Tuple3": true, "Tuple4": true, "Unit": true},
-		neededModules: make(map[string]bool),
-		testMode:      testMode,
+		traitImpls:        make(map[string][]goImplCase),
+		locals:            make(map[string]bool),
+		knownTypes:        map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true, "List": true, "Tuple2": true, "Tuple3": true, "Tuple4": true, "Unit": true},
+		neededModules:     make(map[string]bool),
+		testMode:          testMode,
 	}
 }
 
@@ -186,18 +186,18 @@ type goImplCase struct {
 // ---------------------------------------------------------------------------
 
 type goGen struct {
-	buf          *strings.Builder
-	indent       int
-	typeEnv      typechecker.TypeEnv
-	funcs        map[string]*goFuncInfo
-	adts         map[string]*goAdtInfo
-	ctorToAdt    map[string]*goCtorInfo
-	records          map[string]*goRecordInfo
+	buf               *strings.Builder
+	indent            int
+	typeEnv           typechecker.TypeEnv
+	funcs             map[string]*goFuncInfo
+	adts              map[string]*goAdtInfo
+	ctorToAdt         map[string]*goCtorInfo
+	records           map[string]*goRecordInfo
 	recordsByOrigName map[string]*goRecordInfo // original IR name → record info (before collision rename)
-	allRecords       []*goRecordInfo           // all records including colliding names
-	traitImpls map[string][]goImplCase
-	locals      map[string]bool
-	tempCounter int
+	allRecords        []*goRecordInfo          // all records including colliding names
+	traitImpls        map[string][]goImplCase
+	locals            map[string]bool
+	tempCounter       int
 
 	// trait method names → dispatch function names
 	traitMethodNames map[string]string // "myShow" → "dispatch_myshow_myShow"
@@ -289,7 +289,11 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 		g.emitTestMain(out)
 	} else {
 		out.WriteString("\nfunc main() {\n")
-		out.WriteString("\tos.Exit(int(rex_main(nil).(int64)))\n")
+		out.WriteString("\tvar rexArgs any = (*RexList)(nil)\n")
+		out.WriteString("\tfor i := len(os.Args) - 1; i >= 1; i-- {\n")
+		out.WriteString("\t\trexArgs = &RexList{Head: os.Args[i], Tail: rexArgs.(*RexList)}\n")
+		out.WriteString("\t}\n")
+		out.WriteString("\tos.Exit(int(rex_main(rexArgs).(int64)))\n")
 		out.WriteString("}\n")
 	}
 

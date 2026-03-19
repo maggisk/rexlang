@@ -510,6 +510,10 @@ Non-exhaustive patterns are caught at compile time — `match` expressions on AD
 | `examples/json_decode.rex` | JSON decoder combinators with `Std:Json.Decode` |
 | `examples/http.rex` | HTTP server with `Std:Http.Server` |
 | `examples/tcp_echo.rex` | TCP echo server with `Std:Net` and `Std:Process` |
+| `examples/cli_grep.rex` | Grep-like CLI tool — file I/O, args, pattern matching |
+| `examples/http_server.rex` | HTTP server with JSON API, routing DSL |
+| `examples/chat_actors.rex` | Actor-based chat room with typed messages |
+| `examples/json_api.rex` | JSON encode/decode round-trip with decoder combinators |
 | `examples/user_modules/` | User module imports with `src/` directory |
 
 ## Running tests
