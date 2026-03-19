@@ -11,10 +11,10 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/codegen"
-	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
+	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/typechecker"
 	"github.com/maggisk/rexlang/internal/types"
 )
@@ -53,6 +53,8 @@ func main() {
 	for _, a := range args {
 		if a == "--safe" {
 			safeMode = true
+		} else if a == "--time" {
+			timeMode = true
 		} else if strings.HasPrefix(a, "--target=") {
 			targetMode = strings.TrimPrefix(a, "--target=")
 		} else if strings.HasPrefix(a, "--module=") {
@@ -608,7 +610,12 @@ func showTypes(path string) {
 
 // compileToIR runs the frontend pipeline: parse → validate → typecheck → IR.
 // Errors are printed to stderr; returns (nil, nil, err) on failure.
-func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.TypeEnv, error) {
+// If pt is non-nil, timing information is recorded for each phase.
+func compileToIR(source, path string, testMode bool, pt *phaseTimer) (*ir.Program, typechecker.TypeEnv, error) {
+	// Clear parse cache between compilations so that AST mutations from
+	// the IR resolver's renameRefs don't leak into subsequent compilations.
+	parser.ClearParseCache()
+
 	exprs, err := parser.Parse(source)
 	if err != nil {
 		printErr("Parse error", err)
@@ -625,11 +632,12 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 		return nil, nil, err
 	}
 
-	exprs, err = typechecker.ReorderToplevel(exprs)
-	if err != nil {
-		printErr("Type error", err)
-		return nil, nil, err
+	if pt != nil {
+		pt.mark("Parse")
 	}
+
+	// Note: ReorderToplevel is called inside CheckProgram/CheckProgramWithExtraEnv,
+	// so we skip it here to avoid doing the work twice.
 
 	// Detect if this is a stdlib file for extra type env
 	absPath, _ := filepath.Abs(path)
@@ -648,6 +656,10 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 	}
 	handleWarnings(path, warnings)
 
+	if pt != nil {
+		pt.mark("Typecheck")
+	}
+
 	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
 	if err != nil {
 		printErr("Import resolution error", err)
@@ -655,6 +667,10 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 	}
 	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
 	allExprs := append(importInfo.Decls, userExprs...)
+
+	if pt != nil {
+		pt.mark("Import resolution")
+	}
 
 	l := ir.NewLowerer()
 	prog, err := l.LowerProgram(allExprs)
@@ -672,6 +688,10 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 		prog = ir.ShakeForTests(prog)
 	} else {
 		prog = ir.Shake(prog)
+	}
+
+	if pt != nil {
+		pt.mark("IR lowering")
 	}
 
 	return prog, typeEnv, nil
@@ -716,7 +736,18 @@ func stdlibExtraTypeEnv(absPath string) typechecker.TypeEnv {
 // buildGoProgram compiles an IR program to a Go binary in .cache/rex-build/.
 // Returns the binary path. The build dir is a stable location so that Go's
 // own content-based build cache makes repeated runs fast.
-func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, testMode bool) string {
+// writeIfChanged writes content to path only if the file doesn't exist or its
+// content differs. This avoids invalidating Go's content-based build cache
+// when the generated code hasn't actually changed.
+func writeIfChanged(path string, content []byte) error {
+	existing, err := os.ReadFile(path)
+	if err == nil && string(existing) == string(content) {
+		return nil // unchanged
+	}
+	return os.WriteFile(path, content, 0644)
+}
+
+func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, testMode bool, pt *phaseTimer) string {
 	// Emit Go source
 	var goSrc string
 	var err error
@@ -730,6 +761,10 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 		os.Exit(1)
 	}
 
+	if pt != nil {
+		pt.mark("Go codegen")
+	}
+
 	// Determine build directory: .cache/rex-build/ under project root (or cwd)
 	cwd, _ := os.Getwd()
 	root := manifest.FindProjectRoot(cwd)
@@ -738,16 +773,21 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	}
 	buildDir := filepath.Join(root, ".cache", "rex-build")
 
-	// Clean and recreate
-	os.RemoveAll(buildDir)
+	// Create build dir if it doesn't exist. Instead of wiping the entire
+	// directory every time, we write files only when their content has changed.
+	// This preserves Go's content-based build cache across runs.
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating build dir: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Track which files should exist so we can remove stale ones.
+	wantFiles := map[string]bool{}
+
 	// Write main.go
 	goFile := filepath.Join(buildDir, "main.go")
-	if err := os.WriteFile(goFile, []byte(goSrc), 0644); err != nil {
+	wantFiles["main.go"] = true
+	if err := writeIfChanged(goFile, []byte(goSrc)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing Go source: %v\n", err)
 		os.Exit(1)
 	}
@@ -755,13 +795,15 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	// Write go.mod
 	base := strings.TrimSuffix(filepath.Base(path), ".rex")
 	goMod := fmt.Sprintf("module rex_%s\n\ngo 1.24\n", base)
-	if err := os.WriteFile(filepath.Join(buildDir, "go.mod"), []byte(goMod), 0644); err != nil {
+	wantFiles["go.mod"] = true
+	if err := writeIfChanged(filepath.Join(buildDir, "go.mod"), []byte(goMod)); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing go.mod: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Extract runtime
-	if err := os.WriteFile(filepath.Join(buildDir, "runtime.go"), []byte(codegen.RuntimeSource()), 0644); err != nil {
+	wantFiles["runtime.go"] = true
+	if err := writeIfChanged(filepath.Join(buildDir, "runtime.go"), []byte(codegen.RuntimeSource())); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing runtime.go: %v\n", err)
 		os.Exit(1)
 	}
@@ -771,22 +813,38 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	for _, mod := range modules {
 		src := stdlib.GoCompanion(mod)
 		if src != "" {
-			p := filepath.Join(buildDir, "stdlib_"+strings.ToLower(strings.ReplaceAll(mod, ".", "_"))+".go")
-			if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+			fname := "stdlib_" + strings.ToLower(strings.ReplaceAll(mod, ".", "_")) + ".go"
+			wantFiles[fname] = true
+			if err := writeIfChanged(filepath.Join(buildDir, fname), []byte(src)); err != nil {
 				fmt.Fprintf(os.Stderr, "Error writing companion file: %v\n", err)
 				os.Exit(1)
 			}
 		}
 	}
 
+	// Remove stale .go files from previous builds (e.g. stdlib companions
+	// that are no longer needed). Stale files would cause compilation errors.
+	entries, _ := os.ReadDir(buildDir)
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasSuffix(name, ".go") && !wantFiles[name] {
+			os.Remove(filepath.Join(buildDir, name))
+		}
+	}
+
 	// Build
 	binaryPath := filepath.Join(buildDir, "program")
+	wantFiles["program"] = true
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	cmd.Dir = buildDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "go build failed: %v\n%s\nGenerated Go source: %s\n", err, out, goFile)
 		os.Exit(1)
+	}
+
+	if pt != nil {
+		pt.mark("go build")
 	}
 
 	return binaryPath
@@ -916,7 +974,7 @@ func compileGoFile(path string) {
 		os.Exit(1)
 	}
 
-	prog, typeEnv, err := compileToIR(string(source), path, false)
+	prog, typeEnv, err := compileToIR(string(source), path, false, nil)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -1069,6 +1127,11 @@ func compileJSFile(path string) {
 func runFile(path string, programArgs []string) {
 	setupSrcRoot(path)
 
+	var pt *phaseTimer
+	if timeMode {
+		pt = newPhaseTimer()
+	}
+
 	source, err := readSourceWithOverlay(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
@@ -1076,7 +1139,7 @@ func runFile(path string, programArgs []string) {
 	}
 
 	// Frontend: parse → typecheck → IR
-	prog, typeEnv, err := compileToIR(source, path, false)
+	prog, typeEnv, err := compileToIR(source, path, false, pt)
 	if err != nil {
 		os.Exit(1) // errors already printed by compileToIR
 	}
@@ -1100,7 +1163,11 @@ func runFile(path string, programArgs []string) {
 	}
 
 	// Compile to Go and execute
-	binary := buildGoProgram(prog, typeEnv, path, false)
+	binary := buildGoProgram(prog, typeEnv, path, false, pt)
+
+	if pt != nil {
+		pt.print()
+	}
 
 	cmd := exec.Command(binary, programArgs...)
 	cmd.Stdout = os.Stdout
@@ -1122,18 +1189,27 @@ func runFile(path string, programArgs []string) {
 func buildBinary(path string, outPath string) {
 	setupSrcRoot(path)
 
+	var pt *phaseTimer
+	if timeMode {
+		pt = newPhaseTimer()
+	}
+
 	src, err := readSourceWithOverlay(path)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
 		os.Exit(1)
 	}
 
-	prog, typeEnv, err := compileToIR(src, path, false)
+	prog, typeEnv, err := compileToIR(src, path, false, pt)
 	if err != nil {
 		os.Exit(1)
 	}
 
-	binary := buildGoProgram(prog, typeEnv, path, false)
+	binary := buildGoProgram(prog, typeEnv, path, false, pt)
+
+	if pt != nil {
+		pt.print()
+	}
 
 	// Default output: lowercase basename without extension
 	if outPath == "" {
@@ -1173,7 +1249,7 @@ func runTestsBatch(files []string, only string) bool {
 			printTestErr(path, "error", err)
 			continue
 		}
-		prog, typeEnv, err := compileToIR(src, path, true)
+		prog, typeEnv, err := compileToIR(src, path, true, nil)
 		if err != nil {
 			continue
 		}
@@ -1279,13 +1355,13 @@ func runTests(path string, only string) bool {
 	}
 
 	// Frontend: parse → typecheck → IR (test mode)
-	prog, typeEnv, err := compileToIR(src, path, true)
+	prog, typeEnv, err := compileToIR(src, path, true, nil)
 	if err != nil {
 		return false // errors already printed
 	}
 
 	// Compile and run tests
-	binary := buildGoProgram(prog, typeEnv, path, true)
+	binary := buildGoProgram(prog, typeEnv, path, true, nil)
 
 	var cmd *exec.Cmd
 	if only != "" {

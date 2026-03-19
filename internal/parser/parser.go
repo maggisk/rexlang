@@ -1988,11 +1988,21 @@ func ParseTokens(tokens []lexer.Token) ([]ast.Expr, error) {
 	return exprs, nil
 }
 
-// Parse tokenizes and parses source code.
+// Parse tokenizes and parses source code. Results are cached by source hash
+// so that re-parsing the same module (e.g. in the typechecker and IR resolver)
+// is free after the first call.
 func Parse(source string) ([]ast.Expr, error) {
+	key := cacheKey(source)
+	if exprs, err, ok := cacheLookup(key); ok {
+		return exprs, err
+	}
+
 	tokens, err := lexer.Tokenize(source)
 	if err != nil {
+		cacheStore(key, nil, err)
 		return nil, err
 	}
-	return ParseTokens(tokens)
+	exprs, err := ParseTokens(tokens)
+	cacheStore(key, exprs, err)
+	return exprs, err
 }
