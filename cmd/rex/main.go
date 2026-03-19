@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/maggisk/rexlang/internal/ast"
@@ -39,6 +40,9 @@ var moduleMode = "global:Rex"
 // packageRoots maps package names to their src/ directories (from rex.toml).
 var packageRoots map[string]string
 
+// compileTiming tracks per-phase timing when --time is active.
+var compileTiming = timing{}
+
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
@@ -66,6 +70,9 @@ func main() {
 			targetMode = strings.TrimPrefix(a, "--target=")
 		} else if strings.HasPrefix(a, "--module=") {
 			moduleMode = strings.TrimPrefix(a, "--module=")
+		} else if a == "--time" {
+			compileTiming.enabled = true
+			compileTiming.start = time.Now()
 		} else {
 			filtered = append(filtered, a)
 		}
@@ -618,7 +625,9 @@ func showTypes(path string) {
 // compileToIR runs the frontend pipeline: parse → validate → typecheck → IR.
 // Errors are printed to stderr; returns (nil, nil, err) on failure.
 func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Program, typechecker.TypeEnv, error) {
+	done := compileTiming.phase("Parse")
 	exprs, err := parser.Parse(source)
+	done()
 	if err != nil {
 		printErr("Parse error", err)
 		return nil, nil, err
@@ -644,6 +653,7 @@ func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Progra
 	absPath, _ := filepath.Abs(path)
 	extraTypeEnv := stdlibExtraTypeEnv(absPath)
 
+	done = compileTiming.phase("Typecheck")
 	var typeEnv typechecker.TypeEnv
 	var warnings []typechecker.Warning
 	if extraTypeEnv != nil {
@@ -651,13 +661,16 @@ func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Progra
 	} else {
 		typeEnv, warnings, err = typechecker.CheckProgram(exprs, srcRoot)
 	}
+	done()
 	if err != nil {
 		printErr("Type error", err)
 		return nil, nil, err
 	}
 	handleWarnings(path, warnings)
 
+	done = compileTiming.phase("Import resolution")
 	importInfo, err := ir.ResolveImports(exprs, srcRoot, targetMode, packageRoots)
+	done()
 	if err != nil {
 		printErr("Import resolution error", err)
 		return nil, nil, err
@@ -665,8 +678,10 @@ func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Progra
 	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
 	allExprs := append(importInfo.Decls, userExprs...)
 
+	done = compileTiming.phase("IR lowering")
 	l := ir.NewLowerer()
 	prog, err := l.LowerProgram(allExprs)
+	done()
 	if err != nil {
 		printErr("IR error", err)
 		return nil, nil, err
@@ -727,6 +742,7 @@ func stdlibExtraTypeEnv(absPath string) typechecker.TypeEnv {
 // own content-based build cache makes repeated runs fast.
 func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, testMode bool) string {
 	// Emit Go source
+	doneCodegen := compileTiming.phase("Go codegen")
 	var goSrc string
 	var err error
 	if testMode {
@@ -734,6 +750,7 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	} else {
 		goSrc, err = codegen.EmitGo(prog, typeEnv)
 	}
+	doneCodegen()
 	if err != nil {
 		printErr("Codegen error", err)
 		os.Exit(1)
@@ -790,9 +807,11 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 
 	// Build
 	binaryPath := filepath.Join(buildDir, "program")
+	doneBuild := compileTiming.phase("go build")
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	cmd.Dir = buildDir
 	out, err := cmd.CombinedOutput()
+	doneBuild()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "go build failed: %v\n%s\nGenerated Go source: %s\n", err, out, goFile)
 		os.Exit(1)
@@ -1138,6 +1157,7 @@ func runFile(path string, programArgs []string) {
 
 	// Compile to Go and execute
 	binary := buildGoProgram(prog, typeEnv, path, false)
+	compileTiming.print()
 
 	cmd := exec.Command(binary, programArgs...)
 	cmd.Stdout = os.Stdout
@@ -1172,6 +1192,7 @@ func buildBinary(path string, outPath string) {
 	}
 
 	binary := buildGoProgram(prog, typeEnv, path, false)
+	compileTiming.print()
 
 	// Default output: lowercase basename without extension
 	if outPath == "" {
@@ -1326,6 +1347,7 @@ func runTests(path string, only string) bool {
 
 	// Compile and run tests
 	binary := buildGoProgram(prog, typeEnv, path, true)
+	compileTiming.print()
 
 	var cmd *exec.Cmd
 	if only != "" {
