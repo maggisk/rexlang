@@ -123,18 +123,18 @@ func EmitGoTests(prog *ir.Program, typeEnv typechecker.TypeEnv) (string, error) 
 
 func newGoGen(typeEnv typechecker.TypeEnv, testMode bool) *goGen {
 	return &goGen{
-		buf:           &strings.Builder{},
-		typeEnv:       typeEnv,
-		funcs:         make(map[string]*goFuncInfo),
-		adts:          make(map[string]*goAdtInfo),
-		ctorToAdt:     make(map[string]*goCtorInfo),
-		records:          make(map[string]*goRecordInfo),
+		buf:               &strings.Builder{},
+		typeEnv:           typeEnv,
+		funcs:             make(map[string]*goFuncInfo),
+		adts:              make(map[string]*goAdtInfo),
+		ctorToAdt:         make(map[string]*goCtorInfo),
+		records:           make(map[string]*goRecordInfo),
 		recordsByOrigName: make(map[string]*goRecordInfo),
-		traitImpls:    make(map[string][]goImplCase),
-		locals:        make(map[string]bool),
-		knownTypes:    map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true, "List": true, "Tuple2": true, "Tuple3": true, "Tuple4": true, "Unit": true},
-		neededModules: make(map[string]bool),
-		testMode:      testMode,
+		traitImpls:        make(map[string][]goImplCase),
+		locals:            make(map[string]bool),
+		knownTypes:        map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true, "List": true, "Tuple2": true, "Tuple3": true, "Tuple4": true, "Unit": true},
+		neededModules:     make(map[string]bool),
+		testMode:          testMode,
 	}
 }
 
@@ -149,6 +149,7 @@ type goFuncInfo struct {
 	retType    types.Type
 	body       ir.Expr
 	isExternal bool
+	sourceLoc  string // "funcName (file:line)" for stack traces
 }
 
 type goParamInfo struct {
@@ -186,18 +187,18 @@ type goImplCase struct {
 // ---------------------------------------------------------------------------
 
 type goGen struct {
-	buf          *strings.Builder
-	indent       int
-	typeEnv      typechecker.TypeEnv
-	funcs        map[string]*goFuncInfo
-	adts         map[string]*goAdtInfo
-	ctorToAdt    map[string]*goCtorInfo
-	records          map[string]*goRecordInfo
+	buf               *strings.Builder
+	indent            int
+	typeEnv           typechecker.TypeEnv
+	funcs             map[string]*goFuncInfo
+	adts              map[string]*goAdtInfo
+	ctorToAdt         map[string]*goCtorInfo
+	records           map[string]*goRecordInfo
 	recordsByOrigName map[string]*goRecordInfo // original IR name → record info (before collision rename)
-	allRecords       []*goRecordInfo           // all records including colliding names
-	traitImpls map[string][]goImplCase
-	locals      map[string]bool
-	tempCounter int
+	allRecords        []*goRecordInfo          // all records including colliding names
+	traitImpls        map[string][]goImplCase
+	locals            map[string]bool
+	tempCounter       int
 
 	// trait method names → dispatch function names
 	traitMethodNames map[string]string // "myShow" → "dispatch_myshow_myShow"
@@ -207,8 +208,9 @@ type goGen struct {
 	neededModules map[string]bool // stdlib modules needed by externals
 
 	// test mode support
-	testMode  bool
-	testFuncs []testFuncInfo
+	testMode   bool
+	testFuncs  []testFuncInfo
+	sourceFile string // main source file (for stack traces)
 }
 
 type testFuncInfo struct {
@@ -219,6 +221,34 @@ type testFuncInfo struct {
 func (g *goGen) fresh() string {
 	g.tempCounter++
 	return fmt.Sprintf("_t%d", g.tempCounter)
+}
+
+// buildSourceLoc constructs a human-readable source location string for stack traces.
+func (g *goGen) buildSourceLoc(name, file string, line int) string {
+	displayName := name
+	if idx := strings.LastIndex(name, "$"); idx >= 0 {
+		displayName = name[idx+1:]
+	}
+	if strings.HasPrefix(displayName, "_") || displayName == "" {
+		return ""
+	}
+	if strings.Contains(name, "$") {
+		parts := strings.Split(name, "$")
+		if len(parts) >= 3 {
+			mod := strings.Join(parts[:len(parts)-1], ":")
+			return fmt.Sprintf("%s (%s)", displayName, mod)
+		}
+	}
+	if file != "" && line > 0 {
+		return fmt.Sprintf("%s (%s:%d)", displayName, file, line)
+	}
+	if g.sourceFile != "" && line > 0 {
+		return fmt.Sprintf("%s (%s:%d)", displayName, g.sourceFile, line)
+	}
+	if g.sourceFile != "" {
+		return fmt.Sprintf("%s (%s)", displayName, g.sourceFile)
+	}
+	return displayName
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +281,8 @@ func (g *goGen) raw(s string) {
 // ---------------------------------------------------------------------------
 
 func (g *goGen) emit(prog *ir.Program) (string, error) {
+	g.sourceFile = prog.SourceFile
+
 	// Phase 1: analyze
 	g.analyze(prog)
 
@@ -264,7 +296,7 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 	} else if g.testMode {
 		out.WriteString("import \"fmt\"\n\n")
 	} else {
-		out.WriteString("import \"os\"\n\n")
+		out.WriteString("import (\n\t\"fmt\"\n\t\"os\"\n)\n\n")
 	}
 
 	// Emit type definitions (ADTs, records, tuples)
@@ -289,6 +321,12 @@ func (g *goGen) emit(prog *ir.Program) (string, error) {
 		g.emitTestMain(out)
 	} else {
 		out.WriteString("\nfunc main() {\n")
+		out.WriteString("\tdefer func() {\n")
+		out.WriteString("\t\tif r := recover(); r != nil {\n")
+		out.WriteString("\t\t\tfmt.Fprint(os.Stderr, r)\n")
+		out.WriteString("\t\t\tos.Exit(1)\n")
+		out.WriteString("\t\t}\n")
+		out.WriteString("\t}()\n")
 		out.WriteString("\tos.Exit(int(rex_main(nil).(int64)))\n")
 		out.WriteString("}\n")
 	}
@@ -474,6 +512,7 @@ func (g *goGen) analyzeFunc(d ir.DLet) *goFuncInfo {
 	}
 	fi.body = body
 	fi.retType = g.inferReturnType(d.Name, fi.arity)
+	fi.sourceLoc = g.buildSourceLoc(d.Name, d.File, d.Line)
 	return fi
 }
 
@@ -482,6 +521,7 @@ func (g *goGen) analyzeFuncFromBinding(b ir.RecBinding) *goFuncInfo {
 	lam, ok := b.Bind.(ir.CLambda)
 	if !ok {
 		fi.body = ir.EComplex{C: b.Bind}
+		fi.sourceLoc = g.buildSourceLoc(b.Name, b.File, b.Line)
 		return fi
 	}
 	body := ir.Expr(ir.EComplex{C: lam})
@@ -498,6 +538,7 @@ func (g *goGen) analyzeFuncFromBinding(b ir.RecBinding) *goFuncInfo {
 		break
 	}
 	fi.body = body
+	fi.sourceLoc = g.buildSourceLoc(b.Name, b.File, b.Line)
 	return fi
 }
 
@@ -868,6 +909,10 @@ func (g *goGen) emitDLet(d ir.DLet) error {
 	for _, p := range fi.params {
 		g.locals[p.name] = true
 	}
+	if fi.sourceLoc != "" {
+		g.w("rexPushStack(%q)", fi.sourceLoc)
+		g.w("defer rexPopStack()")
+	}
 
 	if err := g.emitExprStmt(fi.body, true); err != nil {
 		return err
@@ -898,6 +943,10 @@ func (g *goGen) emitDLetRec(d ir.DLetRec) error {
 		g.locals = make(map[string]bool)
 		for _, p := range fi.params {
 			g.locals[p.name] = true
+		}
+		if fi.sourceLoc != "" {
+			g.w("rexPushStack(%q)", fi.sourceLoc)
+			g.w("defer rexPopStack()")
 		}
 
 		if err := g.emitExprStmt(fi.body, true); err != nil {

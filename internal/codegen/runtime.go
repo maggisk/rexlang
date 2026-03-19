@@ -14,6 +14,48 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// Rex call stack (per-goroutine for actor support)
+// ---------------------------------------------------------------------------
+
+var rexCallStacks sync.Map // goroutine ID -> *[]string
+
+func rexGetStack() *[]string {
+	id := rexGoroutineID()
+	v, ok := rexCallStacks.Load(id)
+	if !ok {
+		s := make([]string, 0, 32)
+		rexCallStacks.Store(id, &s)
+		return &s
+	}
+	return v.(*[]string)
+}
+
+func rexPushStack(frame string) {
+	s := rexGetStack()
+	*s = append(*s, frame)
+}
+
+func rexPopStack() {
+	s := rexGetStack()
+	if len(*s) > 0 {
+		*s = (*s)[:len(*s)-1]
+	}
+}
+
+func rexFormatStack(msg string) string {
+	s := rexGetStack()
+	var b strings.Builder
+	b.WriteString(msg)
+	b.WriteByte('\n')
+	for i := len(*s) - 1; i >= 0; i-- {
+		b.WriteString("  at ")
+		b.WriteString((*s)[i])
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// ---------------------------------------------------------------------------
 // List
 // ---------------------------------------------------------------------------
 
@@ -193,11 +235,11 @@ func rex_not(v any) any {
 }
 
 func rex_error(msg any) any {
-	panic(fmt.Sprintf("error: %s", msg.(string)))
+	panic(rexFormatStack(fmt.Sprintf("Error: %s", msg.(string))))
 }
 
 func rex_todo(msg any) any {
-	panic(fmt.Sprintf("TODO: %s", msg.(string)))
+	panic(rexFormatStack(fmt.Sprintf("TODO: %s", msg.(string))))
 }
 
 // ---------------------------------------------------------------------------

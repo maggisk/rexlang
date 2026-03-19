@@ -50,6 +50,7 @@ func (l *Lowerer) lowerToplevel(expr ast.Expr) (Decl, error) {
 			Name:     e.Name,
 			Exported: e.Exported,
 			Body:     body,
+			Line:     e.Line,
 		}, nil
 
 	case ast.LetRec:
@@ -70,7 +71,7 @@ func (l *Lowerer) lowerToplevel(expr ast.Expr) (Decl, error) {
 			if cexpr == nil {
 				cexpr = CLambda{Body: body}
 			}
-			bindings = append(bindings, RecBinding{Name: b.Name, Bind: cexpr})
+			bindings = append(bindings, RecBinding{Name: b.Name, Bind: cexpr, Line: e.Line})
 		}
 		exported := make(map[string]bool)
 		if e.Exported {
@@ -213,7 +214,7 @@ func (l *Lowerer) lowerExprList(exprs []ast.Expr) (Expr, error) {
 				default:
 					cexpr = CLambda{Body: body}
 				}
-				bindings = append(bindings, RecBinding{Name: b.Name, Bind: cexpr})
+				bindings = append(bindings, RecBinding{Name: b.Name, Bind: cexpr, Line: e.Line})
 			}
 			return ELetRec{Bindings: bindings, Body: rest}, nil
 		}
@@ -531,7 +532,7 @@ func (l *Lowerer) normalizeLetRec(e ast.LetRec) (Expr, error) {
 		default:
 			cexpr = CLambda{Body: body}
 		}
-		bindings = append(bindings, RecBinding{Name: b.Name, Bind: cexpr})
+		bindings = append(bindings, RecBinding{Name: b.Name, Bind: cexpr, Line: e.Line})
 	}
 	if e.InExpr == nil {
 		return ELetRec{Bindings: bindings, Body: EAtom{A: AUnit{}}}, nil

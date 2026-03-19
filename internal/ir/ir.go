@@ -215,7 +215,9 @@ type ELetRec struct {
 type RecBinding struct {
 	Name string
 	Ty   types.Type
-	Bind CExpr // typically CLambda
+	Bind CExpr  // typically CLambda
+	Line int    // source line (0 if unknown)
+	File string // source file (empty if unknown)
 }
 
 func (EAtom) exprNode()    {}
@@ -285,6 +287,8 @@ type DLet struct {
 	Exported bool
 	Ty       types.Type
 	Body     Expr
+	Line     int    // source line (0 if unknown)
+	File     string // source file (empty if unknown)
 }
 
 // DLetRec is a group of mutually recursive top-level bindings.
@@ -510,8 +514,8 @@ func renameAtom(a Atom, renames map[string]string) Atom {
 	return a
 }
 
-
 // Program is the complete lowered program.
 type Program struct {
-	Decls []Decl
+	Decls      []Decl
+	SourceFile string // main source file path (for stack traces)
 }

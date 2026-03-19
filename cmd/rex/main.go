@@ -11,10 +11,10 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/codegen"
-	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
+	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/typechecker"
 	"github.com/maggisk/rexlang/internal/types"
 )
@@ -662,6 +662,7 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 		printErr("IR error", err)
 		return nil, nil, err
 	}
+	prog.SourceFile = path
 
 	// If testing a stdlib file directly, prefix bare external names with module qualifier
 	if stdlibModName := stdlibModuleName(path); stdlibModName != "" {
@@ -872,6 +873,7 @@ func compileFile(path string) {
 		printErr("IR error", err)
 		os.Exit(1)
 	}
+	prog.SourceFile = path
 
 	// Tree shake: remove functions not reachable from main
 	prog = ir.Shake(prog)
@@ -1035,6 +1037,7 @@ func compileJSFile(path string) {
 		printErr("IR error", err)
 		os.Exit(1)
 	}
+	prog.SourceFile = path
 
 	prog = ir.Shake(prog)
 

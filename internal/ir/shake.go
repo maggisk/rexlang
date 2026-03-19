@@ -107,7 +107,7 @@ func ShakeFrom(prog *Program, roots ...string) *Program {
 		}
 	}
 
-	return &Program{Decls: kept}
+	return &Program{Decls: kept, SourceFile: prog.SourceFile}
 }
 
 // collectRefs returns all variable names referenced in an expression.
