@@ -1,21 +1,88 @@
 # RexLang
 
-> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Go's speed. One binary. No runtime errors, and no human who fully understands this codebase — only our new AI overlords.
+A type-safe HTTP server in 15 lines:
 
-A functional programming language with algebraic data types, pattern matching, and Hindley-Milner type inference. `rex file.rex` compiles your program to Go behind the scenes, builds a native binary, and runs it. Ships as a single static binary — Go is the only dependency. Additional compilation targets: **JavaScript** (browser) and **WasmGC** (in progress).
+```rex
+import Std:IO (println)
+import Std:Result (Ok, Err)
+import Std:Http.Server (serve, ok, html, json, text, segments, Request, Response)
+
+handle : Request -> Response
+handle req =
+    match (req.method, segments req.path)
+        when ("GET", []) ->
+            html 200 "<h1>Welcome to Rex</h1>"
+        when ("GET", ["api", "users"]) ->
+            json 200 "[{\"name\": \"Alice\"}, {\"name\": \"Bob\"}]"
+        when ("GET", ["hello", name]) ->
+            html 200 "<h1>Hello, ${name}!</h1>"
+        when _ ->
+            text 404 "not found"
+
+export main _ =
+    match serve 3000 handle
+        when Ok _ -> 0
+        when Err e -> let _ = println e in 1
+```
+
+**Rex** is a functional language with algebraic data types, Hindley-Milner type inference, and pattern matching. It compiles to Go for native binaries and JavaScript for the browser. One binary, no runtime errors.
+
+> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Go's speed. No human who fully understands this codebase — only our new AI overlords.
+
+## Install
+
+```bash
+go install github.com/maggisk/rexlang/cmd/rex@latest
+```
+
+Or build from source:
+
+```bash
+git clone https://github.com/maggisk/rexlang.git
+cd rexlang && go build -o rex ./cmd/rex/
+```
 
 ## Quick start
 
 ```bash
-go build -o rex ./cmd/rex/
+rex examples/io.rex                           # run a program
+rex --test examples/factorial.rex             # run tests
+rex build src/App.rex                         # produce a standalone binary
+rex --compile --target=browser src/Main.rex   # compile to JS for browser
+rex --types Std:List                          # show all exported types
+rex fmt src/Main.rex                          # auto-format
+rex lsp                                       # start language server
+```
 
-./rex examples/io.rex                # run a program (requires main)
-./rex --test examples/factorial.rex  # run tests
-./rex --test --only="double" f.rex   # run only tests matching a pattern
-./rex --safe examples/io.rex         # --safe: reject any `todo` usage
-./rex --types Std:List               # show all exported types in a module
-./rex --types myfile.rex             # show all top-level binding types
-./rex --compile --target=browser src/Main.rex  # compile to JS for browser
+## Go interop
+
+Rex compiles to Go, and the type mapping is clean:
+
+| Rex | Go |
+|---|---|
+| `Int` | `int64` |
+| `Float` | `float64` |
+| `String` | `string` |
+| `Bool` | `bool` |
+| `List a` | `*RexList` (cons cells) |
+| `(a, b)` | `RexTuple2{F0, F1 any}` |
+| `Result ok err` | `(T, error)` — `Ok v` → `(v, nil)`, `Err e` → `(zero, e)` |
+| `Maybe a` | `*T` — `Just v` → `&v`, `Nothing` → `nil` |
+| ADTs | Go interface + struct per constructor |
+| Records | Go struct with exported fields |
+
+Write Go builtins with `external` in .rex files and companion `.go` files:
+
+```rex
+-- in String.rex
+external length : String -> Int
+```
+
+```go
+// in string.go
+func Std_String_length(s string) int64 {
+    return int64(utf8.RuneCountInString(s))
+}
 ```
 
 ## Language
@@ -444,7 +511,7 @@ match try (\_ -> 10 / 0)
         0
 ```
 
-- **Missing trait instance on inner types** — `[Int -> Int] == [Int -> Int]` passes because the outer type (`List`) has an `Eq` instance, but fails at runtime because `Int -> Int` doesn't. Full inner constraint propagation is planned.
+- **`==`/`!=` on unsupported inner types** — `[Int -> Int] == [Int -> Int]` passes because `==` uses built-in structural comparison (not trait dispatch). Trait methods like `sort`, `show`, `compare` do propagate constraints to inner types — `sort [(\x -> x)]` is a compile error.
 
 Non-exhaustive patterns are caught at compile time — `match` expressions on ADTs, bools, and lists must cover all constructors, and literal/tuple patterns require a catch-all `_ ->` arm. Refutable patterns in `let` bindings are also rejected. IO operations like `readFile` and `getEnv` don't crash — they return `Result` or `Maybe`. Actor mailboxes are unbounded (Erlang-style) so `send` never fails.
 
@@ -463,7 +530,7 @@ Non-exhaustive patterns are caught at compile time — `match` expressions on AD
 | `Std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
 | `Std:IO` | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`) |
 | `Std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
-| `Std:Process` | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages |
+| `Std:Process` | `spawn`, `send`, `receive`, `receiveTimeout`, `call`, `monitor` — actor-model concurrency with typed messages |
 | `Std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
 | `Std:Stream` | Lazy streams: `fromList`, `repeat`, `iterate`, `from`, `range`, `map`, `filter`, `flatMap`, `take`, `drop`, `takeWhile`, `dropWhile`, `zip`, `zipWith`, `toList`, `foldl`, `head`, `isEmpty`, `indexedMap` — supports infinite sequences |
 | `Std:Net` | TCP networking: `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener` — opaque `Listener`/`Conn` types; all operations return `Result` |
