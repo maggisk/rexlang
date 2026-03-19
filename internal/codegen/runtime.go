@@ -193,11 +193,55 @@ func rex_not(v any) any {
 }
 
 func rex_error(msg any) any {
-	panic(fmt.Sprintf("error: %s", msg.(string)))
+	panic(rexFormatPanic(fmt.Sprintf("error: %s", msg.(string))))
 }
 
 func rex_todo(msg any) any {
-	panic(fmt.Sprintf("TODO: %s", msg.(string)))
+	panic(rexFormatPanic(fmt.Sprintf("TODO: %s", msg.(string))))
+}
+
+// ---------------------------------------------------------------------------
+// Rex call stack tracking (per-goroutine)
+// ---------------------------------------------------------------------------
+
+var rexCallStacks sync.Map // goroutine ID → []string
+
+func rexPushStack(frame string) {
+	gid := rexGoroutineID()
+	if v, ok := rexCallStacks.Load(gid); ok {
+		rexCallStacks.Store(gid, append(v.([]string), frame))
+	} else {
+		rexCallStacks.Store(gid, []string{frame})
+	}
+}
+
+func rexPopStack() {
+	gid := rexGoroutineID()
+	if v, ok := rexCallStacks.Load(gid); ok {
+		stack := v.([]string)
+		if len(stack) > 0 {
+			rexCallStacks.Store(gid, stack[:len(stack)-1])
+		}
+	}
+}
+
+func rexFormatPanic(msg string) string {
+	gid := rexGoroutineID()
+	v, ok := rexCallStacks.Load(gid)
+	if !ok {
+		return msg
+	}
+	stack := v.([]string)
+	if len(stack) == 0 {
+		return msg
+	}
+	var b strings.Builder
+	b.WriteString(msg)
+	b.WriteString("\n")
+	for i := len(stack) - 1; i >= 0; i-- {
+		fmt.Fprintf(&b, "  at %s\n", stack[i])
+	}
+	return b.String()
 }
 
 // ---------------------------------------------------------------------------
