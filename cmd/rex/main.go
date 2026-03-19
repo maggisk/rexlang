@@ -217,10 +217,6 @@ func printRichTypeError(kind string, te *types.TypeError) {
 		line := lines[te.Line-1]
 		fmt.Fprintf(os.Stderr, "  %s%d|%s %s\n", colorRed, te.Line, colorReset, line)
 	}
-	if te.Expected != "" && te.Found != "" {
-		fmt.Fprintf(os.Stderr, "\n  %sExpected%s: %s\n", colorRed, colorReset, te.Expected)
-		fmt.Fprintf(os.Stderr, "  %sFound%s:    %s\n", colorRed, colorReset, te.Found)
-	}
 	fmt.Fprintln(os.Stderr)
 }
 
@@ -646,25 +642,25 @@ func showTypes(path string) {
 // compileToIR runs the frontend pipeline: parse → validate → typecheck → IR.
 // Errors are printed to stderr; returns (nil, nil, err) on failure.
 func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Program, typechecker.TypeEnv, error) {
-	done := compileTiming.phase("Parse")
+	done := compileTiming.phase("Parse + validate")
 	exprs, err := parser.Parse(source)
-	done()
 	if err != nil {
+		done()
 		printErr("Parse error", err)
 		return nil, nil, err
 	}
-
 	if err := parser.ValidateToplevel(exprs); err != nil {
+		done()
 		printErr("Syntax error", err)
 		return nil, nil, err
 	}
-
 	if err := parser.ValidateIndentation(exprs); err != nil {
+		done()
 		printErr("Indentation error", err)
 		return nil, nil, err
 	}
-
 	exprs, err = typechecker.ReorderToplevel(exprs)
+	done()
 	if err != nil {
 		printErr("Type error", err)
 		return nil, nil, err
@@ -857,7 +853,10 @@ func writeIfChanged(path, content string) {
 	if err == nil && string(existing) == content {
 		return
 	}
-	os.WriteFile(path, []byte(content), 0644)
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", path, err)
+		os.Exit(1)
+	}
 }
 
 // resolveOverlayEntry detects when the user passes a target-overlay file
