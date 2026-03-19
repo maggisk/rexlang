@@ -22,6 +22,10 @@ import (
 // safeMode is set by the --safe flag; it promotes warnings (todo usage) to errors.
 var safeMode bool
 
+// strictTodo is set automatically for build, test, and compile commands;
+// todo usage becomes a compile error.
+var strictTodo bool
+
 // targetMode is set by the --target flag; defaults to "native".
 var targetMode = "native"
 
@@ -85,6 +89,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: rex build [--out=<path>] <file.rex>")
 			os.Exit(1)
 		}
+		strictTodo = true
 		buildBinary(buildArgs[0], outPath)
 		return
 	}
@@ -93,6 +98,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: rex --compile <file.rex>")
 			os.Exit(1)
 		}
+		strictTodo = true
 		if targetMode == "browser" {
 			compileJSFile(args[1])
 		} else {
@@ -105,6 +111,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: rex --compile-go <file.rex>")
 			os.Exit(1)
 		}
+		strictTodo = true
 		compileGoFile(args[1])
 		return
 	}
@@ -130,6 +137,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "Usage: rex --test [--safe] [--only=<pattern>] <file.rex> [file.rex ...]")
 			os.Exit(1)
 		}
+		strictTodo = true
 		if len(files) == 1 {
 			if !runTests(files[0], only) {
 				os.Exit(1)
@@ -194,14 +202,20 @@ func printWarnings(path string, warnings []typechecker.Warning) {
 	}
 }
 
-// handleWarnings prints warnings and, if --safe is active, exits with an error.
+// handleWarnings prints warnings and exits with an error in strict modes.
+// In build/test/compile mode (strictTodo) or with --safe, todo usage is fatal.
+// In dev mode (rex <file>), warnings are printed but execution continues.
 func handleWarnings(path string, warnings []typechecker.Warning) {
 	if len(warnings) == 0 {
 		return
 	}
 	printWarnings(path, warnings)
-	if safeMode {
-		fmt.Fprintf(os.Stderr, "%s--safe: warnings are errors%s\n", colorRed, colorReset)
+	if safeMode || strictTodo {
+		if safeMode {
+			fmt.Fprintf(os.Stderr, "%s--safe: warnings are errors%s\n", colorRed, colorReset)
+		} else {
+			fmt.Fprintf(os.Stderr, "%sError%s: todo must be resolved before building or testing\n", colorRed, colorReset)
+		}
 		os.Exit(1)
 	}
 }
