@@ -12,6 +12,15 @@ func Std_Process_send(pid, msg any) any { return rex_send(pid, msg) }
 func Std_Process_receive(_ any) any    { return <-rexGetSelf().ch }
 func Std_Process_call(pid, fn any) any { return rex_call(pid, fn) }
 
+// monitor watches target and sends msg to watcher when target exits.
+func Std_Process_monitor(watcher, target, msg any) any {
+	go func() {
+		<-target.(*RexPid).done
+		watcher.(*RexPid).ch <- msg
+	}()
+	return nil
+}
+
 // receiveTimeout waits up to ms milliseconds for a message.
 // Returns *any (non-nil = Just, nil = Nothing) — the codegen's Maybe wrapper handles conversion.
 func Std_Process_receiveTimeout(_ any, ms any) *any {
