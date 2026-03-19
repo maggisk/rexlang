@@ -28,8 +28,6 @@ func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, jsBindings []ir.JsBin
 		knownTypes:       map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
 		jsBindings:       jsBindings,
 		moduleMode:       moduleMode,
-		usedStringFns:    make(map[string]bool),
-		usedTraitMethods: make(map[string]bool),
 	}
 	return g.emit(prog)
 }
@@ -86,17 +84,23 @@ type jsGen struct {
 	tempCounter      int
 
 	// track what features are used
-	usesConcurrency  bool
-	usesJsFfi        bool            // browser: Std:Js FFI primitives
-	knownTypes       map[string]bool // types defined in the program
-	jsBindings       []ir.JsBinding  // companion JS file bindings
-	moduleMode       string          // module compilation mode
-	usesEq           bool            // $eq function is needed
-	usesCompare      bool            // $compare function is needed
-	usesDisplay      bool            // $display function is needed
-	usesApply        bool            // $$apply is used (set during emit, not scan)
-	usedStringFns    map[string]bool // which $string* helpers are actually used
-	usedTraitMethods map[string]bool // which trait methods are actually dispatched
+	usesConcurrency bool
+	usesJsFfi       bool              // browser: Std:Js FFI primitives
+	usesApply       bool              // $$apply is needed (discovered during emit)
+	knownTypes      map[string]bool   // types defined in the program
+	jsBindings      []ir.JsBinding    // companion JS file bindings
+	moduleMode      string            // module compilation mode
+	needs           jsNeeds           // what runtime helpers are needed (from IR analysis)
+}
+
+// jsNeeds tracks which runtime helpers are needed, determined by walking the
+// shaken IR before codegen. The IR is already tree-shaken, so every name and
+// operator present is reachable from main.
+type jsNeeds struct {
+	names         map[string]bool // all AVar names referenced in the program
+	operators     map[string]bool // all CBinop operators used
+	hasInterp     bool            // CStringInterp present (needs $display)
+	hasTraitImpls bool            // DImpl present (dispatch error needs $display)
 }
 
 func (g *jsGen) fresh() string {
@@ -236,7 +240,10 @@ func isDeclStdlib(d ir.Decl) bool {
 			return strings.Contains(d.Bindings[0].Name, "$")
 		}
 	case ir.DImpl:
-		return true // trait impls are always from stdlib/prelude
+		// Impl is stdlib if the target type name is a Prelude/stdlib type
+		return strings.Contains(d.TargetTypeName, "$") ||
+			d.TargetTypeName == "Int" || d.TargetTypeName == "Float" ||
+			d.TargetTypeName == "String" || d.TargetTypeName == "Bool"
 	}
 	return false
 }
@@ -270,6 +277,11 @@ func (g *jsGen) wrapModule(body string) string {
 // ---------------------------------------------------------------------------
 
 func (g *jsGen) analyze(prog *ir.Program) {
+	// Collect what the program needs from the IR (names, operators, features)
+	g.needs = collectNeeds(prog)
+	g.usesConcurrency = g.needs.needsConcurrency()
+	g.usesJsFfi = g.needs.needsJsFfi()
+
 	// Register Prelude trait methods as builtins
 	g.traitMethodNames["show"] = "$display"
 	g.traitMethodNames["eq"] = "$eq"
@@ -290,13 +302,11 @@ func (g *jsGen) analyze(prog *ir.Program) {
 		case ir.DLet:
 			fi := g.analyzeFunc(d)
 			g.funcs[d.Name] = fi
-			g.scanExpr(d.Body)
 
 		case ir.DLetRec:
 			for _, b := range d.Bindings {
 				fi := g.analyzeFuncFromBinding(b)
 				g.funcs[b.Name] = fi
-				g.scanExpr(b.Bind.(ir.CLambda).Body)
 			}
 
 		case ir.DType:
@@ -332,7 +342,6 @@ func (g *jsGen) analyze(prog *ir.Program) {
 					typeName: d.TargetTypeName,
 					funcName: funcName,
 				})
-				g.scanExpr(m.Body)
 			}
 		}
 	}
@@ -380,21 +389,115 @@ func (g *jsGen) analyzeFuncFromBinding(b ir.RecBinding) *jsFuncInfo {
 	return fi
 }
 
-// scanExpr walks an expression tree to detect which features are used.
-func (g *jsGen) scanExpr(expr ir.Expr) {
+// collectNeeds walks the shaken IR program and returns which runtime helpers
+// are needed. The IR is already tree-shaken, so every name and operator present
+// is reachable from main — no separate tracking needed.
+func collectNeeds(prog *ir.Program) jsNeeds {
+	n := jsNeeds{
+		names:     make(map[string]bool),
+		operators: make(map[string]bool),
+	}
+	for _, d := range prog.Decls {
+		switch d := d.(type) {
+		case ir.DLet:
+			collectNeedsExpr(d.Body, &n)
+		case ir.DLetRec:
+			for _, b := range d.Bindings {
+				collectNeedsCExpr(b.Bind, &n)
+			}
+		case ir.DImpl:
+			n.hasTraitImpls = true
+			for _, m := range d.Methods {
+				collectNeedsExpr(m.Body, &n)
+			}
+		}
+	}
+	return n
+}
+
+func collectNeedsExpr(expr ir.Expr, n *jsNeeds) {
 	switch e := expr.(type) {
 	case ir.EAtom:
-		g.scanAtom(e.A)
+		if v, ok := e.A.(ir.AVar); ok {
+			n.names[v.Name] = true
+		}
 	case ir.EComplex:
-		g.scanCExpr(e.C)
+		collectNeedsCExpr(e.C, n)
 	case ir.ELet:
-		g.scanCExpr(e.Bind)
-		g.scanExpr(e.Body)
+		collectNeedsCExpr(e.Bind, n)
+		collectNeedsExpr(e.Body, n)
 	case ir.ELetRec:
 		for _, b := range e.Bindings {
-			g.scanCExpr(b.Bind)
+			collectNeedsCExpr(b.Bind, n)
 		}
-		g.scanExpr(e.Body)
+		collectNeedsExpr(e.Body, n)
+	}
+}
+
+func collectNeedsCExpr(c ir.CExpr, n *jsNeeds) {
+	switch c := c.(type) {
+	case ir.CApp:
+		collectNeedsAtom(c.Func, n)
+		collectNeedsAtom(c.Arg, n)
+	case ir.CBinop:
+		n.operators[c.Op] = true
+		collectNeedsAtom(c.Left, n)
+		collectNeedsAtom(c.Right, n)
+	case ir.CUnaryMinus:
+		collectNeedsAtom(c.Expr, n)
+	case ir.CIf:
+		collectNeedsAtom(c.Cond, n)
+		collectNeedsExpr(c.Then, n)
+		collectNeedsExpr(c.Else, n)
+	case ir.CMatch:
+		collectNeedsAtom(c.Scrutinee, n)
+		for _, arm := range c.Arms {
+			collectNeedsExpr(arm.Body, n)
+		}
+	case ir.CLambda:
+		collectNeedsExpr(c.Body, n)
+	case ir.CCtor:
+		for _, a := range c.Args {
+			collectNeedsAtom(a, n)
+		}
+	case ir.CRecord:
+		for _, f := range c.Fields {
+			collectNeedsAtom(f.Value, n)
+		}
+	case ir.CFieldAccess:
+		collectNeedsAtom(c.Record, n)
+	case ir.CRecordUpdate:
+		collectNeedsAtom(c.Record, n)
+		for _, u := range c.Updates {
+			collectNeedsAtom(u.Value, n)
+		}
+	case ir.CList:
+		for _, a := range c.Items {
+			collectNeedsAtom(a, n)
+		}
+	case ir.CTuple:
+		for _, a := range c.Items {
+			collectNeedsAtom(a, n)
+		}
+	case ir.CStringInterp:
+		n.hasInterp = true
+		for _, a := range c.Parts {
+			collectNeedsAtom(a, n)
+		}
+	case ir.CAssert:
+		collectNeedsAtom(c.Expr, n)
+	}
+}
+
+func collectNeedsAtom(a ir.Atom, n *jsNeeds) {
+	if v, ok := a.(ir.AVar); ok {
+		n.names[v.Name] = true
+		// Also record the short (unqualified) name so builtin checks work
+		// for both bare names (e.g., "println") and module-qualified names
+		// (e.g., "Std$IO$println").
+		if idx := strings.LastIndex(v.Name, "$"); idx >= 0 {
+			n.names[v.Name[idx+1:]] = true
+		}
 	}
 }
 
@@ -414,141 +517,44 @@ func jsFfiBuiltin(name string) string {
 	return ""
 }
 
-func (g *jsGen) scanAtom(a ir.Atom) {
-	if v, ok := a.(ir.AVar); ok {
-		switch v.Name {
-		case "println", "print":
-			g.usedBuiltins[v.Name] = true
-			g.usesDisplay = true
-		case "toString":
-			g.usedBuiltins[v.Name] = true
-			g.usesDisplay = true
-		case "showInt", "showFloat", "not", "error", "todo":
-			g.usedBuiltins[v.Name] = true
-		case "spawn", "send", "receive", "self", "call":
-			g.usesConcurrency = true
-		// String builtins — track individually
-		case "length":
-			g.usedStringFns["stringLength"] = true
-		case "toUpper":
-			g.usedStringFns["toUpper"] = true
-		case "toLower":
-			g.usedStringFns["toLower"] = true
-		case "trim":
-			g.usedStringFns["trim"] = true
-		case "trimLeft":
-			g.usedStringFns["trimLeft"] = true
-		case "trimRight":
-			g.usedStringFns["trimRight"] = true
-		case "reverse":
-			g.usedStringFns["stringReverse"] = true
-		case "split":
-			g.usedStringFns["split"] = true
-		case "join":
-			g.usedStringFns["join"] = true
-		case "contains":
-			g.usedStringFns["contains"] = true
-		case "startsWith":
-			g.usedStringFns["startsWith"] = true
-		case "endsWith":
-			g.usedStringFns["endsWith"] = true
-		case "replace":
-			g.usedStringFns["replace"] = true
-		case "substring":
-			g.usedStringFns["substring"] = true
-		case "repeat":
-			g.usedStringFns["repeat"] = true
-		case "charAt":
-			g.usedStringFns["charAt"] = true
-		case "indexOf":
-			g.usedStringFns["indexOf"] = true
-		case "padLeft":
-			g.usedStringFns["padLeft"] = true
-		case "padRight":
-			g.usedStringFns["padRight"] = true
-		case "words":
-			g.usedStringFns["words"] = true
-		case "lines":
-			g.usedStringFns["lines"] = true
-		case "charCode":
-			g.usedStringFns["charCode"] = true
-		case "fromCharCode":
-			g.usedStringFns["fromCharCode"] = true
-		case "parseInt":
-			g.usedStringFns["stringParseInt"] = true
-		case "parseFloat":
-			g.usedStringFns["stringParseFloat"] = true
-		case "toList":
-			g.usedStringFns["stringToList"] = true
-		case "fromList":
-			g.usedStringFns["stringFromList"] = true
-		case "toFloat":
-			g.usedStringFns["toFloat"] = true
-		default:
-			if jsFfiBuiltin(v.Name) != "" {
-				g.usesJsFfi = true
-			}
+// needsName checks if a name (or its module-qualified form) is in the IR.
+func (n *jsNeeds) needsName(names ...string) bool {
+	for _, name := range names {
+		if n.names[name] {
+			return true
 		}
 	}
+	return false
 }
 
-func (g *jsGen) scanCExpr(c ir.CExpr) {
-	switch c := c.(type) {
-	case ir.CApp:
-		g.scanAtom(c.Func)
-		g.scanAtom(c.Arg)
-	case ir.CBinop:
-		g.scanAtom(c.Left)
-		g.scanAtom(c.Right)
-		// Track which runtime helpers are needed by binary operators
-		switch c.Op {
-		case "Eq", "Neq":
-			g.usesEq = true
-		case "Lt", "Gt", "Leq", "Geq":
-			g.usesCompare = true
-		}
-	case ir.CUnaryMinus:
-		g.scanAtom(c.Expr)
-	case ir.CIf:
-		g.scanAtom(c.Cond)
-		g.scanExpr(c.Then)
-		g.scanExpr(c.Else)
-	case ir.CMatch:
-		g.scanAtom(c.Scrutinee)
-		for _, arm := range c.Arms {
-			g.scanExpr(arm.Body)
-		}
-	case ir.CLambda:
-		g.scanExpr(c.Body)
-	case ir.CCtor:
-		for _, a := range c.Args {
-			g.scanAtom(a)
-		}
-	case ir.CRecord:
-		for _, f := range c.Fields {
-			g.scanAtom(f.Value)
-		}
-	case ir.CFieldAccess:
-		g.scanAtom(c.Record)
-	case ir.CRecordUpdate:
-		g.scanAtom(c.Record)
-		for _, u := range c.Updates {
-			g.scanAtom(u.Value)
-		}
-	case ir.CList:
-		for _, a := range c.Items {
-			g.scanAtom(a)
-		}
-	case ir.CTuple:
-		for _, a := range c.Items {
-			g.scanAtom(a)
-		}
-	case ir.CStringInterp:
-		g.usesDisplay = true
-		for _, a := range c.Parts {
-			g.scanAtom(a)
+func (n *jsNeeds) needsOp(ops ...string) bool {
+	for _, op := range ops {
+		if n.operators[op] {
+			return true
 		}
 	}
+	return false
+}
+
+// needsDisplay returns true if $display is needed (println, print, toString,
+// string interpolation, error, todo, or trait dispatch error messages).
+func (n *jsNeeds) needsDisplay() bool {
+	return n.hasInterp || n.hasTraitImpls || n.needsName("println", "print", "toString", "error", "todo")
+}
+
+// needsJsFfi returns true if any Std:Js FFI builtin is referenced.
+func (n *jsNeeds) needsJsFfi() bool {
+	for name := range n.names {
+		if jsFfiBuiltin(name) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// needsConcurrency returns true if actor primitives are referenced.
+func (n *jsNeeds) needsConcurrency() bool {
+	return n.needsName("spawn", "send", "receive", "self", "call")
 }
 
 // ---------------------------------------------------------------------------
@@ -557,56 +563,121 @@ func (g *jsGen) scanCExpr(c ir.CExpr) {
 
 func (g *jsGen) emitRuntimeHelpers() string {
 	var b strings.Builder
+	n := &g.needs
 
-	needsRuntime := g.usesEq || g.usesCompare || g.usesDisplay || g.usesApply ||
-		len(g.usedBuiltins) > 0 || len(g.usedStringFns) > 0
+	needsRuntime := n.needsOp("Eq", "Neq") || n.needsOp("Lt", "Gt", "Leq", "Geq") ||
+		n.needsDisplay() || g.usesApply ||
+		n.needsName("println", "print", "showInt", "showFloat", "not", "error", "todo")
 
 	if needsRuntime {
 		b.WriteString("// --- Rex runtime ---\n\n")
 	}
 
 	// $eq: structural equality — only if == or != operators are used
-	if g.usesEq {
-		b.WriteString("function $eq(a, b) {\n  if (a === b) return true;\n  if (a === null || b === null) return a === b;\n  if (typeof a !== typeof b) return false;\n  if (typeof a === \"object\") {\n    if (a.$tag !== undefined && b.$tag !== undefined) {\n      if (a.$tag !== b.$tag) return false;\n      const ka = Object.keys(a), kb = Object.keys(b);\n      if (ka.length !== kb.length) return false;\n      for (const k of ka) { if (k !== \"$tag\" && !$eq(a[k], b[k])) return false; }\n      return true;\n    }\n    if (Array.isArray(a) && Array.isArray(b)) {\n      if (a.length !== b.length) return false;\n      for (let i = 0; i < a.length; i++) { if (!$eq(a[i], b[i])) return false; }\n      return true;\n    }\n    const ka = Object.keys(a), kb = Object.keys(b);\n    if (ka.length !== kb.length) return false;\n    for (const k of ka) { if (!$eq(a[k], b[k])) return false; }\n    return true;\n  }\n  return false;\n}\n\n")
+	if n.needsOp("Eq", "Neq") {
+		b.WriteString(`function $eq(a, b) {
+  if (a === b) return true;
+  if (a === null || b === null) return a === b;
+  if (typeof a !== typeof b) return false;
+  if (typeof a === "object") {
+    if (a.$tag !== undefined && b.$tag !== undefined) {
+      if (a.$tag !== b.$tag) return false;
+      const ka = Object.keys(a), kb = Object.keys(b);
+      if (ka.length !== kb.length) return false;
+      for (const k of ka) { if (k !== "$tag" && !$eq(a[k], b[k])) return false; }
+      return true;
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) { if (!$eq(a[i], b[i])) return false; }
+      return true;
+    }
+    const ka = Object.keys(a), kb = Object.keys(b);
+    if (ka.length !== kb.length) return false;
+    for (const k of ka) { if (!$eq(a[k], b[k])) return false; }
+    return true;
+  }
+  return false;
+}
+
+`)
 	}
 
 	// $compare: structural comparison — only if <, >, <=, >= operators are used
-	if g.usesCompare {
-		b.WriteString("function $compare(a, b) {\n  if (typeof a === \"number\" && typeof b === \"number\") return a < b ? -1 : a > b ? 1 : 0;\n  if (typeof a === \"string\" && typeof b === \"string\") return a < b ? -1 : a > b ? 1 : 0;\n  if (typeof a === \"boolean\" && typeof b === \"boolean\") return (a ? 1 : 0) - (b ? 1 : 0);\n  return 0;\n}\n\n")
+	if n.needsOp("Lt", "Gt", "Leq", "Geq") {
+		b.WriteString(`function $compare(a, b) {
+  if (typeof a === "number" && typeof b === "number") return a < b ? -1 : a > b ? 1 : 0;
+  if (typeof a === "string" && typeof b === "string") return a < b ? -1 : a > b ? 1 : 0;
+  if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
+  return 0;
+}
+
+`)
 	}
 
-	// $display: convert any value to string — only if println/print/toString/interpolation/error/todo are used
-	if g.usesDisplay {
-		b.WriteString("function $display(v) {\n  if (v === null) return \"()\";\n  if (typeof v === \"number\") return Number.isInteger(v) ? String(v) : String(v);\n  if (typeof v === \"string\") return v;\n  if (typeof v === \"boolean\") return v ? \"true\" : \"false\";\n  if (Array.isArray(v)) return \"(\" + v.map($display).join(\", \") + \")\";\n  if (typeof v === \"object\") {\n    if (v.$tag === \"Cons\") {\n      const items = [];\n      let cur = v;\n      while (cur !== null && cur.$tag === \"Cons\") { items.push($display(cur.head)); cur = cur.tail; }\n      return \"[\" + items.join(\", \") + \"]\";\n    }\n    if (v.$tag === \"Nil\") return \"[]\";\n    if (v.$tag !== undefined) {\n      const fields = Object.keys(v).filter(k => k !== \"$tag\" && k !== \"$type\");\n      if (fields.length === 0) return v.$tag;\n      return v.$tag + \" \" + fields.map(k => $display(v[k])).join(\" \");\n    }\n    const entries = Object.entries(v);\n    return \"{ \" + entries.map(([k, val]) => k + \" = \" + $display(val)).join(\", \") + \" }\";\n  }\n  return String(v);\n}\n\n")
+	// $display: convert any value to string — needed by println, print, toString,
+	// string interpolation, error, and todo
+	if n.needsDisplay() {
+		b.WriteString(`function $display(v) {
+  if (v === null) return "()";
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(v);
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return v ? "true" : "false";
+  if (Array.isArray(v)) return "(" + v.map($display).join(", ") + ")";
+  if (typeof v === "object") {
+    if (v.$tag === "Cons") {
+      const items = [];
+      let cur = v;
+      while (cur !== null && cur.$tag === "Cons") { items.push($display(cur.head)); cur = cur.tail; }
+      return "[" + items.join(", ") + "]";
+    }
+    if (v.$tag === "Nil") return "[]";
+    if (v.$tag !== undefined) {
+      const fields = Object.keys(v).filter(k => k !== "$tag" && k !== "$type");
+      if (fields.length === 0) return v.$tag;
+      return v.$tag + " " + fields.map(k => $display(v[k])).join(" ");
+    }
+    const entries = Object.entries(v);
+    return "{ " + entries.map(([k, val]) => k + " = " + $display(val)).join(", ") + " }";
+  }
+  return String(v);
+}
+
+`)
 	}
 
-	// $$apply: generic function application — only if unknown function calls exist
+	// $$apply: generic function application — discovered during emit when
+	// an unknown function variable is called
 	if g.usesApply {
-		b.WriteString("function $$apply(f, arg) {\n  return f(arg);\n}\n\n")
+		b.WriteString(`function $$apply(f, arg) {
+  return f(arg);
+}
+
+`)
 	}
 
 	// Individual builtins — only emit those that are used
 	var builtinLines []string
-	if g.usedBuiltins["println"] {
+	if n.needsName("println") {
 		builtinLines = append(builtinLines, "function $println(v) { console.log($display(v)); return null; }")
 	}
-	if g.usedBuiltins["print"] {
+	if n.needsName("print") {
 		builtinLines = append(builtinLines, "function $print(v) { console.log($display(v)); return null; }")
 	}
-	if g.usedBuiltins["showInt"] {
+	if n.needsName("showInt") {
 		builtinLines = append(builtinLines, "function $showInt(v) { return String(v); }")
 	}
-	if g.usedBuiltins["showFloat"] {
+	if n.needsName("showFloat") {
 		builtinLines = append(builtinLines, "function $showFloat(v) { return String(v); }")
 	}
-	if g.usedBuiltins["not"] {
+	if n.needsName("not") {
 		builtinLines = append(builtinLines, "function $not(v) { return !v; }")
 	}
-	if g.usedBuiltins["error"] {
-		builtinLines = append(builtinLines, "function $error(msg) { throw new Error(typeof msg === \"string\" ? msg : $display(msg)); }")
+	if n.needsName("error") {
+		builtinLines = append(builtinLines, `function $error(msg) { throw new Error(typeof msg === "string" ? msg : $display(msg)); }`)
 	}
-	if g.usedBuiltins["todo"] {
-		builtinLines = append(builtinLines, "function $todo(msg) { throw new Error(\"TODO: \" + (typeof msg === \"string\" ? msg : $display(msg))); }")
+	if n.needsName("todo") {
+		builtinLines = append(builtinLines, `function $todo(msg) { throw new Error("TODO: " + (typeof msg === "string" ? msg : $display(msg))); }`)
 	}
 	if len(builtinLines) > 0 {
 		b.WriteString(strings.Join(builtinLines, "\n"))
@@ -614,69 +685,180 @@ func (g *jsGen) emitRuntimeHelpers() string {
 	}
 
 	// String builtins — only emit those that are actually referenced
-	g.emitUsedStringFns(&b)
+	emitStringBuiltins(n, &b)
 
 	// Concurrency runtime — synchronous CPS actors
 	if g.usesConcurrency {
-		b.WriteString("// --- Actor runtime ---\nlet _pidCounter = 0;\nlet _currentPid = { ch: [], id: 0, _resume: null };\n\nfunction $spawn(f) {\n  const pid = { ch: [], id: ++_pidCounter, _resume: null };\n  const prevPid = _currentPid;\n  _currentPid = pid;\n  f(pid);\n  _currentPid = prevPid;\n  return pid;\n}\n\nfunction $send(pid, msg) {\n  if (pid._resume) {\n    const resume = pid._resume;\n    pid._resume = null;\n    const prevPid = _currentPid;\n    _currentPid = pid;\n    resume(msg);\n    _currentPid = prevPid;\n  } else {\n    pid.ch.push(msg);\n  }\n  return null;\n}\n\nfunction $receive_cps(pid, handler) {\n  if (pid.ch.length > 0) {\n    handler(pid.ch.shift());\n  } else {\n    pid._resume = handler;\n  }\n}\n\nfunction $call(targetPid, msgFn) {\n  const replyPid = { ch: [], id: ++_pidCounter, _resume: null };\n  const msg = msgFn(replyPid);\n  if (targetPid._resume) {\n    const resume = targetPid._resume;\n    targetPid._resume = null;\n    const prevPid = _currentPid;\n    _currentPid = targetPid;\n    resume(msg);\n    _currentPid = prevPid;\n  } else {\n    targetPid.ch.push(msg);\n  }\n  return replyPid.ch.shift();\n}\n\nfunction $getSelf() { return _currentPid; }\n\n")
+		b.WriteString(`// --- Actor runtime ---
+// spawn(f) runs f, which sets pid._resume = (msg) => { ... } and returns.
+// send(pid, msg) calls pid._resume(msg) synchronously.
+// call(pid, msgFn) sends and reads the reply from a buffer.
+let _pidCounter = 0;
+let _currentPid = { ch: [], id: 0, _resume: null };
+
+function $spawn(f) {
+  const pid = { ch: [], id: ++_pidCounter, _resume: null };
+  const prevPid = _currentPid;
+  _currentPid = pid;
+  f(pid);
+  _currentPid = prevPid;
+  return pid;
+}
+
+function $send(pid, msg) {
+  if (pid._resume) {
+    const resume = pid._resume;
+    pid._resume = null;
+    const prevPid = _currentPid;
+    _currentPid = pid;
+    resume(msg);
+    _currentPid = prevPid;
+  } else {
+    pid.ch.push(msg);
+  }
+  return null;
+}
+
+function $receive_cps(pid, handler) {
+  if (pid.ch.length > 0) {
+    handler(pid.ch.shift());
+  } else {
+    pid._resume = handler;
+  }
+}
+
+function $call(targetPid, msgFn) {
+  const replyPid = { ch: [], id: ++_pidCounter, _resume: null };
+  const msg = msgFn(replyPid);
+  if (targetPid._resume) {
+    const resume = targetPid._resume;
+    targetPid._resume = null;
+    const prevPid = _currentPid;
+    _currentPid = targetPid;
+    resume(msg);
+    _currentPid = prevPid;
+  } else {
+    targetPid.ch.push(msg);
+  }
+  return replyPid.ch.shift();
+}
+
+function $getSelf() { return _currentPid; }
+
+`)
 	}
 
 	// Js FFI runtime helpers
 	if g.usesJsFfi {
-		b.WriteString("// --- Std:Js FFI ---\nfunction $listToArray(lst) {\n  const arr = [];\n  while (lst !== null && lst.$tag === \"Cons\") { arr.push(lst.head); lst = lst.tail; }\n  return arr;\n}\nfunction $jsOk(v) { return {$tag: \"Ok\", $type: \"Result\", _0: v}; }\nfunction $jsErr(msg) { return {$tag: \"Err\", $type: \"Result\", _0: msg}; }\nfunction $jsGlobal(name) {\n  try { const v = globalThis[name]; if (v === undefined) return $jsErr(\"global not found: \" + name); return $jsOk(v); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsGet(prop, obj) {\n  try { return $jsOk(obj[prop]); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsSet(prop, obj, val) {\n  try { obj[prop] = val; return $jsOk(null); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsCall(method, args, obj) {\n  try { return $jsOk(obj[method](...$listToArray(args))); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsNew(name, args) {\n  try { const C = globalThis[name]; if (!C) return $jsErr(\"constructor not found: \" + name); return $jsOk(new C(...$listToArray(args))); }\n  catch(e) { return $jsErr(e.message); }\n}\nfunction $jsCallback(f) {\n  return (function() { return f(arguments[0] !== undefined ? arguments[0] : null); });\n}\nfunction $jsToString(v) {\n  if (typeof v === \"string\") return $jsOk(v);\n  return $jsErr(\"expected string, got \" + typeof v);\n}\nfunction $jsToInt(v) {\n  if (typeof v === \"number\" && Number.isInteger(v)) return $jsOk(v);\n  return $jsErr(\"expected integer, got \" + typeof v);\n}\nfunction $jsToFloat(v) {\n  if (typeof v === \"number\") return $jsOk(v);\n  return $jsErr(\"expected number, got \" + typeof v);\n}\nfunction $jsToBool(v) {\n  if (typeof v === \"boolean\") return $jsOk(v);\n  return $jsErr(\"expected boolean, got \" + typeof v);\n}\n\n")
+		b.WriteString(`// --- Std:Js FFI helpers ---
+function $listToArray(lst) {
+  const arr = [];
+  while (lst !== null && lst.$tag === "Cons") { arr.push(lst.head); lst = lst.tail; }
+  return arr;
+}
+function $jsOk(v) { return {$tag: "Ok", $type: "Result", _0: v}; }
+function $jsErr(msg) { return {$tag: "Err", $type: "Result", _0: msg}; }
+function $jsGlobal(name) {
+  try { const v = globalThis[name]; if (v === undefined) return $jsErr("global not found: " + name); return $jsOk(v); }
+  catch(e) { return $jsErr(e.message); }
+}
+function $jsGet(prop, obj) {
+  try { return $jsOk(obj[prop]); }
+  catch(e) { return $jsErr(e.message); }
+}
+function $jsSet(prop, obj, val) {
+  try { obj[prop] = val; return $jsOk(null); }
+  catch(e) { return $jsErr(e.message); }
+}
+function $jsCall(method, args, obj) {
+  try { return $jsOk(obj[method](...$listToArray(args))); }
+  catch(e) { return $jsErr(e.message); }
+}
+function $jsNew(name, args) {
+  try { const C = globalThis[name]; if (!C) return $jsErr("constructor not found: " + name); return $jsOk(new C(...$listToArray(args))); }
+  catch(e) { return $jsErr(e.message); }
+}
+function $jsCallback(f) {
+  return (function() { return f(arguments[0] !== undefined ? arguments[0] : null); });
+}
+function $jsToString(v) {
+  if (typeof v === "string") return $jsOk(v);
+  return $jsErr("expected string, got " + typeof v);
+}
+function $jsToInt(v) {
+  if (typeof v === "number" && Number.isInteger(v)) return $jsOk(v);
+  return $jsErr("expected integer, got " + typeof v);
+}
+function $jsToFloat(v) {
+  if (typeof v === "number") return $jsOk(v);
+  return $jsErr("expected number, got " + typeof v);
+}
+function $jsToBool(v) {
+  if (typeof v === "boolean") return $jsOk(v);
+  return $jsErr("expected boolean, got " + typeof v);
+}
+
+`)
 	}
 
 	return b.String()
 }
 
-// emitUsedStringFns emits only the string builtin functions that are actually referenced.
-func (g *jsGen) emitUsedStringFns(b *strings.Builder) {
-	if len(g.usedStringFns) == 0 {
-		return
-	}
-
+// emitStringBuiltins emits only the string builtin functions that are actually
+// referenced in the shaken IR.
+func emitStringBuiltins(n *jsNeeds, b *strings.Builder) {
 	type fnDef struct {
-		name string
-		code string
+		// irName is the name as it appears in the IR (AVar.Name)
+		irName string
+		code   string
 	}
 	defs := []fnDef{
-		{"stringLength", "function $stringLength(s) { return [...s].length; }"},
-		{"toUpper", "function $toUpper(s) { return s.toUpperCase(); }"},
-		{"toLower", "function $toLower(s) { return s.toLowerCase(); }"},
-		{"trim", "function $trim(s) { return s.trim(); }"},
-		{"trimLeft", "function $trimLeft(s) { return s.trimStart(); }"},
-		{"trimRight", "function $trimRight(s) { return s.trimEnd(); }"},
-		{"stringReverse", "function $stringReverse(s) { return [...s].reverse().join(\"\"); }"},
-		{"split", "function $split(sep, s) { return s.split(sep).reduceRight((t, h) => ({$tag: \"Cons\", head: h, tail: t}), null); }"},
-		{"join", "function $join(sep, lst) {\n  const items = [];\n  let cur = lst;\n  while (cur !== null && cur.$tag === \"Cons\") { items.push(cur.head); cur = cur.tail; }\n  return items.join(sep);\n}"},
-		{"contains", "function $contains(sub, s) { return s.includes(sub); }"},
-		{"startsWith", "function $startsWith(pfx, s) { return s.startsWith(pfx); }"},
-		{"endsWith", "function $endsWith(sfx, s) { return s.endsWith(sfx); }"},
-		{"replace", "function $replace(from, to, s) { return s.split(from).join(to); }"},
-		{"substring", "function $substring(start, end, s) { return [...s].slice(start, end).join(\"\"); }"},
-		{"repeat", "function $repeat(n, s) { return s.repeat(n); }"},
-		{"charAt", "function $charAt(i, s) { const chars = [...s]; return i >= 0 && i < chars.length ? {$tag: \"Just\", _0: chars[i], $type: \"Maybe\"} : {$tag: \"Nothing\", $type: \"Maybe\"}; }"},
-		{"indexOf", "function $indexOf(sub, s) { const i = s.indexOf(sub); return i >= 0 ? {$tag: \"Just\", _0: i, $type: \"Maybe\"} : {$tag: \"Nothing\", $type: \"Maybe\"}; }"},
-		{"padLeft", "function $padLeft(n, ch, s) { return s.padStart(n, ch); }"},
-		{"padRight", "function $padRight(n, ch, s) { return s.padEnd(n, ch); }"},
-		{"words", "function $words(s) { const ws = s.trim().split(/\\s+/).filter(x => x); return ws.reduceRight((t, h) => ({$tag: \"Cons\", head: h, tail: t}), null); }"},
-		{"lines", "function $lines(s) { const ls = s.split(/\\r?\\n/); return ls.reduceRight((t, h) => ({$tag: \"Cons\", head: h, tail: t}), null); }"},
-		{"charCode", "function $charCode(s) { return s.codePointAt(0) || 0; }"},
-		{"fromCharCode", "function $fromCharCode(n) { return String.fromCodePoint(n); }"},
-		{"stringParseInt", "function $stringParseInt(s) { const n = parseInt(s, 10); return isNaN(n) ? {$tag: \"Nothing\", $type: \"Maybe\"} : {$tag: \"Just\", _0: n, $type: \"Maybe\"}; }"},
-		{"stringParseFloat", "function $stringParseFloat(s) { const n = parseFloat(s); return isNaN(n) ? {$tag: \"Nothing\", $type: \"Maybe\"} : {$tag: \"Just\", _0: n, $type: \"Maybe\"}; }"},
-		{"stringToList", "function $stringToList(s) { return [...s].reduceRight((t, h) => ({$tag: \"Cons\", head: h, tail: t}), null); }"},
-		{"stringFromList", "function $stringFromList(lst) { const chars = []; let cur = lst; while (cur !== null && cur.$tag === \"Cons\") { chars.push(cur.head); cur = cur.tail; } return chars.join(\"\"); }"},
-		{"toFloat", "function $toFloat(n) { return n; }"},
+		{"Std$String$length", "function $stringLength(s) { return [...s].length; }"},
+		{"Std$String$toUpper", "function $toUpper(s) { return s.toUpperCase(); }"},
+		{"Std$String$toLower", "function $toLower(s) { return s.toLowerCase(); }"},
+		{"Std$String$trim", "function $trim(s) { return s.trim(); }"},
+		{"Std$String$trimLeft", "function $trimLeft(s) { return s.trimStart(); }"},
+		{"Std$String$trimRight", "function $trimRight(s) { return s.trimEnd(); }"},
+		{"Std$String$reverse", `function $stringReverse(s) { return [...s].reverse().join(""); }`},
+		{"Std$String$split", `function $split(sep, s) { return s.split(sep).reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }`},
+		{"Std$String$join", `function $join(sep, lst) {
+  const items = [];
+  let cur = lst;
+  while (cur !== null && cur.$tag === "Cons") { items.push(cur.head); cur = cur.tail; }
+  return items.join(sep);
+}`},
+		{"Std$String$contains", "function $contains(sub, s) { return s.includes(sub); }"},
+		{"Std$String$startsWith", "function $startsWith(pfx, s) { return s.startsWith(pfx); }"},
+		{"Std$String$endsWith", "function $endsWith(sfx, s) { return s.endsWith(sfx); }"},
+		{"Std$String$replace", "function $replace(from, to, s) { return s.split(from).join(to); }"},
+		{"Std$String$substring", `function $substring(start, end, s) { return [...s].slice(start, end).join(""); }`},
+		{"Std$String$repeat", "function $repeat(n, s) { return s.repeat(n); }"},
+		{"Std$String$charAt", `function $charAt(i, s) { const chars = [...s]; return i >= 0 && i < chars.length ? {$tag: "Just", _0: chars[i], $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }`},
+		{"Std$String$indexOf", `function $indexOf(sub, s) { const i = s.indexOf(sub); return i >= 0 ? {$tag: "Just", _0: i, $type: "Maybe"} : {$tag: "Nothing", $type: "Maybe"}; }`},
+		{"Std$String$padLeft", "function $padLeft(n, ch, s) { return s.padStart(n, ch); }"},
+		{"Std$String$padRight", "function $padRight(n, ch, s) { return s.padEnd(n, ch); }"},
+		{"Std$String$words", `function $words(s) { const ws = s.trim().split(/\s+/).filter(x => x); return ws.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }`},
+		{"Std$String$lines", `function $lines(s) { const ls = s.split(/\r?\n/); return ls.reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }`},
+		{"Std$String$charCode", "function $charCode(s) { return s.codePointAt(0) || 0; }"},
+		{"Std$String$fromCharCode", "function $fromCharCode(n) { return String.fromCodePoint(n); }"},
+		{"Std$String$parseInt", `function $stringParseInt(s) { const n = parseInt(s, 10); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }`},
+		{"Std$String$parseFloat", `function $stringParseFloat(s) { const n = parseFloat(s); return isNaN(n) ? {$tag: "Nothing", $type: "Maybe"} : {$tag: "Just", _0: n, $type: "Maybe"}; }`},
+		{"Std$String$toList", `function $stringToList(s) { return [...s].reduceRight((t, h) => ({$tag: "Cons", head: h, tail: t}), null); }`},
+		{"Std$String$fromList", `function $stringFromList(lst) { const chars = []; let cur = lst; while (cur !== null && cur.$tag === "Cons") { chars.push(cur.head); cur = cur.tail; } return chars.join(""); }`},
+		{"Std$Math$toFloat", "function $toFloat(n) { return n; }"},
 	}
 
+	var emitted bool
 	for _, d := range defs {
-		if g.usedStringFns[d.name] {
+		if n.names[d.irName] {
 			b.WriteString(d.code)
 			b.WriteByte('\n')
+			emitted = true
 		}
 	}
-	b.WriteByte('\n')
+	if emitted {
+		b.WriteByte('\n')
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -906,7 +1088,6 @@ func (g *jsGen) emitDispatchFunction(name string, cases []jsImplCase) {
 		}
 	}
 	g.w(`throw new Error("No trait instance for: " + $display(x));`)
-	g.usesDisplay = true
 	g.indent = 0
 	g.buf.WriteString("}\n\n")
 }
