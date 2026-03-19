@@ -13,6 +13,7 @@ import (
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/codegen"
 	"github.com/maggisk/rexlang/internal/ir"
+	"github.com/maggisk/rexlang/internal/lsp"
 	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
 	"github.com/maggisk/rexlang/internal/stdlib"
@@ -89,6 +90,10 @@ func main() {
 	}
 	if args[0] == "fmt" {
 		runFmt(args[1:])
+		return
+	}
+	if args[0] == "lsp" {
+		lsp.Run()
 		return
 	}
 	if args[0] == "install" {
