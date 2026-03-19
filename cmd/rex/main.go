@@ -538,6 +538,7 @@ func addAndInstallDep(projectRoot, gitURL, ref string) {
 // ---------------------------------------------------------------------------
 
 func showTypes(path string) {
+	path = resolveOverlayEntry(path)
 	srcRoot := setupSrcRoot(path)
 
 	source, err := readSourceWithOverlay(path)
@@ -800,6 +801,29 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	return binaryPath
 }
 
+// resolveOverlayEntry detects when the user passes a target-overlay file
+// (e.g., Foo.browser.rex or Foo.native.rex) and resolves to the base file.
+// Returns the (possibly resolved) path.
+func resolveOverlayEntry(path string) string {
+	knownTargets := []string{"native", "browser"}
+	ext := filepath.Ext(path)
+	base := strings.TrimSuffix(path, ext)
+	for _, t := range knownTargets {
+		suffix := "." + t
+		if strings.HasSuffix(base, suffix) {
+			basePath := strings.TrimSuffix(base, suffix) + ext
+			if _, err := os.Stat(basePath); err == nil {
+				fmt.Fprintf(os.Stderr, "Note: resolved %s → %s + %s overlay\n", filepath.Base(path), filepath.Base(basePath), t)
+				if targetMode == "native" && t != "native" {
+					targetMode = t
+				}
+				return basePath
+			}
+		}
+	}
+	return path
+}
+
 func readSourceWithOverlay(path string) (string, error) {
 	base, err := os.ReadFile(path)
 	if err != nil {
@@ -825,6 +849,7 @@ func readSourceWithOverlay(path string) (string, error) {
 // ---------------------------------------------------------------------------
 
 func compileFile(path string) {
+	path = resolveOverlayEntry(path)
 	srcRoot := setupSrcRoot(path)
 
 	source, err := readSourceWithOverlay(path)
@@ -916,6 +941,7 @@ func compileFile(path string) {
 // ---------------------------------------------------------------------------
 
 func compileGoFile(path string) {
+	path = resolveOverlayEntry(path)
 	srcRoot := setupSrcRoot(path)
 
 	source, err := os.ReadFile(path)
@@ -992,6 +1018,7 @@ func compileGoFile(path string) {
 // ---------------------------------------------------------------------------
 
 func compileJSFile(path string) {
+	path = resolveOverlayEntry(path)
 	srcRoot := setupSrcRoot(path)
 
 	source, err := readSourceWithOverlay(path)
@@ -1075,6 +1102,7 @@ func compileJSFile(path string) {
 // ---------------------------------------------------------------------------
 
 func runFile(path string, programArgs []string) {
+	path = resolveOverlayEntry(path)
 	srcRoot := setupSrcRoot(path)
 
 	source, err := readSourceWithOverlay(path)
@@ -1128,6 +1156,7 @@ func runFile(path string, programArgs []string) {
 // ---------------------------------------------------------------------------
 
 func buildBinary(path string, outPath string) {
+	path = resolveOverlayEntry(path)
 	srcRoot := setupSrcRoot(path)
 
 	src, err := readSourceWithOverlay(path)
@@ -1175,7 +1204,8 @@ func runTestsBatch(files []string, only string) bool {
 	}
 	var items []compiled
 	for _, path := range files {
-		srcRoot := setupSrcRoot(path)
+		path = resolveOverlayEntry(path)
+	srcRoot := setupSrcRoot(path)
 		src, err := readSourceWithOverlay(path)
 		if err != nil {
 			printTestErr(path, "error", err)
@@ -1278,6 +1308,7 @@ func runTestsBatch(files []string, only string) bool {
 // ---------------------------------------------------------------------------
 
 func runTests(path string, only string) bool {
+	path = resolveOverlayEntry(path)
 	srcRoot := setupSrcRoot(path)
 
 	src, err := readSourceWithOverlay(path)
