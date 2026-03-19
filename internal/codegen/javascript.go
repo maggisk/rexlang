@@ -544,12 +544,8 @@ func (n *jsNeeds) needsDisplay() bool {
 
 // needsJsFfi returns true if any Std:Js FFI builtin is referenced.
 func (n *jsNeeds) needsJsFfi() bool {
-	for name := range n.names {
-		if jsFfiBuiltin(name) != "" {
-			return true
-		}
-	}
-	return false
+	return n.needsName("jsGlobal", "jsGet", "jsSet", "jsCall", "jsNew",
+		"jsCallback", "jsToString", "jsToInt", "jsToFloat", "jsToBool", "jsNull")
 }
 
 // needsConcurrency returns true if actor primitives are referenced.
