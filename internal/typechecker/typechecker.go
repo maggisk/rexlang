@@ -114,47 +114,53 @@ func NewTypeChecker() *TypeChecker {
 
 // exprLine extracts the source line from an AST expression, if available.
 func exprLine(expr ast.Expr) int {
+	line, _ := exprPos(expr)
+	return line
+}
+
+// exprPos extracts the source line and column from an AST expression.
+func exprPos(expr ast.Expr) (int, int) {
 	switch e := expr.(type) {
 	case ast.Var:
-		return e.Line
+		return e.Line, 0
 	case ast.If:
-		return e.Line
+		return e.Line, e.Col
 	case ast.Let:
-		return e.Line
+		return e.Line, e.Col
 	case ast.LetPat:
-		return e.Line
+		return e.Line, e.Col
 	case ast.LetRec:
-		return e.Line
+		return e.Line, e.Col
 	case ast.Match:
-		return e.Line
+		return e.Line, e.Col
 	case ast.App:
-		return e.Line
+		return e.Line, 0
 	case ast.Binop:
-		return e.Line
+		return e.Line, 0
 	case ast.Fun:
-		return e.Line
+		return e.Line, 0
 	case ast.UnaryMinus:
-		return e.Line
+		return e.Line, 0
 	case ast.ListLit:
-		return e.Line
+		return e.Line, 0
 	case ast.TupleLit:
-		return e.Line
+		return e.Line, 0
 	case ast.RecordCreate:
-		return e.Line
+		return e.Line, 0
 	case ast.FieldAccess:
-		return e.Line
+		return e.Line, 0
 	case ast.RecordUpdate:
-		return e.Line
+		return e.Line, 0
 	case ast.StringInterp:
-		return e.Line
+		return e.Line, 0
 	case ast.TaggedTemplate:
-		return e.Line
+		return e.Line, 0
 	case ast.TestDecl:
-		return e.Line
+		return e.Line, 0
 	case ast.Assert:
-		return e.Line
+		return e.Line, 0
 	}
-	return 0
+	return 0, 0
 }
 
 func (tc *TypeChecker) fresh() types.Type {
@@ -417,8 +423,12 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 	defer func() {
 		if retErr != nil {
 			if te, ok := retErr.(*types.TypeError); ok && te.Line == 0 {
-				if line := exprLine(expr); line > 0 {
+				line, col := exprPos(expr)
+				if line > 0 {
 					te.Line = line
+				}
+				if col > 0 && te.Col == 0 {
+					te.Col = col
 				}
 			}
 		}
@@ -506,7 +516,11 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		}
 		s2, err := types.Unify(types.ApplySubst(s1, tc1), types.TBool)
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: "if condition must be Bool, got " + types.TypeToString(types.ApplySubst(s1, tc1))}
+			return nil, nil, types.TypeMismatch(
+				"if condition must be Bool",
+				"Bool",
+				types.TypeToString(types.ApplySubst(s1, tc1)),
+			)
 		}
 		s12 := types.ComposeSubst(s2, s1)
 		env12 := applySubstEnv(s12, env)
@@ -523,8 +537,14 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		s1234 := types.ComposeSubst(s4, s123)
 		s5, err := types.Unify(types.ApplySubst(s4, tt), types.ApplySubst(s4, te))
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("if branches have different types: %s vs %s",
-				types.TypeToString(types.ApplySubst(s4, tt)), types.TypeToString(types.ApplySubst(s4, te)))}
+			thenStr := types.TypeToString(types.ApplySubst(s4, tt))
+			elseStr := types.TypeToString(types.ApplySubst(s4, te))
+			return nil, nil, types.TypeMismatchWithHint(
+				"if branches have different types",
+				thenStr,
+				elseStr,
+				"The then branch has type "+thenStr+" but the else branch has type "+elseStr,
+			)
 		}
 		sFinal := types.ComposeSubst(s5, s1234)
 		return sFinal, types.ApplySubst(sFinal, tt), nil
@@ -550,8 +570,27 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		tr := tc.fresh()
 		s3, err := types.Unify(types.ApplySubst(s2, tf), types.TFun(ta, tr))
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("cannot apply %s to argument of type %s",
-				types.TypeToString(types.ApplySubst(s2, tf)), types.TypeToString(ta))}
+			funcTy := types.ApplySubst(s2, tf)
+			funcStr := types.TypeToString(funcTy)
+			argStr := types.TypeToString(ta)
+			// Extract expected argument type from function type if possible
+			expectedArg := ""
+			if con, ok := funcTy.(types.TCon); ok && con.Name == "Fun" && len(con.Args) == 2 {
+				expectedArg = types.TypeToString(con.Args[0])
+			}
+			if expectedArg != "" {
+				return nil, nil, types.TypeMismatchWithHint(
+					"the argument to this function is not what I expect",
+					expectedArg,
+					argStr,
+					"The function has type "+funcStr,
+				)
+			}
+			return nil, nil, types.TypeMismatch(
+				fmt.Sprintf("cannot apply %s to argument of type %s", funcStr, argStr),
+				funcStr,
+				argStr,
+			)
 		}
 		sFinal := types.ComposeSubst(s3, types.ComposeSubst(s2, s1))
 		return sFinal, types.ApplySubst(sFinal, tr), nil
@@ -608,8 +647,13 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 			}
 			s2, err := types.Unify(types.ApplySubst(s1, ti), types.ApplySubst(s1, tv))
 			if err != nil {
-				return nil, nil, &types.TypeError{Msg: fmt.Sprintf("list elements must all have the same type: expected %s, got %s",
-					types.TypeToString(types.ApplySubst(s1, tv)), types.TypeToString(types.ApplySubst(s1, ti)))}
+				expectedStr := types.TypeToString(types.ApplySubst(s1, tv))
+				foundStr := types.TypeToString(types.ApplySubst(s1, ti))
+				return nil, nil, types.TypeMismatch(
+					"list elements must all have the same type",
+					expectedStr,
+					foundStr,
+				)
 			}
 			s = types.ComposeSubst(s2, s1)
 			tv = types.ApplySubst(s, tv)
@@ -883,7 +927,11 @@ func (tc *TypeChecker) infer(env TypeEnv, typeDefs map[string]types.Type, subst 
 		}
 		s2, err := types.Unify(types.ApplySubst(s1, t), types.TBool)
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: "assert requires Bool, got " + types.TypeToString(types.ApplySubst(s1, t))}
+			return nil, nil, types.TypeMismatch(
+				"assert requires Bool",
+				"Bool",
+				types.TypeToString(types.ApplySubst(s1, t)),
+			)
 		}
 		return types.ComposeSubst(s2, s1), types.TUnit, nil
 
@@ -956,8 +1004,13 @@ func (tc *TypeChecker) inferBinop(env TypeEnv, typeDefs map[string]types.Type, s
 		s12 := types.ComposeSubst(s2, s1)
 		s3, err := types.Unify(types.ApplySubst(s12, tl), types.ApplySubst(s12, tr))
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("arithmetic type mismatch: %s vs %s",
-				types.TypeToString(types.ApplySubst(s12, tl)), types.TypeToString(types.ApplySubst(s12, tr)))}
+			leftStr := types.TypeToString(types.ApplySubst(s12, tl))
+			rightStr := types.TypeToString(types.ApplySubst(s12, tr))
+			return nil, nil, types.TypeMismatch(
+				fmt.Sprintf("arithmetic operands have different types"),
+				leftStr,
+				rightStr,
+			)
 		}
 		sFinal := types.ComposeSubst(s3, s12)
 		resultTy := types.ApplySubst(sFinal, tl)
@@ -965,10 +1018,18 @@ func (tc *TypeChecker) inferBinop(env TypeEnv, typeDefs map[string]types.Type, s
 			sFinal = types.ComposeSubst(types.Subst{tv.Name: types.TInt}, sFinal)
 			resultTy = types.TInt
 		} else if !typeIsInt(resultTy) && !typeIsFloat(resultTy) {
-			return nil, nil, &types.TypeError{Msg: "arithmetic requires Int or Float, got " + types.TypeToString(resultTy)}
+			return nil, nil, types.TypeMismatch(
+				"arithmetic requires Int or Float",
+				"Int or Float",
+				types.TypeToString(resultTy),
+			)
 		}
 		if op == "Mod" && !typeIsInt(resultTy) {
-			return nil, nil, &types.TypeError{Msg: "(%) requires Int operands, got " + types.TypeToString(resultTy)}
+			return nil, nil, types.TypeMismatch(
+				"(%) requires Int operands",
+				"Int",
+				types.TypeToString(resultTy),
+			)
 		}
 		return sFinal, resultTy, nil
 
@@ -979,7 +1040,11 @@ func (tc *TypeChecker) inferBinop(env TypeEnv, typeDefs map[string]types.Type, s
 		}
 		s2, err := types.Unify(types.ApplySubst(s1, tl), types.TString)
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: "(++) requires String, got " + types.TypeToString(types.ApplySubst(s1, tl))}
+			return nil, nil, types.TypeMismatch(
+				"(++) requires String",
+				"String",
+				types.TypeToString(types.ApplySubst(s1, tl)),
+			)
 		}
 		s12 := types.ComposeSubst(s2, s1)
 		s3, tr, err := tc.infer(applySubstEnv(s12, env), typeDefs, s12, e.Right)
@@ -989,7 +1054,11 @@ func (tc *TypeChecker) inferBinop(env TypeEnv, typeDefs map[string]types.Type, s
 		s123 := types.ComposeSubst(s3, s12)
 		s4, err := types.Unify(types.ApplySubst(s123, tr), types.TString)
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: "(++) requires String, got " + types.TypeToString(types.ApplySubst(s123, tr))}
+			return nil, nil, types.TypeMismatch(
+				"(++) requires String",
+				"String",
+				types.TypeToString(types.ApplySubst(s123, tr)),
+			)
 		}
 		return types.ComposeSubst(s4, s123), types.TString, nil
 
@@ -1000,7 +1069,11 @@ func (tc *TypeChecker) inferBinop(env TypeEnv, typeDefs map[string]types.Type, s
 		}
 		s2, err := types.Unify(types.ApplySubst(s1, tl), types.TBool)
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("(%s) requires Bool, got %s", op, types.TypeToString(types.ApplySubst(s1, tl)))}
+			return nil, nil, types.TypeMismatch(
+				fmt.Sprintf("(%s) requires Bool", ast.BinopSym[op]),
+				"Bool",
+				types.TypeToString(types.ApplySubst(s1, tl)),
+			)
 		}
 		s12 := types.ComposeSubst(s2, s1)
 		s3, tr, err := tc.infer(applySubstEnv(s12, env), typeDefs, s12, e.Right)
@@ -1010,7 +1083,11 @@ func (tc *TypeChecker) inferBinop(env TypeEnv, typeDefs map[string]types.Type, s
 		s123 := types.ComposeSubst(s3, s12)
 		s4, err := types.Unify(types.ApplySubst(s123, tr), types.TBool)
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("(%s) requires Bool, got %s", op, types.TypeToString(types.ApplySubst(s123, tr)))}
+			return nil, nil, types.TypeMismatch(
+				fmt.Sprintf("(%s) requires Bool", ast.BinopSym[op]),
+				"Bool",
+				types.TypeToString(types.ApplySubst(s123, tr)),
+			)
 		}
 		return types.ComposeSubst(s4, s123), types.TBool, nil
 
@@ -1026,8 +1103,13 @@ func (tc *TypeChecker) inferBinop(env TypeEnv, typeDefs map[string]types.Type, s
 		s12 := types.ComposeSubst(s2, s1)
 		s3, err := types.Unify(types.ApplySubst(s12, tl), types.ApplySubst(s12, tr))
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("comparison type mismatch: %s vs %s",
-				types.TypeToString(types.ApplySubst(s12, tl)), types.TypeToString(types.ApplySubst(s12, tr)))}
+			leftStr := types.TypeToString(types.ApplySubst(s12, tl))
+			rightStr := types.TypeToString(types.ApplySubst(s12, tr))
+			return nil, nil, types.TypeMismatch(
+				"comparison operands have different types",
+				leftStr,
+				rightStr,
+			)
 		}
 		return types.ComposeSubst(s3, s12), types.TBool, nil
 
@@ -1044,8 +1126,13 @@ func (tc *TypeChecker) inferBinop(env TypeEnv, typeDefs map[string]types.Type, s
 		listTh := types.TList(types.ApplySubst(s12, th))
 		s3, err := types.Unify(types.ApplySubst(s12, tt), listTh)
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("cons (::) type mismatch: tail must be [%s], got %s",
-				types.TypeToString(types.ApplySubst(s12, th)), types.TypeToString(types.ApplySubst(s12, tt)))}
+			headStr := types.TypeToString(types.ApplySubst(s12, th))
+			tailStr := types.TypeToString(types.ApplySubst(s12, tt))
+			return nil, nil, types.TypeMismatch(
+				"cons (::) type mismatch",
+				"["+headStr+"]",
+				tailStr,
+			)
 		}
 		sFinal := types.ComposeSubst(s3, s12)
 		return sFinal, types.ApplySubst(sFinal, listTh), nil
@@ -1534,8 +1621,13 @@ func (tc *TypeChecker) inferMatch(env TypeEnv, typeDefs map[string]types.Type, s
 		s = types.ComposeSubst(s1, s)
 		s2, err := types.Unify(types.ApplySubst(s, ts), types.ApplySubst(s, patTy))
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("pattern type mismatch: scrutinee is %s, pattern expects %s",
-				types.TypeToString(types.ApplySubst(s, ts)), types.TypeToString(types.ApplySubst(s, patTy)))}
+			scrutStr := types.TypeToString(types.ApplySubst(s, ts))
+			patStr := types.TypeToString(types.ApplySubst(s, patTy))
+			return nil, nil, types.TypeMismatch(
+				"pattern type mismatch",
+				scrutStr,
+				patStr,
+			)
 		}
 		s = types.ComposeSubst(s2, s)
 		appliedBindings := make(TypeEnv)
@@ -1550,8 +1642,14 @@ func (tc *TypeChecker) inferMatch(env TypeEnv, typeDefs map[string]types.Type, s
 		s = types.ComposeSubst(s3, s)
 		s4, err := types.Unify(types.ApplySubst(s, resultTv), types.ApplySubst(s, bodyTy))
 		if err != nil {
-			return nil, nil, &types.TypeError{Msg: fmt.Sprintf("match arms have different types: %s vs %s",
-				types.TypeToString(types.ApplySubst(s, resultTv)), types.TypeToString(types.ApplySubst(s, bodyTy)))}
+			expectedStr := types.TypeToString(types.ApplySubst(s, resultTv))
+			foundStr := types.TypeToString(types.ApplySubst(s, bodyTy))
+			return nil, nil, types.TypeMismatchWithHint(
+				"match arms have different types",
+				expectedStr,
+				foundStr,
+				"All arms of a match expression must return the same type",
+			)
 		}
 		s = types.ComposeSubst(s4, s)
 	}
@@ -2305,8 +2403,6 @@ var (
 	moduleCache   = map[string]*ModuleResult{}
 	moduleCacheMu sync.Mutex
 
-
-
 	srcRoot   string // absolute path to src/ directory (empty if not set)
 	srcRootMu sync.Mutex
 
@@ -2684,8 +2780,6 @@ func typeDefsForModule(name string) map[string]types.Type {
 	}
 	return nil
 }
-
-
 
 // TypeEnvForModule is the exported version of typeEnvForModule.
 func TypeEnvForModule(name string) TypeEnv {

@@ -11,13 +11,17 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/codegen"
-	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
+	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/typechecker"
 	"github.com/maggisk/rexlang/internal/types"
 )
+
+// version is set at build time via -ldflags "-X main.version=v1.2.3".
+// Falls back to "dev" for development builds and go install without ldflags.
+var version = "dev"
 
 // safeMode is set by the --safe flag; it promotes warnings (todo usage) to errors.
 var safeMode bool
@@ -46,6 +50,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "       rex --compile [--target=browser] <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex init | install")
 		os.Exit(1)
+	}
+
+	if args[0] == "--version" || args[0] == "-v" {
+		fmt.Printf("rex %s\n", version)
+		return
 	}
 
 	// Strip global flags before dispatching.
@@ -164,6 +173,8 @@ func stderrIsTTY() bool {
 var (
 	colorRed    string
 	colorYellow string
+	colorCyan   string
+	colorBold   string
 	colorReset  string
 )
 
@@ -171,6 +182,8 @@ func initColors() {
 	if stderrIsTTY() {
 		colorRed = "\033[31m"
 		colorYellow = "\033[33m"
+		colorCyan = "\033[36m"
+		colorBold = "\033[1m"
 		colorReset = "\033[0m"
 	}
 }
@@ -183,13 +196,119 @@ func init() {
 // Warning / error printing
 // ---------------------------------------------------------------------------
 
+// sourceLineAt returns the 1-indexed line from source, or "" if out of range.
+func sourceLineAt(source string, lineNum int) string {
+	if source == "" || lineNum <= 0 {
+		return ""
+	}
+	lines := strings.Split(source, "\n")
+	if lineNum > len(lines) {
+		return ""
+	}
+	return lines[lineNum-1]
+}
+
+// formatTypeError produces an Elm-style error message with source snippet.
+func formatTypeError(w *strings.Builder, kind, path string, te *types.TypeError) {
+	// Header line: -- TYPE MISMATCH -------------- src/Main.rex
+	dashPad := 40
+	headerLabel := strings.ToUpper(strings.ReplaceAll(kind, " ", " "))
+	header := fmt.Sprintf("-- %s ", headerLabel)
+	remaining := dashPad - len(header)
+	if remaining < 2 {
+		remaining = 2
+	}
+	if path != "" {
+		header += strings.Repeat("-", remaining) + " " + path
+	} else {
+		header += strings.Repeat("-", remaining+10)
+	}
+	fmt.Fprintf(w, "\n%s%s%s\n", colorCyan, header, colorReset)
+
+	// Error description
+	fmt.Fprintf(w, "\n%s\n", te.Msg)
+
+	// Source snippet with underline
+	source := te.Source
+	line := te.Line
+	if source != "" && line > 0 {
+		srcLine := sourceLineAt(source, line)
+		if srcLine != "" {
+			fmt.Fprintln(w)
+			lineNumStr := fmt.Sprintf("%d", line)
+			padding := strings.Repeat(" ", len(lineNumStr)+1)
+			// Show the source line
+			fmt.Fprintf(w, "%s%s| %s%s\n", colorCyan, lineNumStr, colorReset, srcLine)
+			// Show underline pointer — underline the whole line content (trimmed)
+			trimmed := strings.TrimLeft(srcLine, " \t")
+			leadingSpaces := len(srcLine) - len(trimmed)
+			underline := strings.Repeat(" ", leadingSpaces) + strings.Repeat("^", len(trimmed))
+			fmt.Fprintf(w, "%s%s%s%s\n", padding, colorRed, underline, colorReset)
+		}
+	}
+
+	// Expected / Found display
+	if te.Expected != "" || te.Found != "" {
+		fmt.Fprintln(w)
+		if te.Expected != "" {
+			fmt.Fprintf(w, "  %sExpected%s: %s%s%s\n", colorBold, colorReset, colorCyan, te.Expected, colorReset)
+		}
+		if te.Found != "" {
+			fmt.Fprintf(w, "  %sFound%s:    %s%s%s\n", colorBold, colorReset, colorRed, te.Found, colorReset)
+		}
+	}
+
+	// Hint
+	if te.Hint != "" {
+		fmt.Fprintf(w, "\n%s%s%s\n", colorYellow, te.Hint, colorReset)
+	}
+
+	fmt.Fprintln(w)
+}
+
+// printRichError prints an error with source snippets if the error is a TypeError.
+// If path and source are provided, they are attached to the TypeError for display.
+func printRichError(kind, path, source string, err error) {
+	te, isTypeErr := err.(*types.TypeError)
+	if !isTypeErr {
+		// Fall back to simple format for non-type errors
+		if path != "" {
+			fmt.Fprintf(os.Stderr, "%s%s%s: %s: %v\n", colorRed, kind, colorReset, path, err)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s%s%s: %v\n", colorRed, kind, colorReset, err)
+		}
+		return
+	}
+
+	// Attach file/source info if not already set
+	if te.File == "" && path != "" {
+		te.File = path
+	}
+	if te.Source == "" && source != "" {
+		te.Source = source
+	}
+
+	var w strings.Builder
+	formatTypeError(&w, kind, path, te)
+	fmt.Fprint(os.Stderr, w.String())
+}
+
 func printErr(kind string, err error) {
-	fmt.Fprintf(os.Stderr, "%s%s%s: %v\n", colorRed, kind, colorReset, err)
+	printRichError(kind, "", "", err)
+}
+
+func printErrWithSource(kind, path, source string, err error) {
+	printRichError(kind, path, source, err)
 }
 
 func printTestErr(path, kind string, err error) {
 	fmt.Println() // blank line to separate from any preceding test output
-	fmt.Fprintf(os.Stderr, "%s%s: %s%s: %v\n", colorRed, path, kind, colorReset, err)
+	printRichError(kind, path, "", err)
+}
+
+func printTestErrWithSource(path, kind, source string, err error) {
+	fmt.Println() // blank line to separate from any preceding test output
+	printRichError(kind, path, source, err)
 }
 
 func printWarnings(path string, warnings []typechecker.Warning) {
@@ -540,20 +659,20 @@ func showTypes(path string) {
 
 	exprs, err := parser.Parse(source)
 	if err != nil {
-		printErr("Parse error", err)
+		printErrWithSource("Parse error", path, source, err)
 		os.Exit(1)
 	}
 	if err := parser.ValidateToplevel(exprs); err != nil {
-		printErr("Syntax error", err)
+		printErrWithSource("Syntax error", path, source, err)
 		os.Exit(1)
 	}
 	if err := parser.ValidateIndentation(exprs); err != nil {
-		printErr("Indentation error", err)
+		printErrWithSource("Indentation error", path, source, err)
 		os.Exit(1)
 	}
 	exprs, err = typechecker.ReorderToplevel(exprs)
 	if err != nil {
-		printErr("Type error", err)
+		printErrWithSource("Type error", path, source, err)
 		os.Exit(1)
 	}
 
@@ -568,7 +687,7 @@ func showTypes(path string) {
 		typeEnv, warnings, err = typechecker.CheckProgram(exprs)
 	}
 	if err != nil {
-		printErr("Type error", err)
+		printErrWithSource("Type error", path, source, err)
 		os.Exit(1)
 	}
 	handleWarnings(path, warnings)
@@ -611,23 +730,23 @@ func showTypes(path string) {
 func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.TypeEnv, error) {
 	exprs, err := parser.Parse(source)
 	if err != nil {
-		printErr("Parse error", err)
+		printErrWithSource("Parse error", path, source, err)
 		return nil, nil, err
 	}
 
 	if err := parser.ValidateToplevel(exprs); err != nil {
-		printErr("Syntax error", err)
+		printErrWithSource("Syntax error", path, source, err)
 		return nil, nil, err
 	}
 
 	if err := parser.ValidateIndentation(exprs); err != nil {
-		printErr("Indentation error", err)
+		printErrWithSource("Indentation error", path, source, err)
 		return nil, nil, err
 	}
 
 	exprs, err = typechecker.ReorderToplevel(exprs)
 	if err != nil {
-		printErr("Type error", err)
+		printErrWithSource("Type error", path, source, err)
 		return nil, nil, err
 	}
 
@@ -643,14 +762,14 @@ func compileToIR(source, path string, testMode bool) (*ir.Program, typechecker.T
 		typeEnv, warnings, err = typechecker.CheckProgram(exprs)
 	}
 	if err != nil {
-		printErr("Type error", err)
+		printErrWithSource("Type error", path, source, err)
 		return nil, nil, err
 	}
 	handleWarnings(path, warnings)
 
 	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
 	if err != nil {
-		printErr("Import resolution error", err)
+		printErrWithSource("Import resolution error", path, source, err)
 		return nil, nil, err
 	}
 	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
@@ -828,29 +947,29 @@ func compileFile(path string) {
 	// Parse
 	exprs, err := parser.Parse(source)
 	if err != nil {
-		printErr("Parse error", err)
+		printErrWithSource("Parse error", path, source, err)
 		os.Exit(1)
 	}
 
 	if err := parser.ValidateToplevel(exprs); err != nil {
-		printErr("Syntax error", err)
+		printErrWithSource("Syntax error", path, source, err)
 		os.Exit(1)
 	}
 
 	if err := parser.ValidateIndentation(exprs); err != nil {
-		printErr("Indentation error", err)
+		printErrWithSource("Indentation error", path, source, err)
 		os.Exit(1)
 	}
 
 	exprs, err = typechecker.ReorderToplevel(exprs)
 	if err != nil {
-		printErr("Type error", err)
+		printErrWithSource("Type error", path, source, err)
 		os.Exit(1)
 	}
 
 	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
 	if err != nil {
-		printErr("Type error", err)
+		printErrWithSource("Type error", path, source, err)
 		os.Exit(1)
 	}
 	handleWarnings(path, warnings)
@@ -859,7 +978,7 @@ func compileFile(path string) {
 	// from imported modules so codegen has full program visibility.
 	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
 	if err != nil {
-		printErr("Import resolution error", err)
+		printErrWithSource("Import resolution error", path, source, err)
 		os.Exit(1)
 	}
 	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
@@ -994,36 +1113,36 @@ func compileJSFile(path string) {
 
 	exprs, err := parser.Parse(source)
 	if err != nil {
-		printErr("Parse error", err)
+		printErrWithSource("Parse error", path, source, err)
 		os.Exit(1)
 	}
 
 	if err := parser.ValidateToplevel(exprs); err != nil {
-		printErr("Syntax error", err)
+		printErrWithSource("Syntax error", path, source, err)
 		os.Exit(1)
 	}
 
 	if err := parser.ValidateIndentation(exprs); err != nil {
-		printErr("Indentation error", err)
+		printErrWithSource("Indentation error", path, source, err)
 		os.Exit(1)
 	}
 
 	exprs, err = typechecker.ReorderToplevel(exprs)
 	if err != nil {
-		printErr("Type error", err)
+		printErrWithSource("Type error", path, source, err)
 		os.Exit(1)
 	}
 
 	typeEnv, warnings, err := typechecker.CheckProgram(exprs)
 	if err != nil {
-		printErr("Type error", err)
+		printErrWithSource("Type error", path, source, err)
 		os.Exit(1)
 	}
 	handleWarnings(path, warnings)
 
 	importInfo, err := ir.ResolveImports(exprs, typechecker.GetSrcRoot(), targetMode, packageRoots)
 	if err != nil {
-		printErr("Import resolution error", err)
+		printErrWithSource("Import resolution error", path, source, err)
 		os.Exit(1)
 	}
 	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
@@ -1032,7 +1151,7 @@ func compileJSFile(path string) {
 	l := ir.NewLowerer()
 	prog, err := l.LowerProgram(allExprs)
 	if err != nil {
-		printErr("IR error", err)
+		printErrWithSource("IR error", path, source, err)
 		os.Exit(1)
 	}
 
@@ -1040,7 +1159,7 @@ func compileJSFile(path string) {
 
 	jsSrc, err := codegen.EmitJS(prog, typeEnv, importInfo.JsBindings, moduleMode)
 	if err != nil {
-		printErr("Codegen error", err)
+		printErrWithSource("Codegen error", path, source, err)
 		os.Exit(1)
 	}
 

@@ -13,8 +13,14 @@ import (
 
 // TypeError is raised during HM inference.
 type TypeError struct {
-	Msg  string
-	Line int // source line (0 = unknown)
+	Msg      string
+	Line     int    // source line (0 = unknown)
+	Col      int    // source column (0 = unknown)
+	File     string // file path (empty = unknown)
+	Source   string // full source text (for snippet display)
+	Expected string // expected type (for mismatch errors)
+	Found    string // found type (for mismatch errors)
+	Hint     string // additional help text
 }
 
 func (e *TypeError) Error() string {
@@ -26,6 +32,25 @@ func (e *TypeError) Error() string {
 
 func typeErr(format string, args ...interface{}) *TypeError {
 	return &TypeError{Msg: fmt.Sprintf(format, args...)}
+}
+
+// TypeMismatch creates a TypeError with Expected/Found fields for structured display.
+func TypeMismatch(msg, expected, found string) *TypeError {
+	return &TypeError{
+		Msg:      msg,
+		Expected: expected,
+		Found:    found,
+	}
+}
+
+// TypeMismatchWithHint creates a TypeError with Expected/Found/Hint fields.
+func TypeMismatchWithHint(msg, expected, found, hint string) *TypeError {
+	return &TypeError{
+		Msg:      msg,
+		Expected: expected,
+		Found:    found,
+		Hint:     hint,
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -314,7 +339,11 @@ func Unify(t1, t2 Type) (Subst, error) {
 			return Unify(t2, t1)
 		case TCon:
 			if a.Name != b.Name || len(a.Args) != len(b.Args) {
-				return nil, typeErr("type mismatch: %s vs %s", TypeToString(t1), TypeToString(t2))
+				return nil, TypeMismatch(
+					fmt.Sprintf("type mismatch: %s vs %s", TypeToString(t1), TypeToString(t2)),
+					TypeToString(t1),
+					TypeToString(t2),
+				)
 			}
 			subst := Subst{}
 			for i := range a.Args {
@@ -327,7 +356,11 @@ func Unify(t1, t2 Type) (Subst, error) {
 			return subst, nil
 		}
 	}
-	return nil, typeErr("cannot unify %s with %s", TypeToString(t1), TypeToString(t2))
+	return nil, TypeMismatch(
+		fmt.Sprintf("cannot unify %s with %s", TypeToString(t1), TypeToString(t2)),
+		TypeToString(t1),
+		TypeToString(t2),
+	)
 }
 
 // Generalize generalizes ty over type variables not free in env.
