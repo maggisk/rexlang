@@ -1,136 +1,467 @@
-# RexLang
+# Rex
 
-> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Go's speed. One binary. No runtime errors, and no human who fully understands this codebase — only our new AI overlords.
+```rex
+import Std:Http.Server (serve, html, json, text, segments, Request, Response)
+import Std:IO (println)
+import Std:Result (Ok, Err)
 
-A functional programming language with algebraic data types, pattern matching, and Hindley-Milner type inference. `rex file.rex` compiles your program to Go behind the scenes, builds a native binary, and runs it. Ships as a single static binary — Go is the only dependency. Additional compilation targets: **JavaScript** (browser) and **WasmGC** (in progress).
+type User = { name : String, role : String }
+
+handle : Request -> Response
+handle req =
+    match (req.method, segments req.path)
+        when ("GET", []) ->
+            html 200 "<h1>Welcome</h1>"
+        when ("GET", ["users", id]) ->
+            json 200 "{\"id\": \"${id}\"}"
+        when ("POST", ["users"]) ->
+            json 201 req.body
+        when _ ->
+            text 404 "not found"
+
+export main _ =
+    match serve 8080 handle
+        when Ok _ -> 0
+        when Err e -> let _ = println e in 1
+```
+
+A type-safe HTTP server in 20 lines. No null pointers, no unhandled exceptions, no runtime surprises. Every branch is checked at compile time.
+
+## What is Rex?
+
+Rex is a functional programming language that compiles to Go. It has algebraic data types, pattern matching, Hindley-Milner type inference, and Erlang-style actors. The compiler catches mistakes at compile time so your programs don't crash at runtime. Rex ships as a single binary and Go is the only dependency.
+
+> Twenty years of language design opinions, vibe coded into existence. Elm's elegance. Erlang's actors. Go's speed. One binary. No runtime errors, and no human who fully understands this codebase -- only our new AI overlords.
+
+## Install
+
+```bash
+go install github.com/maggisk/rexlang/cmd/rex@latest
+```
+
+That's it. Now you have the `rex` command.
 
 ## Quick start
 
 ```bash
-go build -o rex ./cmd/rex/
-
-./rex examples/io.rex                # run a program (requires main)
-./rex --test examples/factorial.rex  # run tests
-./rex --test --only="double" f.rex   # run only tests matching a pattern
-./rex --safe examples/io.rex         # --safe: reject any `todo` usage
-./rex --types Std:List               # show all exported types in a module
-./rex --types myfile.rex             # show all top-level binding types
-./rex --compile --target=browser src/Main.rex  # compile to JS for browser
+mkdir myapp && cd myapp
+rex init                          # creates rex.toml
+mkdir src
 ```
 
-## Language
+Create `src/Main.rex`:
 
-### Primitives
+```rex
+import Std:IO (println)
 
+export main _ =
+    let _ = println "Hello from Rex!"
+    in 0
 ```
+
+Run it:
+
+```bash
+rex src/Main.rex           # compiles to Go, builds, runs
+rex build src/Main.rex     # produces a standalone binary
+```
+
+## Features
+
+### Type inference
+
+Rex infers all types. Annotations are optional documentation:
+
+```rex
+double x = x * 2                      -- inferred: Int -> Int
+
+identity x = x                        -- inferred: a -> a
+
+names = ["Alice", "Bob", "Charlie"]    -- inferred: [String]
+```
+
+### Algebraic data types
+
+```rex
+type Shape = Circle Float | Rect Float Float
+
+area shape =
+    match shape
+        when Circle r ->
+            3.14159 * r * r
+        when Rect w h ->
+            w * h
+```
+
+Forget a case? The compiler rejects it. Every `match` must be exhaustive.
+
+### Pattern matching
+
+Match on anything: ADTs, tuples, lists, records, literals. Nest them freely.
+
+```rex
+import Std:Maybe (Just, Nothing)
+
+firstJust a b =
+    match (a, b)
+        when (Just x, _) ->
+            Just x
+        when (_, Just y) ->
+            Just y
+        when _ ->
+            Nothing
+```
+
+### Pipe operator
+
+```rex
+import Std:List (map, filter)
+import Std:Stream (from, take)
+
+-- first 5 even squares
+from 1
+    |> map (\x -> x * x)
+    |> filter (\x -> x % 2 == 0)
+    |> take 5
+-- [4, 16, 36, 64, 100]
+```
+
+### Actors
+
+Erlang-style concurrency with typed messages. On the Go backend, actors are goroutines.
+
+```rex
+import Std:Process (spawn, send, receive, call)
+
+type Msg = Inc | Get (Pid Int) | Stop
+
+counter =
+    spawn \me ->
+        let rec loop n =
+            match receive me
+                when Inc ->
+                    loop (n + 1)
+                when Get replyTo ->
+                    let _ = send replyTo n
+                    in loop n
+                when Stop ->
+                    ()
+        in loop 0
+
+_ = send counter Inc
+_ = send counter Inc
+_ = send counter Inc
+n = call counter Get        -- 3
+```
+
+### Traits
+
+```rex
+trait Describable a where
+    describe : a -> String
+
+impl Describable Int where
+    describe n =
+        if n > 0 then "positive"
+        else if n == 0 then "zero"
+        else "negative"
+```
+
+Constraint tracking is automatic. Use `sort` on a polymorphic list and the compiler infers `Ord a =>`:
+
+```rex
+import Std:List (sort)
+
+-- inferred: Ord a => [a] -> [a]
+mySort lst = sort lst
+```
+
+### Records
+
+```rex
+type Person = { name : String, age : Int }
+
+alice = Person { name = "Alice", age = 30 }
+alice.name                                    -- "Alice"
+bob = { alice | name = "Bob", age = 25 }      -- immutable update
+```
+
+### JSON decoding
+
+Elm-style composable decoders with path-tracked errors:
+
+```rex
+import Std:Json.Decode (decodeString, decode, with, field, string, int, bool)
+
+type Player = { name : String, score : Int, active : Bool }
+
+playerDecoder =
+    decode Player
+        |> with (field "name" string)
+        |> with (field "score" int)
+        |> with (field "active" bool)
+```
+
+### Built-in tests
+
+```rex
+double x = x * 2
+
+test "double works" =
+    assert (double 5 == 10)
+    assert (double 0 == 0)
+```
+
+```bash
+rex --test myfile.rex                  # run tests
+rex --test --only="double" myfile.rex  # filter by name
+rex --safe myfile.rex                  # reject any `todo` placeholders
+```
+
+### Browser compilation
+
+```bash
+rex --compile --target=browser src/Main.rex    # emits .js + .html
+```
+
+Actors compile to synchronous CPS on JavaScript. The `Std:Js` module provides browser FFI via an opaque `JsRef` type.
+
+## Go interop
+
+Rex compiles to Go, and the interop is designed to feel natural from both sides. Stdlib builtins are plain Go functions with an `external` declaration in Rex.
+
+### The type mapping
+
+| Rex type | Go type | Notes |
+| --- | --- | --- |
+| `Int` | `int64` | |
+| `Float` | `float64` | |
+| `String` | `string` | |
+| `Bool` | `bool` | |
+| `List a` | `*RexList` | Cons-cell linked list |
+| `Result ok String` | `(T, error)` | Go's idiomatic error pattern |
+| `Result Unit String` | `error` | When the success value is `()` |
+| `Maybe a` | `*T` | `nil` = `Nothing`, non-nil = `Just` |
+| ADTs | interface + structs | Each constructor is a struct implementing the interface |
+| Records | Go struct | Field names are exported |
+
+### Result maps to (T, error)
+
+When a Go function returns `(T, error)`, Rex sees it as `Result T String`. The compiler generates the wrapper automatically:
+
+**Go side** (`io.go`):
+
+```go
+func Std_IO_readFile(path string) (string, error) {
+    data, err := os.ReadFile(path)
+    if err != nil {
+        return "", err
+    }
+    return string(data), nil
+}
+```
+
+**Rex side** (`IO.rex`):
+
+```rex
+external readFile : String -> Result String String
+```
+
+**Usage:**
+
+```rex
+import Std:IO (readFile)
+import Std:Result (Ok, Err)
+
+match readFile "config.txt"
+    when Ok contents ->
+        parseConfig contents
+    when Err message ->
+        useDefaults ()
+```
+
+No exceptions, no panics. The Go `error` becomes a `Result` that the type system forces you to handle.
+
+### Maybe maps to pointer/nil
+
+A Go function returning a pointer maps to `Maybe`. `nil` becomes `Nothing`, non-nil becomes `Just`:
+
+**Go side** (`env.go`):
+
+```go
+func Std_Env_getEnv(name string) *string {
+    val, ok := os.LookupEnv(name)
+    if !ok {
+        return nil
+    }
+    return &val
+}
+```
+
+**Rex side** (`Env.rex`):
+
+```rex
+external getEnv : String -> Maybe String
+```
+
+**Usage:**
+
+```rex
+import Std:Env (getEnv)
+import Std:Maybe (Just, Nothing, withDefault)
+
+port = getEnv "PORT" |> withDefault "8080"
+```
+
+### ADTs map to interfaces
+
+Each Rex ADT becomes a Go interface with a tag method, and each constructor becomes a struct:
+
+```rex
+type Shape = Circle Float | Rect Float Float
+```
+
+Compiles to:
+
+```go
+type Rex_Shape interface{ tagRex_Shape() int }
+
+type Rex_Shape_Circle struct{ F0 float64 }
+func (Rex_Shape_Circle) tagRex_Shape() int { return 0 }
+
+type Rex_Shape_Rect struct{ F0, F1 float64 }
+func (Rex_Shape_Rect) tagRex_Shape() int { return 1 }
+```
+
+### Writing your own builtins
+
+1. Declare the type in your `.rex` file:
+
+```rex
+external myBuiltin : String -> Int -> Result String String
+```
+
+2. Write the Go companion function with the naming convention `Pkg_Module_name`:
+
+```go
+func Pkg_Module_myBuiltin(s string, n int64) (string, error) {
+    // Your Go code here
+    return result, nil
+}
+```
+
+The compiler generates a wrapper that handles type assertions and Result/Maybe conversion.
+
+## Standard library
+
+| Module | Highlights |
+| --- | --- |
+| `Std:List` | `map`, `filter`, `foldl`, `sort`, `zip`, `concat`, `find`, `partition`, 30+ functions |
+| `Std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `fromList`, `toList` |
+| `Std:Maybe` | `Just`/`Nothing`, `map`, `andThen`, `withDefault`, `orElse` |
+| `Std:Result` | `Ok`/`Err`, `map`, `andThen`, `withDefault`, `try` (catch div-by-zero) |
+| `Std:String` | `split`, `join`, `trim`, `replace`, `contains`, `parseInt`, 25+ functions |
+| `Std:Json` | `parse`/`stringify`, `Json` ADT with encode helpers |
+| `Std:Json.Decode` | Elm-style decoders: `field`, `map2`, `oneOf`, `andThen`, path-tracked errors |
+| `Std:IO` | `readFile`, `writeFile`, `listDir` -- all return `Result` |
+| `Std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
+| `Std:Process` | Actors: `spawn`, `send`, `receive`, `self`, `call` |
+| `Std:Parallel` | `pmap`, `pmapN` -- parallel map using actors |
+| `Std:Stream` | Lazy infinite sequences: `from`, `iterate`, `map`, `filter`, `take` |
+| `Std:Net` | TCP: `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite` |
+| `Std:Http.Server` | HTTP server with pattern-matching routing |
+| `Std:Math` | `abs`, `pow`, `sqrt`, trig, `log`, `pi`, `e`, `clamp` |
+| `Std:DateTime` | `Instant`/`Duration` opaque types, formatting, arithmetic |
+| `Std:Random` | Pure seed-based RNG + actor facade for stateful usage |
+| `Std:Bitwise` | `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shiftLeft`, `shiftRight` |
+| `Std:Convert` | `toResult`, `toMaybe`, `fromMaybe` -- cross-convert Maybe/Result |
+| `Std:Js` | Browser FFI: `JsRef`, `jsGlobal`, `jsGet`, `jsCall` (browser target only) |
+
+## CLI reference
+
+```bash
+rex src/Main.rex                               # compile and run
+rex build src/Main.rex                         # produce standalone binary
+rex --test src/Foo.rex                         # run tests
+rex --test --only="pattern" src/Foo.rex        # run matching tests
+rex --safe src/Main.rex                        # reject todo placeholders
+rex --types src/Foo.rex                        # show inferred types
+rex --types Std:List                           # show stdlib module types
+rex --compile --target=browser src/Main.rex    # compile to JS
+rex init                                       # create rex.toml
+rex install                                    # fetch dependencies
+rex install https://github.com/user/pkg main   # add git dependency
+rex install ../mylib                           # add local path dependency
+```
+
+## Language reference
+
+Full syntax and semantics are in the sections below. Click to expand.
+
+<details>
+<summary><strong>Primitives</strong></summary>
+
+```rex
 42          -- Int
 3.14        -- Float
 "hello"     -- String
 true        -- Bool
 ()          -- Unit
 
--- Number literal formats
 0xFF        -- hex Int (255)
 0o77        -- octal Int (63)
 0b1010      -- binary Int (10)
 1_000_000   -- underscores for readability
-0xFF_00_FF  -- underscores work with all formats
-3.141_592   -- underscores in floats too
 ```
 
-### Bindings and functions
+</details>
 
-```
+<details>
+<summary><strong>Functions and bindings</strong></summary>
+
+```rex
 x = 42
 add x y = x + y                  -- curried automatically
-fact n =
-    if n == 0 then
-        1
-    else
-        n * fact (n - 1)          -- self-recursion works automatically
 
--- Mutual recursion — just define them as separate bindings
+-- mutual recursion works automatically
 isEven n = if n == 0 then true else isOdd (n - 1)
 isOdd n = if n == 0 then false else isEven (n - 1)
 ```
 
-No `let` needed at the top level — just `name params = body`. Self-recursion and mutual recursion are handled automatically. Definition order doesn't matter — top-level bindings are sorted by dependency, and cycles are grouped into mutual recursion.
+No `let` needed at the top level. Definition order doesn't matter. Inside expressions, use `let`/`let rec` with `in`:
 
-Inside expressions, use `let`/`let rec` with `in`:
-
-```
--- Let-block: multiple bindings with a single `in`
+```rex
 let
     a = 3
     b = 4
     square x = x * x
 in square a + square b
-
--- let rec for local recursion
-let rec loop n = if n == 0 then 0 else loop (n - 1) in loop 10
 ```
 
-### Pattern matching
+</details>
 
-```
-match shape
-    when Circle r ->
-        3.14159 * r * r
-    when Rect w h ->
-        w * h
-```
+<details>
+<summary><strong>Type annotations</strong></summary>
 
-### Algebraic data types
+```rex
+double : Int -> Int
+double x = x * 2
 
-```
-type Shape = Circle float | Rect float float
-type Tree a = Leaf | Node (Tree a) a (Tree a)
-```
+identity : a -> a
+identity x = x
 
-### Records
-
-```
-type Person = { name : String, age : Int }
-
-alice = Person { name = "Alice", age = 30 }
-bob = Person "Bob" 25           -- positional constructor
-alice.name    -- "Alice"
-
--- update (creates a new record)
-bob2 = { alice | name = "Bob", age = 25 }
-
--- nested update via dot-path
-type Address = { city : String, zip : String }
-type PersonFull = { name : String, addr : Address }
-p2 = { person | addr.city = "LA" }
-
--- pattern matching
-match alice
-    when Person { name = n } ->
-        n
-
--- parametric records
-type Pair a b = { fst : a, snd : b }
-p = Pair { fst = 1, snd = "hello" }
-p.fst    -- 1
+sort : Ord a => [a] -> [a]
+sort lst = ...
 ```
 
-Records are nominal — tied to a `type` declaration. The type name doubles as a positional constructor function (`Person "Alice" 30`), which supports partial application and can be passed as a higher-order function (e.g., `map2 Person ...`). Updates with `{ rec | field = val }` are immutable — they return a new record. Nested dot-paths (`addr.city`) recursively update inner records.
+Annotations go on a separate line before the binding. If the annotation contradicts the inferred type, you get an error.
 
-### Type aliases
+</details>
 
-```
-type alias Name = String
-type alias Predicate a = a -> Bool
-type alias Pair a b = (a, b)
-type alias IntList = [Int]
-```
+<details>
+<summary><strong>Lists and tuples</strong></summary>
 
-Type aliases are transparent — `Name` and `String` are fully interchangeable. They support type parameters and work with annotations.
-
-### Lists and tuples
-
-```
+```rex
 xs = [1, 2, 3]
 pair = (42, "hello")
 
@@ -141,46 +472,26 @@ match xs
         h + sum t
 ```
 
-### Pipe operator
+</details>
 
-```
-[1, 2, 3, 4, 5]
-    |> filter (\x -> x > 2)
-    |> map (\x -> x * 10)
-    |> sum
-```
+<details>
+<summary><strong>String interpolation</strong></summary>
 
-### String interpolation
-
-```
+```rex
 name = "Rex"
 version = 1
 "Hello, ${name}! Version ${version}"    -- "Hello, Rex! Version 1"
-"Escaped: \${not interpolated}"         -- "Escaped: ${not interpolated}"
 "Expr: ${1 + 2 + 3}"                   -- "Expr: 6"
 ```
 
-Expressions inside `${...}` are converted to strings via the `Show` trait. Strings without `${` are unchanged. Use `\$` to produce a literal `$`.
+Expressions inside `${...}` are converted to strings via the `Show` trait.
 
-### Multi-line strings
+</details>
 
-```
-poem = """
-Roses are red
-Violets are blue
-"""
+<details>
+<summary><strong>Multi-line strings</strong></summary>
 
-greeting = """
-Hello, ${name}!
-Welcome to RexLang.
-"""
-```
-
-Triple-quoted strings (`"""..."""`) can span multiple lines. The first newline after the opening `"""` is stripped (so content starts on the next line). Escape sequences and `${expr}` interpolation work the same as regular strings. A lone `"` or `""` inside the string is fine — only `"""` closes it.
-
-Use `dedent` from `Std:String` to strip common leading whitespace:
-
-```
+```rex
 import Std:String (dedent)
 
 html = dedent """
@@ -188,389 +499,127 @@ html = dedent """
         <p>hello</p>
     </div>
     """
--- "<div>\n    <p>hello</p>\n</div>\n"
 ```
 
-### Type annotations
+</details>
 
-Type annotations are optional — RexLang has full type inference. But they serve as documentation and catch mistakes early:
+<details>
+<summary><strong>Imports and modules</strong></summary>
 
-```
-double : Int -> Int
-double x = x * 2
-
-identity : a -> a
-identity x = x
-
-fact : Int -> Int
-fact n =
-    if n == 0 then
-        1
-    else
-        n * fact (n - 1)
-```
-
-Annotations go on a separate line before the binding. If the annotation doesn't match the inferred type, you get a clear error. Annotations can also constrain polymorphic types — `identity : Int -> Int` narrows `a -> a` to `Int -> Int`. Trait constraints use `=>` syntax: `sort : Ord a => [a] -> [a]`.
-
-### Traits (typeclasses)
-
-```
-trait Describable a where
-    describe : a -> String
-
-impl Describable Int where
-    describe n = "the number " ++ show n
-```
-
-The prelude provides `Eq`, `Ord`, `Show`, and `Ordering` with instances for `Int`, `Float`, `String`, `Bool`, lists, tuples, `Maybe`, and `Result`.
-
-Trait constraints are tracked at compile time. When a function uses a trait method on a polymorphic value, the constraint is inferred automatically and propagated to callers:
-
-```
--- inferred as: Ord a => [a] -> [a]
-mySort lst = sort lst
-
--- optional annotation syntax (single or multiple constraints)
-showMin : (Ord a, Show a) => a -> a -> String
-showMin x y =
-    if compare x y == LT then
-        show x
-    else
-        show y
-```
-
-Calling a constrained function with a type that lacks the required instance is a compile-time error:
-
-```
-sort [(\x -> x)]    -- Error: no Ord instance for type a -> a
-```
-
-### Imports and modules
-
-```
--- Standard library (Std: namespace)
+```rex
+-- Standard library
 import Std:List (map, filter, foldl)
 import Std:Map as M
 
-m = M.fromList [("a", 1), ("b", 2)]
-M.lookup "a" m    -- Just 1
-
--- User modules (resolved from src/ directory)
+-- User modules (from src/ directory)
 import Utils (double, greet)
 import Lib.Helpers as H
 
-H.sumDoubles [1, 2, 3]    -- 12
+-- Package modules
+import mylib:Parser (parse)
 ```
 
-User modules use absolute paths from a `src/` directory in the project root. Dots map to directories: `import Lib.Helpers` resolves to `src/Lib/Helpers.rex`. The entry file must be inside `src/` for user module imports to work. Circular imports produce a clear error.
+</details>
 
-### Packages
+<details>
+<summary><strong>Exports and opaque types</strong></summary>
 
-Rex uses `rex.toml` for project dependencies:
+```rex
+export add
+add x y = x + y
+
+export type Shape = Circle Float | Rect Float Float
+
+-- Opaque: type name exported, constructors hidden
+export opaque type Email = Email String
+
+export
+make : String -> Email
+make s = Email s
+```
+
+</details>
+
+<details>
+<summary><strong>Error handling</strong></summary>
+
+IO functions return `Result` instead of raising. There are no exceptions.
+
+```rex
+import Std:IO (readFile)
+import Std:Result (Ok, Err, withDefault)
+
+contents = withDefault "" (readFile "data.txt")
+```
+
+`todo` serves as a development placeholder. It type-checks as any type but throws at runtime. The compiler warns, and `--safe` makes it an error:
+
+```rex
+handle x = todo "implement later"
+```
+
+</details>
+
+<details>
+<summary><strong>Packages</strong></summary>
 
 ```toml
+# rex.toml
 [dependencies]
 mylib = { git = "https://github.com/user/mylib.git", ref = "main" }
 utils = { path = "../utils" }
 ```
 
 ```bash
-rex init                             # create rex.toml
-rex install                          # fetch all dependencies
-rex install https://github.com/u/pkg main  # add a git dependency
-rex install ../utils                 # add a local path dependency
+rex init                                       # create rex.toml
+rex install                                    # fetch all dependencies
+rex install https://github.com/user/pkg main   # add git dependency
+rex install ../utils                           # add local path dependency
 ```
 
-Import package modules with the package name as namespace:
-
-```
-import mylib:Parser (parse, fromString)
-import utils:Helpers as H
-```
-
-Git dependencies are cloned to `rex_modules/`. Path dependencies resolve directly. Use `rex.local.toml` (gitignored) to override git deps with local paths during development.
-
-### Exports
-
-Use `export` to make bindings visible to importers. Place it on its own line before the definition:
-
-```
-export add
-add x y = x + y
-
-helper x = x * 2       -- not exported (module-internal)
-```
-
-For types and traits, use `export type` / `export trait` inline:
-
-```
-export type Shape = Circle Float | Rect Float Float
-```
-
-### Opaque types
-
-Use `export opaque type` to export a type without its constructors. Consumers can use the type in annotations but can't construct or destructure values directly — they must go through your exported functions:
-
-```
--- Email.rex
-export opaque type Email = Email String
-
-export
-make : String -> Email
-make s = Email s
-
-export
-toString : Email -> String
-toString e =
-    match e
-        when Email s ->
-            s
-```
-
-From the outside:
-
-```
-import Email (make, toString)
-
-email = make "alice@example.com"    -- OK: smart constructor
-s = toString email                  -- OK: exported accessor
-x = Email "hack"                    -- Error: Email constructor not exported
-```
-
-Works with both ADTs and records. For opaque records, field access (`.field`) is also blocked.
-
-### Entry point
-
-Programs run with `./rex file.rex` need a `main` function that takes command-line args and returns an exit code:
-
-```
-import Std:IO (println)
-
-main args =
-    let _ = println "Hello, world!"
-    in 0
-```
-
-`main` must have type `List String -> Int`. Use `_` to ignore args: `main _ = 0`.
-
-Only declarations are allowed at the top level — bare expressions like `1 + 2` are rejected.
-
-### Built-in test framework
-
-```
-double x = x * 2
-
-test "double works" =
-    assert (double 5 == 10)
-    assert (double 0 == 0)
-```
-
-Run with `--test` (no `main` required):
-
-```bash
-./rex --test myfile.rex
-```
-
-Tests are parsed and type-checked in normal mode but only executed with `--test`. Test bodies are isolated — bindings don't leak.
-
-### Error handling
-
-IO functions return `Result` instead of raising; `getEnv` returns `Maybe`:
-
-```
-import Std:Result (withDefault)
-
-contents = withDefault "" (readFile "data.txt")
-```
-
-### `todo` — development placeholders
-
-Use `todo` as a placeholder for unfinished code. It type-checks as any type but throws at runtime:
-
-```
-handle x = todo "implement error handling"
-```
-
-The compiler warns whenever `todo` appears. Use `--safe` to promote warnings to errors — ideal for CI:
-
-```bash
-./rex --safe myprogram.rex          # errors on any todo
-./rex --safe --test myfile.rex      # same for tests
-```
-
-### Comments
-
-```
--- single line comment
-```
-
-## Style
-
-Branch bodies always go on the next indented line — never on the same line as `->`, `then`, or `else`. Inspired by Elm.
-
-```
-if n == 0 then
-    []
-else
-    n :: countdown (n - 1)
-```
-
-## Type safety
-
-RexLang's type system (Hindley-Milner) catches type errors at compile time —
-before your program runs. The goal is to eliminate runtime errors entirely.
-
-What the type system catches today:
-
-- Type mismatches — wrong argument types, applying non-functions, arithmetic on strings
-- Unbound variables — referencing names that don't exist
-- Module errors — importing non-existent modules or unexported names
-- Annotation mismatches — declared type contradicts inferred type
-
-What can still fail at runtime:
-
-- **`todo`** — development placeholder; throws at runtime but the compiler warns, and `--safe` rejects it entirely
-- **Division by zero** — `x / 0` (value-dependent, inherently runtime). Use `try` from `Std:Result` to recover:
-
-```
-import Std:Result (try, Ok, Err, DivisionByZero, ModuloByZero)
-
-match try (\_ -> 10 / 0)
-    when Ok n ->
-        n
-    when Err (DivisionByZero) ->
-        0
-    when Err (ModuloByZero) ->
-        0
-```
-
-- **Missing trait instance on inner types** — `[Int -> Int] == [Int -> Int]` passes because the outer type (`List`) has an `Eq` instance, but fails at runtime because `Int -> Int` doesn't. Full inner constraint propagation is planned.
-
-Non-exhaustive patterns are caught at compile time — `match` expressions on ADTs, bools, and lists must cover all constructors, and literal/tuple patterns require a catch-all `_ ->` arm. Refutable patterns in `let` bindings are also rejected. IO operations like `readFile` and `getEnv` don't crash — they return `Result` or `Maybe`. Actor mailboxes are unbounded (Erlang-style) so `send` never fails.
-
-## Standard library
-
-| Module | Contents |
-| --- | --- |
-| `Std:List` | `map`, `filter`, `foldl`, `foldr`, `take`, `drop`, `reverse`, `append`, `concat`, `concatMap`, `zip`, `intersperse`, `partition`, `sum`, `product`, `any`, `all`, `isEmpty`, `repeat`, `range`, `head`, `tail`, `last`, `init`, `nth`, `find`, `indexedMap`, `maximum`, `minimum`, `length` |
-| `Std:Map` | AVL tree sorted map: `insert`, `lookup`, `remove`, `member`, `update`, `size`, `isEmpty`, `filter`, `map`, `foldl`, `foldr`, `fromList`, `toList`, `singleton`, `keys`, `values` |
-| `Std:Maybe` | `Maybe`, `Just`, `Nothing`, `isNothing`, `isSome`, `fromMaybe`, `map`, `andThen`, `withDefault`, `filter`, `orElse` |
-| `Std:Result` | `Ok`/`Err`, `map`, `mapErr`, `andThen`, `withDefault`, `isOk`, `isErr`, `try` (catch div/mod by zero), `RuntimeError` ADT |
-| `Std:Convert` | `toResult` (Maybe→Result), `toMaybe` (Result→Maybe), `fromMaybe` (Maybe→Result) |
-| `Std:Json` | `parse` (String → Result Json String), `stringify` (Json → String), `encodeNull`, `encodeBool`, `encodeNum`, `encodeStr`, `encodeArr`, `encodeObj`, `getField`; `type Json = JNull \| JBool Bool \| JStr String \| JNum Float \| JArr [Json] \| JObj [(String, Json)]` |
-| `Std:Json.Decode` | Elm-style decoder combinators: `decodeString`, `field`, `at`, `index`, `string`, `int`, `float`, `bool`, `null`, `list`, `dict`, `map`, `map2`, `decode`, `with`, `andThen`, `oneOf`, `maybe`, `succeed`, `fail`; structured `DecodeError` record with path tracking; `errorToString` |
-| `Std:String` | `length`, `toUpper`, `toLower`, `trim`, `split`, `join`, `toString`, `contains`, `startsWith`, `endsWith`, `isEmpty`, `charAt`, `substring`, `indexOf`, `replace`, `take`, `drop`, `repeat`, `padLeft`, `padRight`, `words`, `lines`, `charCode`, `fromCharCode`, `parseInt`, `parseFloat`, `dedent` |
-| `Std:Math` | `abs`, `min`, `max`, `pow`, `sqrt`, trig, `log`, `exp`, `pi`, `e`, `clamp`, `degrees`, `radians`, `logBase` |
-| `Std:IO` | `readFile`, `writeFile`, `appendFile`, `fileExists`, `listDir` (all return `Result`) |
-| `Std:Env` | `getEnv` (returns `Maybe`), `getEnvOr`, `args` |
-| `Std:Process` | `spawn`, `send`, `receive`, `self`, `call` — actor-model concurrency with typed messages |
-| `Std:Parallel` | `pmap`, `pmapN`, `numCPU` — parallel map over lists using actors; bounded parallelism via chunking |
-| `Std:Stream` | Lazy streams: `fromList`, `repeat`, `iterate`, `from`, `range`, `map`, `filter`, `flatMap`, `take`, `drop`, `takeWhile`, `dropWhile`, `zip`, `zipWith`, `toList`, `foldl`, `head`, `isEmpty`, `indexedMap` — supports infinite sequences |
-| `Std:Net` | TCP networking: `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener` — opaque `Listener`/`Conn` types; all operations return `Result` |
-| `Std:Random` | Pure seed-based RNG (`rngMake`, `rngInt`, `rngFloat`, `rngBool`, `rngList`) and actor facade (`randomInt`, `randomFloat`, `randomBool`, `shuffle`) — xorshift32; opaque `Rng` type |
-| `Std:Bitwise` | `bitAnd`, `bitOr`, `bitXor`, `bitNot`, `shiftLeft`, `shiftRight` — bitwise operations on `Int` |
-| `Std:DateTime` | `now`, `fromMillis`, `fromParts`, `fromLocalParts`, `parse`, `toMillis`, `toParts`, `toLocalParts`, `format`, `formatLocal`, `weekday`, `add`, `sub`, `diff`; duration constructors `milliseconds`, `seconds`, `minutes`, `hours`, `days`; opaque `Instant`/`Duration` types, `DateTimeParts` record, `Weekday` ADT |
-| `Std:Http.Server` | `httpServe` — HTTP server with pattern matching on `(method, segments path)` for routing; `Request`/`Response` records; response helpers |
-| `Std:Js` | Browser JS FFI: `JsRef` opaque type, `jsGlobal`, `jsGet`, `jsSet`, `jsCall`, `jsNew`, `jsCallback`, `jsFrom*`/`jsTo*` conversions, `jsNull` — browser-only via target overlay |
+</details>
 
 ## Examples
 
-| File | Description |
+The `examples/` directory has runnable code for every feature:
+
+| File | What it shows |
 | --- | --- |
-| `examples/factorial.rex` | Recursive factorial |
-| `examples/fibonacci.rex` | Recursive Fibonacci |
-| `examples/adt.rex` | Algebraic data types |
-| `examples/pattern_match.rex` | Pattern matching on multiple types |
-| `examples/higher_order.rex` | Higher-order functions |
-| `examples/pipe.rex` | Pipe operator `\|>` |
-| `examples/list.rex` | List stdlib |
-| `examples/tuple.rex` | Tuples and destructuring |
-| `examples/mutual_recursion.rex` | Mutual recursion (auto-detected) |
-| `examples/traits.rex` | Traits, parameterized instances, and compile-time constraint tracking |
-| `examples/map.rex` | `Std:Map` sorted map |
-| `examples/interpolation.rex` | String interpolation with `${expr}` |
-| `examples/import.rex` | Module imports (selective and qualified) |
-| `examples/maybe.rex` | `Maybe` type from `Std:Maybe` |
-| `examples/io.rex` | File I/O with `Result` |
-| `examples/string.rex` | String stdlib |
-| `examples/math.rex` | Math stdlib |
-| `examples/floats.rex` | Float arithmetic |
-| `examples/modulo.rex` | Modulo operator |
-| `examples/annotations.rex` | Optional type annotations |
-| `examples/type_alias.rex` | Type aliases: simple, parametric, function types |
-| `examples/records.rex` | Records: creation, access, update, nested dot-paths |
-| `examples/actors.rex` | Actor-model concurrency with `Std:Process` |
-| `examples/parallel.rex` | Parallel map with `Std:Parallel` |
-| `examples/stream.rex` | Lazy streams with `Std:Stream` |
-| `examples/multiline.rex` | Multi-line strings with `"""` |
-| `examples/number_literals.rex` | Hex, octal, binary literals and underscore separators |
-| `examples/let_block.rex` | Let-blocks with multiple bindings |
-| `examples/forward_ref.rex` | Forward references between top-level bindings |
-| `examples/testing.rex` | Built-in test framework |
-| `examples/json_decode.rex` | JSON decoder combinators with `Std:Json.Decode` |
-| `examples/http.rex` | HTTP server with `Std:Http.Server` |
-| `examples/tcp_echo.rex` | TCP echo server with `Std:Net` and `Std:Process` |
-| `examples/user_modules/` | User module imports with `src/` directory |
+| `http.rex` | HTTP server with pattern-matching routing |
+| `actors.rex` | Stateful counter actor with typed messages |
+| `tcp_echo.rex` | TCP echo server with `Std:Net` and actors |
+| `json_decode.rex` | Elm-style JSON decoder combinators |
+| `pattern_match.rex` | Exhaustive matching on ADTs, tuples, lists, nested types |
+| `traits.rex` | Custom traits, parameterized instances, constraint tracking |
+| `parallel.rex` | Parallel map with `Std:Parallel` |
+| `stream.rex` | Lazy infinite sequences |
+| `records.rex` | Records: creation, access, update, nested dot-paths |
+| `pipe.rex` | Pipe operator `\|>` |
+| `adt.rex` | Algebraic data types |
+| `io.rex` | File I/O with `Result` |
+| `testing.rex` | Built-in test framework |
+
+Run any example:
+
+```bash
+rex examples/http.rex              # run (needs main)
+rex --test examples/traits.rex     # run tests
+```
 
 ## Running tests
 
 ```bash
-./rex --test internal/stdlib/rexfiles/*.rex   # stdlib tests
-./rex --test --only="length" myfile.rex       # run only matching tests
-go test ./...                                 # Go-level tests
-make test                                     # everything
+rex --test internal/stdlib/rexfiles/*.rex   # stdlib tests
+go test ./...                               # Go-level tests
+make test                                   # everything
 ```
 
-## Roadmap
+## Status
 
-### Language
+Rex is a personal project. The language is usable and has a real standard library, but it is not yet stable. Expect breaking changes.
 
-- [x] Records — nominal records with field access, pattern matching, update syntax with nested dot-paths
-- [x] String interpolation — `"hello ${name}"` with `Show` trait dispatch
-- [x] Multi-line strings — `"""..."""` triple-quoted strings
-- [x] Type aliases — `type alias Name = String`
-- [x] Traits v2 — parameterized instances (`impl Show (List a)`), compile-time constraint tracking (`Ord a => ...`)
-- [x] Exhaustiveness checking — reject non-exhaustive `match` at compile time; refutable `let` patterns rejected
-- [x] `--types` flag — show inferred types for all bindings in a file or stdlib module (`./rex --types Std:List`)
-- [x] Type annotations — optional `add : Int -> Int -> Int` before binding
-- [x] Let-blocks — `let` with indented bindings terminated by `in`
-- [x] Bare top-level bindings — `name params = body` (no `let` needed); implicit self and mutual recursion
-- [x] `todo` builtin — development placeholder; `--safe` flag rejects it for CI/deploy
-- [x] User modules — import your own `.rex` files from `src/` directory
-- [x] Opaque types — `export opaque type Email = Email String`; type name available for annotations, constructors hidden from importers
+What works well today: the type system, pattern matching, actors, the Go compilation pipeline, the standard library, and the package system. The JavaScript backend covers the full language. The WasmGC backend is in progress.
 
-### Stdlib
+## License
 
-- [x] JSON — `Std:Json` with ADT, `parse`/`stringify`, encode/decode helpers
-- [x] JSON decoder combinators — `Std:Json.Decode` with Elm-style `field`, `map2`, `oneOf`, `andThen`, `list`, `dict`, `maybe`
-- [x] TCP networking — `Std:Net` with `tcpListen`, `tcpAccept`, `tcpConnect`, `tcpRead`, `tcpWrite`, `tcpClose`, `tcpCloseListener`
-- [x] Random numbers — `Std:Random` with pure seed-based API and actor facade; `randomInt`, `randomFloat`, `randomBool`, `shuffle`
-- [x] Date/Time — `Std:DateTime` with `Instant`/`Duration` opaque types, Temporal-inspired API, pure Rex calendar math
-- [x] HTTP server — `Std:Http.Server` with `Request`/`Response` records and pattern-matching routing
-- [x] JS FFI — `Std:Js` with `JsRef` opaque type for browser interop (browser-only via target overlay)
-
-### Tooling
-
-- [x] `--types` — type query for files and stdlib modules
-- [ ] Installable `rex` CLI (`go install`)
-- [x] Better error messages — type errors now include source line numbers
-- [x] Package system — `rex.toml` with git and path dependencies; `rex init`, `rex install`
-
-### Compilation
-
-- [x] IR design (A-normal form) — pattern match compilation to decision trees
-- [x] Go backend — `rex file.rex` compiles to Go, builds a native binary, and runs it; all stdlib and user modules supported; actors via goroutines
-- [x] JS backend — `--compile --target=browser` emits `.js` + `.html`; actors via synchronous CPS; `Std:Js` FFI for browser APIs
-- [ ] WasmGC backend — emit WAT → `wasm-tools` → `.wasm` (in progress: primitives, functions, closures, ADTs, strings, lists, tuples, tail calls, traits done; stdlib and actors remaining)
-
-## Simmering
-
-Ideas worth keeping in mind but not yet committed to. May never happen.
-
-- **Point-free operator sections** — named operator functions (`add`, `mul`, …) enable `foldl add 0` and `map (mul 2)` without lambdas, but asymmetric operators are a trap: `map (sub 1)` reads "subtract 1" but computes `\x -> 1 - x`. Several languages solve this differently: Haskell has `(- 1)` operator sections; Scala uses `_` as a positional placeholder so `map(_ - 1)` unambiguously means `\x -> x - 1`; Elixir uses `&` capture (`&(&1 - 1)`).
-
-- **Extensible records (row polymorphism)** — functions over "any record with field `x`". Elm has a restricted form (read-only narrowing, no field addition/deletion); PureScript has full row polymorphism. Elm's restricted version would compile to WasmGC via monomorphization (concrete record type known at each call site), so the compilation target isn't a blocker. The real cost is type system complexity — error messages get harder and the inference machinery grows. Traits already cover many of the same use cases. Worth revisiting only if plain records prove genuinely limiting in practice.
-- **Hot module reloading** — WasmGC separates code from the GC-managed heap, which makes this more tractable than classic linear-memory Wasm. Live GC references are typed and runtime-managed, so a host could in theory transfer them from an old module instance to a new one. The open questions are type layout compatibility across versions and the lack of standardized dynamic linking in the Wasm spec today. Needs more research before committing.
-- **Concurrency / actors** — already implemented via `Std:Process` with Go goroutines (native backend) and synchronous CPS (JS backend). WasmGC backend needs stack switching (the [Wasm stack switching proposal](https://github.com/WebAssembly/stack-switching)) to support lightweight concurrent processes.
-- **List fusion** — the WasmGC compiler could detect `map |> filter |> take` chains and fuse them into a single pass, eliminating intermediate lists. Until then, an explicit `Std:Stream` module provides opt-in lazy evaluation. If fusion lands, `Stream` becomes unnecessary for finite pipelines (but remains useful for infinite sequences).
-- **Tagged templates** — backtick-delimited literals with a tag prefix: `` html`<div onClick={handler}>{content}</div>` ``. The parser desugars the template into typed function calls at compile time (not a runtime string). Each `{expr}` hole is a real Rex expression, fully typechecked. Different tags (html, sql, regex, …) could provide different desugaring strategies. Backticks are only valid with a tag — no untagged template literals. Enables JSX-like HTML authoring without contaminating the core expression grammar.
+MIT
