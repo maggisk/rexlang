@@ -96,6 +96,10 @@ func main() {
 		lsp.Run()
 		return
 	}
+	if args[0] == "search" {
+		runSearch(args[1:])
+		return
+	}
 	if args[0] == "install" {
 		runInstall(args[1:])
 		return
@@ -344,11 +348,18 @@ func runInstall(args []string) {
 		} else if len(args) >= 2 {
 			// rex install <url> <ref> — add a git dependency
 			addAndInstallDep(cwd, target, args[1])
-		} else {
-			fmt.Fprintln(os.Stderr, "Usage: rex install <path>")
-			fmt.Fprintln(os.Stderr, "       rex install <git-url> <ref>")
-			fmt.Fprintln(os.Stderr, "       rex install")
+		} else if isGitURL(target) {
+			fmt.Fprintln(os.Stderr, "Usage: rex install <git-url> <ref>")
 			os.Exit(1)
+		} else {
+			// rex install <name> — look up in registry
+			if !installFromRegistry(cwd, target) {
+				fmt.Fprintf(os.Stderr, "Package %q not found in registry\n", target)
+				fmt.Fprintln(os.Stderr, "Usage: rex install <path>")
+				fmt.Fprintln(os.Stderr, "       rex install <git-url> <ref>")
+				fmt.Fprintln(os.Stderr, "       rex install <name>")
+				os.Exit(1)
+			}
 		}
 		return
 	}
@@ -359,6 +370,10 @@ func runInstall(args []string) {
 
 func isLocalPath(s string) bool {
 	return strings.HasPrefix(s, ".") || strings.HasPrefix(s, "/") || strings.Contains(s, string(filepath.Separator))
+}
+
+func isGitURL(s string) bool {
+	return strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "git@") || strings.HasSuffix(s, ".git")
 }
 
 func addPathDep(projectRoot, path string) {
