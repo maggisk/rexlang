@@ -369,9 +369,10 @@ func jsFfiBuiltin(name string) string {
 
 func (g *jsGen) scanAtom(a ir.Atom) {
 	if v, ok := a.(ir.AVar); ok {
-		switch v.Name {
+		short := shortName(v.Name)
+		switch short {
 		case "println", "print", "showInt", "showFloat", "not", "error", "todo", "toString":
-			g.usedBuiltins[v.Name] = true
+			g.usedBuiltins[short] = true
 		case "spawn", "send", "receive", "self", "call":
 			g.usesConcurrency = true
 		default:
@@ -1258,6 +1259,15 @@ func (g *jsGen) emitStringBuiltin(funcName string, c ir.CApp) bool {
 	return true
 }
 
+// shortName extracts the unqualified name from a potentially module-qualified
+// IR name. "Std$IO$println" → "println", "myFunc" → "myFunc".
+func shortName(name string) string {
+	if idx := strings.LastIndex(name, "$"); idx >= 0 {
+		return name[idx+1:]
+	}
+	return name
+}
+
 func (g *jsGen) emitApp(c ir.CApp) error {
 	funcName := ""
 	if v, ok := c.Func.(ir.AVar); ok {
@@ -1269,8 +1279,12 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 	isLocal := g.locals[funcName]
 	isShadowed := isUserFunc || isLocal
 
+	// For builtin matching, use the short (unqualified) name so that
+	// both "println" and "Std$IO$println" map to $println.
+	short := shortName(funcName)
+
 	// Known builtins
-	switch funcName {
+	switch short {
 	case "__id":
 		g.emitAtom(c.Arg)
 		return nil
@@ -1318,13 +1332,13 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 
 	// String/math builtins — only match if not shadowed by user-defined function
 	if !isShadowed {
-		if emitted := g.emitStringBuiltin(funcName, c); emitted {
+		if emitted := g.emitStringBuiltin(short, c); emitted {
 			return nil
 		}
 	}
 
 	// Actor builtins
-	switch funcName {
+	switch short {
 	case "spawn":
 		g.buf.WriteString("$spawn(")
 		g.emitAtom(c.Arg)
@@ -1981,7 +1995,7 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 		name := a.Name
 		// Actor builtins as values
 		if g.usesConcurrency {
-			switch name {
+			switch shortName(name) {
 			case "receive":
 				return "((pid) => pid.ch.shift())"
 			case "spawn":
@@ -2023,8 +2037,8 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 				}
 			}
 		}
-		// Builtins as values
-		switch name {
+		// Builtins as values (use short name for module-qualified lookups)
+		switch shortName(name) {
 		case "println":
 			return "((v) => $println(v))"
 		case "print":
@@ -2041,7 +2055,7 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 			return "((v) => $error(v))"
 		}
 		// Check if it's a trait method
-		if dispatchName, ok := g.traitMethodNames[name]; ok {
+		if dispatchName, ok := g.traitMethodNames[shortName(name)]; ok {
 			return fmt.Sprintf("((a) => %s(a))", dispatchName)
 		}
 		// Check if it's a known ADT constructor
@@ -2065,7 +2079,7 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 			}
 		}
 		// String/math builtins as values (after user-defined names)
-		switch name {
+		switch shortName(name) {
 		case "length":
 			return "((s) => $stringLength(s))"
 		case "toUpper":
