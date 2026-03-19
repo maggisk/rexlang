@@ -216,15 +216,28 @@ func printErr(kind string, err error) {
 	fmt.Fprintf(os.Stderr, "%s%s%s: %v\n", colorRed, kind, colorReset, err)
 }
 
+// printErrWithSource annotates a TypeError with source text before printing.
+func printErrWithSource(kind string, err error, source string) {
+	if te, ok := err.(*types.TypeError); ok {
+		te.Source = source
+	}
+	printErr(kind, err)
+}
+
 // printRichTypeError prints an Elm-style error with source snippet.
 func printRichTypeError(kind string, te *types.TypeError) {
-	fmt.Fprintf(os.Stderr, "\n%s-- %s %s\n\n", colorRed, strings.ToUpper(kind), colorReset)
+	// Build header with file path if available
+	header := strings.ToUpper(kind)
+	if te.File != "" {
+		header += " ── " + te.File
+	}
+	fmt.Fprintf(os.Stderr, "\n%s-- %s %s\n\n", colorRed, header, colorReset)
 	fmt.Fprintf(os.Stderr, "%s\n\n", te.Msg)
 	// Show source line
 	lines := strings.Split(te.Source, "\n")
 	if te.Line > 0 && te.Line <= len(lines) {
 		line := lines[te.Line-1]
-		fmt.Fprintf(os.Stderr, "  %s%d|%s %s\n", colorRed, te.Line, colorReset, line)
+		fmt.Fprintf(os.Stderr, "  %s%4d|%s %s\n", colorRed, te.Line, colorReset, line)
 	}
 	fmt.Fprintln(os.Stderr)
 }
@@ -686,6 +699,7 @@ func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Progra
 	if err != nil {
 		if te, ok := err.(*types.TypeError); ok {
 			te.Source = source
+			te.File = path
 		}
 		printErr("Type error", err)
 		return nil, nil, err
