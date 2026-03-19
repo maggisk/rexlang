@@ -87,6 +87,10 @@ func main() {
 		runInit()
 		return
 	}
+	if args[0] == "fmt" {
+		runFmt(args[1:])
+		return
+	}
 	if args[0] == "install" {
 		runInstall(args[1:])
 		return
