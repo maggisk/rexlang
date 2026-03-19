@@ -2306,8 +2306,6 @@ var (
 	moduleCache   = map[string]*ModuleResult{}
 	moduleCacheMu sync.Mutex
 
-
-
 	packageRoots   map[string]string // package name → abs path to package src/
 	packageRootsMu sync.Mutex
 
@@ -2317,7 +2315,6 @@ var (
 	importStack   []string // for circular import detection
 	importStackMu sync.Mutex
 )
-
 
 // SetPackageRoots sets the package name → src/ path mapping for package imports.
 func SetPackageRoots(roots map[string]string) {
@@ -2662,8 +2659,6 @@ func typeDefsForModule(name string) map[string]types.Type {
 	}
 	return nil
 }
-
-
 
 // TypeEnvForModule is the exported version of typeEnvForModule.
 func TypeEnvForModule(name string) TypeEnv {

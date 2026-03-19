@@ -11,10 +11,10 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/codegen"
-	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
+	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/typechecker"
 	"github.com/maggisk/rexlang/internal/types"
 )
@@ -803,7 +803,8 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 
 // resolveOverlayEntry detects when the user passes a target-overlay file
 // (e.g., Foo.browser.rex or Foo.native.rex) and resolves to the base file.
-// Returns the (possibly resolved) path.
+// Returns the (possibly resolved) path. If the file is an overlay and the
+// user hasn't explicitly set --target, switches targetMode to match.
 func resolveOverlayEntry(path string) string {
 	knownTargets := []string{"native", "browser"}
 	ext := filepath.Ext(path)
@@ -814,11 +815,11 @@ func resolveOverlayEntry(path string) string {
 			basePath := strings.TrimSuffix(base, suffix) + ext
 			if _, err := os.Stat(basePath); err == nil {
 				fmt.Fprintf(os.Stderr, "Note: resolved %s → %s + %s overlay\n", filepath.Base(path), filepath.Base(basePath), t)
-				if targetMode == "native" && t != "native" {
-					targetMode = t
-				}
+				targetMode = t
 				return basePath
 			}
+			// Base file missing — warn but continue with original path
+			fmt.Fprintf(os.Stderr, "Warning: %s looks like an overlay file but %s not found\n", filepath.Base(path), filepath.Base(basePath))
 		}
 	}
 	return path
@@ -1205,7 +1206,7 @@ func runTestsBatch(files []string, only string) bool {
 	var items []compiled
 	for _, path := range files {
 		path = resolveOverlayEntry(path)
-	srcRoot := setupSrcRoot(path)
+		srcRoot := setupSrcRoot(path)
 		src, err := readSourceWithOverlay(path)
 		if err != nil {
 			printTestErr(path, "error", err)
