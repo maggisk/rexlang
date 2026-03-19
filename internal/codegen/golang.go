@@ -904,6 +904,10 @@ func (g *goGen) emitDLetRec(d ir.DLetRec) error {
 		}
 		g.buf.WriteString(") any {\n")
 
+		// Stack trace support
+		sourceLoc := readableFuncName(b.Name)
+		fmt.Fprintf(g.buf, "\trexPushStack(%q)\n\tdefer rexPopStack()\n", sourceLoc)
+
 		g.indent = 1
 		g.locals = make(map[string]bool)
 		for _, p := range fi.params {
@@ -2382,7 +2386,14 @@ func readableFuncName(name string) string {
 	}
 	parts := strings.Split(name, "$")
 	funcName := parts[len(parts)-1]
-	modPath := strings.Join(parts[:len(parts)-1], ":")
+	// First part is namespace (Std), rest are module path separated by .
+	modParts := parts[:len(parts)-1]
+	var modPath string
+	if len(modParts) > 1 {
+		modPath = modParts[0] + ":" + strings.Join(modParts[1:], ".")
+	} else {
+		modPath = modParts[0]
+	}
 	return funcName + " (" + modPath + ")"
 }
 
