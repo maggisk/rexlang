@@ -13,7 +13,6 @@ import (
 	"github.com/maggisk/rexlang/internal/codegen"
 	"github.com/maggisk/rexlang/internal/stdlib"
 	"github.com/maggisk/rexlang/internal/ir"
-	"github.com/maggisk/rexlang/internal/lsp"
 	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
 	"github.com/maggisk/rexlang/internal/typechecker"
@@ -45,6 +44,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "       rex build [--out=<path>] <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex --compile-go <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex --compile [--target=browser] <file.rex>")
+		fmt.Fprintln(os.Stderr, "       rex fmt [--check] [--diff] <file.rex> [file.rex ...]")
 		fmt.Fprintln(os.Stderr, "       rex init | install")
 		os.Exit(1)
 	}
@@ -76,8 +76,8 @@ func main() {
 		runInstall(args[1:])
 		return
 	}
-	if args[0] == "lsp" {
-		lsp.Run()
+	if args[0] == "fmt" {
+		runFmt(args[1:])
 		return
 	}
 	if args[0] == "build" {
