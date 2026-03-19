@@ -19,6 +19,10 @@ import (
 	"github.com/maggisk/rexlang/internal/types"
 )
 
+// version is set at build time via -ldflags "-X main.version=v1.2.3".
+// Falls back to "dev" for development builds and go install without ldflags.
+var version = "dev"
+
 // safeMode is set by the --safe flag; it promotes warnings (todo usage) to errors.
 var safeMode bool
 
@@ -46,6 +50,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "       rex --compile [--target=browser] <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex init | install")
 		os.Exit(1)
+	}
+
+	if args[0] == "--version" || args[0] == "-v" {
+		fmt.Printf("rex %s\n", version)
+		return
 	}
 
 	// Strip global flags before dispatching.
