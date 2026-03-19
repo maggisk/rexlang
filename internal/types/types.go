@@ -13,12 +13,9 @@ import (
 
 // TypeError is raised during HM inference.
 type TypeError struct {
-	Msg      string
-	Line     int    // source line (0 = unknown)
-	Col      int    // source column (0 = unknown)
-	Expected string // expected type (for mismatch errors)
-	Found    string // actual type (for mismatch errors)
-	Source   string // full source text (set by CLI for snippet display)
+	Msg    string
+	Line   int    // source line (0 = unknown)
+	Source string // full source text (set by CLI for snippet display)
 }
 
 func (e *TypeError) Error() string {
@@ -26,11 +23,6 @@ func (e *TypeError) Error() string {
 		return fmt.Sprintf("line %d: %s", e.Line, e.Msg)
 	}
 	return e.Msg
-}
-
-// TypeMismatch creates a TypeError with structured expected/found info.
-func TypeMismatch(msg, expected, found string) *TypeError {
-	return &TypeError{Msg: msg, Expected: expected, Found: found}
 }
 
 func typeErr(format string, args ...interface{}) *TypeError {
@@ -323,9 +315,7 @@ func Unify(t1, t2 Type) (Subst, error) {
 			return Unify(t2, t1)
 		case TCon:
 			if a.Name != b.Name || len(a.Args) != len(b.Args) {
-				return nil, TypeMismatch(
-					fmt.Sprintf("type mismatch: %s vs %s", TypeToString(t1), TypeToString(t2)),
-					TypeToString(t1), TypeToString(t2))
+				return nil, typeErr("type mismatch: %s vs %s", TypeToString(t1), TypeToString(t2))
 			}
 			subst := Subst{}
 			for i := range a.Args {
