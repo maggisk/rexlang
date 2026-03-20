@@ -869,10 +869,6 @@ func (g *goGen) emitDLet(d ir.DLet) error {
 	}
 	g.buf.WriteString(") any {\n")
 
-	// Stack trace support: push/pop function name for runtime error messages
-	sourceLoc := readableFuncName(d.Name)
-	fmt.Fprintf(g.buf, "\trexPushStack(%q)\n\tdefer rexPopStack()\n", sourceLoc)
-
 	g.indent = 1
 	g.locals = make(map[string]bool)
 	for _, p := range fi.params {
@@ -903,10 +899,6 @@ func (g *goGen) emitDLetRec(d ir.DLetRec) error {
 			fmt.Fprintf(g.buf, "%s any", goVarName(p.name))
 		}
 		g.buf.WriteString(") any {\n")
-
-		// Stack trace support
-		sourceLoc := readableFuncName(b.Name)
-		fmt.Fprintf(g.buf, "\trexPushStack(%q)\n\tdefer rexPopStack()\n", sourceLoc)
 
 		g.indent = 1
 		g.locals = make(map[string]bool)
@@ -2378,24 +2370,6 @@ func isFloatType(ty types.Type) bool {
 // Name mangling
 // ---------------------------------------------------------------------------
 
-// readableFuncName converts an IR function name to a human-readable form
-// for stack traces. "Std$List$map" → "map (Std:List)", "myFunc" → "myFunc".
-func readableFuncName(name string) string {
-	if !strings.Contains(name, "$") {
-		return name
-	}
-	parts := strings.Split(name, "$")
-	funcName := parts[len(parts)-1]
-	// First part is namespace (Std), rest are module path separated by .
-	modParts := parts[:len(parts)-1]
-	var modPath string
-	if len(modParts) > 1 {
-		modPath = modParts[0] + ":" + strings.Join(modParts[1:], ".")
-	} else {
-		modPath = modParts[0]
-	}
-	return funcName + " (" + modPath + ")"
-}
 
 func goFuncName(name string) string {
 	if name == "main" {
