@@ -350,6 +350,12 @@ Key design decisions:
 
 Html (VDOM types, elements, attributes, events, renderToString, diffing/patching) and the TEA runtime (`browserMount`) now live in the `tea-rex` web framework package. The language provides `Std:Js`, `Std:Net`, and `Std:Process` as building blocks.
 
+### Tooling
+
+- [x] `rex fmt` v1 — line-level formatter (trailing whitespace, tabs→spaces, blank line normalization, import sorting). No AST parsing.
+- [ ] `rex fmt` v2 — AST-based formatter. Requires CST (concrete syntax tree) that preserves comments. Rewrites: chained `let/in` → let-block, enforce newlines after `->` / `then` / `else`, normalize indentation depth, break long pipe chains. Blocked on parser preserving comments (attach to adjacent AST nodes like Go's `ast.CommentGroup`).
+- [x] `rex lsp` v1 — minimal LSP server with diagnostics (parse/type errors, todo warnings). No hover/completion/go-to-def yet.
+
 ### Before going public
 
 - `go install` support for the `rex` CLI

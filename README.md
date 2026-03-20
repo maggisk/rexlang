@@ -1,5 +1,9 @@
 # RexLang
 
+**Rex** is a functional language with algebraic data types, Hindley-Milner type inference, and pattern matching. It compiles to Go for native binaries and JavaScript for the browser. One binary, no runtime errors.
+
+> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Go's speed. No human who fully understands this codebase — only our new AI overlords.
+
 A type-safe HTTP server in 15 lines:
 
 ```rex
@@ -24,10 +28,6 @@ export main _ =
         when Ok _ -> 0
         when Err e -> let _ = println e in 1
 ```
-
-**Rex** is a functional language with algebraic data types, Hindley-Milner type inference, and pattern matching. It compiles to Go for native binaries and JavaScript for the browser. One binary, no runtime errors.
-
-> Twenty years of language design opinions, vibe coded into existence in days. Elm's elegance. Erlang's actors. Go's speed. No human who fully understands this codebase — only our new AI overlords.
 
 ## Install
 
