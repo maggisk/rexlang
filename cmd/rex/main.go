@@ -7,11 +7,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/maggisk/rexlang/internal/ast"
 	"github.com/maggisk/rexlang/internal/codegen"
 	"github.com/maggisk/rexlang/internal/ir"
+	"github.com/maggisk/rexlang/internal/lsp"
 	"github.com/maggisk/rexlang/internal/manifest"
 	"github.com/maggisk/rexlang/internal/parser"
 	"github.com/maggisk/rexlang/internal/stdlib"
@@ -38,6 +40,9 @@ var moduleMode = "global:Rex"
 
 // packageRoots maps package names to their src/ directories (from rex.toml).
 var packageRoots map[string]string
+
+// compileTiming tracks per-phase timing when --time is active.
+var compileTiming = timing{}
 
 func main() {
 	args := os.Args[1:]
@@ -66,6 +71,9 @@ func main() {
 			targetMode = strings.TrimPrefix(a, "--target=")
 		} else if strings.HasPrefix(a, "--module=") {
 			moduleMode = strings.TrimPrefix(a, "--module=")
+		} else if a == "--time" {
+			compileTiming.enabled = true
+			compileTiming.start = time.Now()
 		} else {
 			filtered = append(filtered, a)
 		}
@@ -78,6 +86,14 @@ func main() {
 	}
 	if args[0] == "init" {
 		runInit()
+		return
+	}
+	if args[0] == "fmt" {
+		runFmt(args[1:])
+		return
+	}
+	if args[0] == "lsp" {
+		lsp.Run()
 		return
 	}
 	if args[0] == "install" {
@@ -193,7 +209,37 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func printErr(kind string, err error) {
+	if te, ok := err.(*types.TypeError); ok && te.Source != "" && te.Line > 0 {
+		printRichTypeError(kind, te)
+		return
+	}
 	fmt.Fprintf(os.Stderr, "%s%s%s: %v\n", colorRed, kind, colorReset, err)
+}
+
+// printErrWithSource annotates a TypeError with source text before printing.
+func printErrWithSource(kind string, err error, source string) {
+	if te, ok := err.(*types.TypeError); ok {
+		te.Source = source
+	}
+	printErr(kind, err)
+}
+
+// printRichTypeError prints an Elm-style error with source snippet.
+func printRichTypeError(kind string, te *types.TypeError) {
+	// Build header with file path if available
+	header := strings.ToUpper(kind)
+	if te.File != "" {
+		header += " ── " + te.File
+	}
+	fmt.Fprintf(os.Stderr, "\n%s-- %s %s\n\n", colorRed, header, colorReset)
+	fmt.Fprintf(os.Stderr, "%s\n\n", te.Msg)
+	// Show source line
+	lines := strings.Split(te.Source, "\n")
+	if te.Line > 0 && te.Line <= len(lines) {
+		line := lines[te.Line-1]
+		fmt.Fprintf(os.Stderr, "  %s%4d|%s %s\n", colorRed, te.Line, colorReset, line)
+	}
+	fmt.Fprintln(os.Stderr)
 }
 
 func printTestErr(path, kind string, err error) {
@@ -618,32 +664,30 @@ func showTypes(path string) {
 // compileToIR runs the frontend pipeline: parse → validate → typecheck → IR.
 // Errors are printed to stderr; returns (nil, nil, err) on failure.
 func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Program, typechecker.TypeEnv, error) {
+	done := compileTiming.phase("Parse + validate")
 	exprs, err := parser.Parse(source)
 	if err != nil {
+		done()
 		printErr("Parse error", err)
 		return nil, nil, err
 	}
-
 	if err := parser.ValidateToplevel(exprs); err != nil {
+		done()
 		printErr("Syntax error", err)
 		return nil, nil, err
 	}
-
 	if err := parser.ValidateIndentation(exprs); err != nil {
+		done()
 		printErr("Indentation error", err)
 		return nil, nil, err
 	}
-
-	exprs, err = typechecker.ReorderToplevel(exprs)
-	if err != nil {
-		printErr("Type error", err)
-		return nil, nil, err
-	}
+	done()
 
 	// Detect if this is a stdlib file for extra type env
 	absPath, _ := filepath.Abs(path)
 	extraTypeEnv := stdlibExtraTypeEnv(absPath)
 
+	done = compileTiming.phase("Typecheck")
 	var typeEnv typechecker.TypeEnv
 	var warnings []typechecker.Warning
 	if extraTypeEnv != nil {
@@ -651,13 +695,20 @@ func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Progra
 	} else {
 		typeEnv, warnings, err = typechecker.CheckProgram(exprs, srcRoot)
 	}
+	done()
 	if err != nil {
+		if te, ok := err.(*types.TypeError); ok {
+			te.Source = source
+			te.File = path
+		}
 		printErr("Type error", err)
 		return nil, nil, err
 	}
 	handleWarnings(path, warnings)
 
+	done = compileTiming.phase("Import resolution")
 	importInfo, err := ir.ResolveImports(exprs, srcRoot, targetMode, packageRoots)
+	done()
 	if err != nil {
 		printErr("Import resolution error", err)
 		return nil, nil, err
@@ -665,8 +716,10 @@ func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Progra
 	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
 	allExprs := append(importInfo.Decls, userExprs...)
 
+	done = compileTiming.phase("IR lowering")
 	l := ir.NewLowerer()
 	prog, err := l.LowerProgram(allExprs)
+	done()
 	if err != nil {
 		printErr("IR error", err)
 		return nil, nil, err
@@ -727,6 +780,7 @@ func stdlibExtraTypeEnv(absPath string) typechecker.TypeEnv {
 // own content-based build cache makes repeated runs fast.
 func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, testMode bool) string {
 	// Emit Go source
+	doneCodegen := compileTiming.phase("Go codegen")
 	var goSrc string
 	var err error
 	if testMode {
@@ -734,6 +788,7 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	} else {
 		goSrc, err = codegen.EmitGo(prog, typeEnv)
 	}
+	doneCodegen()
 	if err != nil {
 		printErr("Codegen error", err)
 		os.Exit(1)
@@ -747,33 +802,31 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	}
 	buildDir := filepath.Join(root, ".cache", "rex-build")
 
-	// Clean and recreate
-	os.RemoveAll(buildDir)
+	// Create build dir (preserve existing for Go build cache)
 	if err := os.MkdirAll(buildDir, 0755); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating build dir: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Track which files we write so we can clean up stale ones
+	written := map[string]bool{}
+
 	// Write main.go
 	goFile := filepath.Join(buildDir, "main.go")
-	if err := os.WriteFile(goFile, []byte(goSrc), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing Go source: %v\n", err)
-		os.Exit(1)
-	}
+	mustWriteFile(goFile, goSrc)
+	written[goFile] = true
 
 	// Write go.mod
 	base := strings.TrimSuffix(filepath.Base(path), ".rex")
 	goMod := fmt.Sprintf("module rex_%s\n\ngo 1.24\n", base)
-	if err := os.WriteFile(filepath.Join(buildDir, "go.mod"), []byte(goMod), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing go.mod: %v\n", err)
-		os.Exit(1)
-	}
+	goModPath := filepath.Join(buildDir, "go.mod")
+	mustWriteFile(goModPath, goMod)
+	written[goModPath] = true
 
 	// Extract runtime
-	if err := os.WriteFile(filepath.Join(buildDir, "runtime.go"), []byte(codegen.RuntimeSource()), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing runtime.go: %v\n", err)
-		os.Exit(1)
-	}
+	runtimePath := filepath.Join(buildDir, "runtime.go")
+	mustWriteFile(runtimePath, codegen.RuntimeSource())
+	written[runtimePath] = true
 
 	// Extract companion files for needed stdlib modules
 	modules := codegen.NeededModules(prog, typeEnv)
@@ -781,24 +834,40 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 		src := stdlib.GoCompanion(mod)
 		if src != "" {
 			p := filepath.Join(buildDir, "stdlib_"+strings.ToLower(strings.ReplaceAll(mod, ".", "_"))+".go")
-			if err := os.WriteFile(p, []byte(src), 0644); err != nil {
-				fmt.Fprintf(os.Stderr, "Error writing companion file: %v\n", err)
-				os.Exit(1)
-			}
+			mustWriteFile(p, src)
+			written[p] = true
+		}
+	}
+
+	// Remove stale .go files from previous builds
+	entries, _ := os.ReadDir(buildDir)
+	for _, e := range entries {
+		p := filepath.Join(buildDir, e.Name())
+		if strings.HasSuffix(e.Name(), ".go") && !written[p] {
+			os.Remove(p)
 		}
 	}
 
 	// Build
 	binaryPath := filepath.Join(buildDir, "program")
+	doneBuild := compileTiming.phase("go build")
 	cmd := exec.Command("go", "build", "-o", binaryPath, ".")
 	cmd.Dir = buildDir
 	out, err := cmd.CombinedOutput()
+	doneBuild()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "go build failed: %v\n%s\nGenerated Go source: %s\n", err, out, goFile)
 		os.Exit(1)
 	}
 
 	return binaryPath
+}
+
+func mustWriteFile(path, content string) {
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", path, err)
+		os.Exit(1)
+	}
 }
 
 // resolveOverlayEntry detects when the user passes a target-overlay file
@@ -1139,6 +1208,7 @@ func runFile(path string, programArgs []string) {
 
 	// Compile to Go and execute
 	binary := buildGoProgram(prog, typeEnv, path, false)
+	compileTiming.print()
 
 	cmd := exec.Command(binary, programArgs...)
 	cmd.Stdout = os.Stdout
@@ -1173,6 +1243,7 @@ func buildBinary(path string, outPath string) {
 	}
 
 	binary := buildGoProgram(prog, typeEnv, path, false)
+	compileTiming.print()
 
 	// Default output: lowercase basename without extension
 	if outPath == "" {
@@ -1327,6 +1398,7 @@ func runTests(path string, only string) bool {
 
 	// Compile and run tests
 	binary := buildGoProgram(prog, typeEnv, path, true)
+	compileTiming.print()
 
 	var cmd *exec.Cmd
 	if only != "" {

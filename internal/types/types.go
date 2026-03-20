@@ -13,8 +13,10 @@ import (
 
 // TypeError is raised during HM inference.
 type TypeError struct {
-	Msg  string
-	Line int // source line (0 = unknown)
+	Msg    string
+	Line   int    // source line (0 = unknown)
+	File   string // source file path (set by CLI for error display)
+	Source string // full source text (set by CLI for snippet display)
 }
 
 func (e *TypeError) Error() string {

@@ -184,21 +184,48 @@ func (tc *TypeChecker) resolveConstraints(s types.Subst, env TypeEnv, startIdx i
 	var result []types.Constraint
 	for _, c := range newConstraints {
 		resolved := types.ApplySubst(s, types.TVar{Name: c.Var})
-		switch t := resolved.(type) {
-		case types.TVar:
-			result = append(result, types.Constraint{Trait: c.Trait, Var: t.Name})
-		case types.TCon:
-			typeName := t.Name
-			if typeName == "Tuple" {
-				typeName = fmt.Sprintf("Tuple%d", len(t.Args))
-			}
-			key := c.Trait + ":" + typeName
-			if _, ok := instances[key]; !ok {
-				return nil, &types.TypeError{Msg: fmt.Sprintf("no %s instance for type %s", c.Trait, types.TypeToString(resolved))}
-			}
+		extra, err := tc.checkTraitForType(c.Trait, resolved, instances)
+		if err != nil {
+			return nil, err
 		}
+		result = append(result, extra...)
 	}
 	return result, nil
+}
+
+// checkTraitForType verifies that a type satisfies a trait constraint,
+// recursively checking inner type parameters. Returns constraints for
+// any unresolved type variables.
+func (tc *TypeChecker) checkTraitForType(trait string, ty types.Type, instances map[string]map[string]bool) ([]types.Constraint, error) {
+	switch t := ty.(type) {
+	case types.TVar:
+		return []types.Constraint{{Trait: trait, Var: t.Name}}, nil
+	case types.TCon:
+		// Check the outer type has an instance
+		typeName := t.Name
+		if typeName == "Tuple" {
+			typeName = fmt.Sprintf("Tuple%d", len(t.Args))
+		}
+		// Functions never have Eq/Ord/Show instances
+		if typeName == "Fun" {
+			return nil, &types.TypeError{Msg: fmt.Sprintf("no %s instance for type %s", trait, types.TypeToString(ty))}
+		}
+		key := trait + ":" + typeName
+		if _, ok := instances[key]; !ok {
+			return nil, &types.TypeError{Msg: fmt.Sprintf("no %s instance for type %s", trait, types.TypeToString(ty))}
+		}
+		// Recursively check type arguments
+		var result []types.Constraint
+		for _, arg := range t.Args {
+			extra, err := tc.checkTraitForType(trait, arg, instances)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, extra...)
+		}
+		return result, nil
+	}
+	return nil, nil
 }
 
 // freshenType replaces all TVars in a type with fresh variables.

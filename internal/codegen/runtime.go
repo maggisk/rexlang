@@ -6,6 +6,7 @@ const runtimeSource = `package main
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -218,8 +219,9 @@ func rex__apply(f any, arg any) any {
 // ---------------------------------------------------------------------------
 
 type RexPid struct {
-	ch chan any
-	id int64
+	ch   chan any
+	id   int64
+	done chan struct{} // closed when the goroutine exits (for monitoring)
 }
 
 var rexPidCounter int64
@@ -235,7 +237,7 @@ func rexNextPidID() int64 {
 	return id
 }
 
-var rexMainPid = &RexPid{ch: make(chan any, 1024), id: 0}
+var rexMainPid = &RexPid{ch: make(chan any, 1024), id: 0, done: make(chan struct{})}
 
 func rexGoroutineID() int64 {
 	var buf [64]byte
@@ -263,9 +265,17 @@ func rexGetSelf() *RexPid {
 }
 
 func rex_spawn(f any) any {
-	pid := &RexPid{ch: make(chan any, 1024), id: rexNextPidID()}
+	pid := &RexPid{ch: make(chan any, 1024), id: rexNextPidID(), done: make(chan struct{})}
 	go func() {
-		rexGoroutineSelf.Store(rexGoroutineID(), pid)
+		gid := rexGoroutineID()
+		rexGoroutineSelf.Store(gid, pid)
+		defer close(pid.done)
+		defer rexGoroutineSelf.Delete(gid)
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintln(os.Stderr, r)
+			}
+		}()
 		f.(func(any) any)(nil)
 	}()
 	return pid
@@ -277,7 +287,7 @@ func rex_send(pid any, msg any) any {
 }
 
 func rex_call(targetPid any, msgFn any) any {
-	replyPid := &RexPid{ch: make(chan any, 1), id: rexNextPidID()}
+	replyPid := &RexPid{ch: make(chan any, 1), id: rexNextPidID(), done: make(chan struct{})}
 	fn := msgFn.(func(any) any)
 	msg := fn(replyPid)
 	targetPid.(*RexPid).ch <- msg
