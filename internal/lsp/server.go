@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -304,13 +303,4 @@ func lineRange(line int) diagRange {
 		Start: diagPos{Line: l, Character: 0},
 		End:   diagPos{Line: l, Character: 1000},
 	}
-}
-
-// uriToPath converts a file:// URI to a filesystem path.
-func uriToPath(uri string) string {
-	u, err := url.Parse(uri)
-	if err != nil {
-		return uri
-	}
-	return u.Path
 }
