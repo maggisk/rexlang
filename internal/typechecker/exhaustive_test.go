@@ -13,7 +13,7 @@ func typecheck(code string) error {
 	if err != nil {
 		return err
 	}
-	_, _, err = CheckProgram(exprs)
+	_, _, err = CheckProgram(exprs, "")
 	return err
 }
 

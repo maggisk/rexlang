@@ -105,6 +105,7 @@ type TypeChecker struct {
 	typeAliases map[string]types.TypeAliasInfo
 	Warnings    []Warning
 	constraints []types.Constraint
+	srcRoot     string // absolute path to src/ directory for user module resolution
 }
 
 // NewTypeChecker creates a new TypeChecker.
@@ -1922,7 +1923,7 @@ func (tc *TypeChecker) InferToplevel(env TypeEnv, typeDefs map[string]types.Type
 		}
 
 	case ast.Import:
-		modResult, err := CheckModule(e.Module)
+		modResult, err := CheckModule(e.Module, tc.srcRoot)
 		if err != nil {
 			return InferToplevelResult{}, err
 		}
@@ -2305,11 +2306,6 @@ var (
 	moduleCache   = map[string]*ModuleResult{}
 	moduleCacheMu sync.Mutex
 
-
-
-	srcRoot   string // absolute path to src/ directory (empty if not set)
-	srcRootMu sync.Mutex
-
 	packageRoots   map[string]string // package name → abs path to package src/
 	packageRootsMu sync.Mutex
 
@@ -2319,24 +2315,6 @@ var (
 	importStack   []string // for circular import detection
 	importStackMu sync.Mutex
 )
-
-// SetSrcRoot sets the src/ directory root for user module resolution.
-func SetSrcRoot(path string) {
-	srcRootMu.Lock()
-	srcRoot = path
-	srcRootMu.Unlock()
-}
-
-func getSrcRoot() string {
-	srcRootMu.Lock()
-	defer srcRootMu.Unlock()
-	return srcRoot
-}
-
-// GetSrcRoot returns the current src/ directory root for user module resolution.
-func GetSrcRoot() string {
-	return getSrcRoot()
-}
 
 // SetPackageRoots sets the package name → src/ path mapping for package imports.
 func SetPackageRoots(roots map[string]string) {
@@ -2420,7 +2398,7 @@ func PreregisterTypes(exprs []ast.Expr, typeDefs map[string]types.Type) map[stri
 }
 
 // CheckModule type-checks a module (stdlib or user) and caches the result.
-func CheckModule(moduleName string) (*ModuleResult, error) {
+func CheckModule(moduleName string, srcRoot string) (*ModuleResult, error) {
 	moduleCacheMu.Lock()
 	if r, ok := moduleCache[moduleName]; ok {
 		moduleCacheMu.Unlock()
@@ -2462,22 +2440,18 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 				modPath := resolveUserModulePath(pkgSrc, name)
 				return nil, &types.TypeError{Msg: fmt.Sprintf("module not found: %s (looked for %s)", moduleName, modPath)}
 			}
-			// Temporarily set srcRoot to the package's src/ so inner imports
-			// resolve relative to the package, not the consumer.
-			prevSrcRoot := getSrcRoot()
-			SetSrcRoot(pkgSrc)
-			defer SetSrcRoot(prevSrcRoot)
+			// Inner imports resolve relative to the package, not the consumer.
+			srcRoot = pkgSrc
 		}
 	} else {
 		// User module — resolve from src/
-		root := getSrcRoot()
-		if root == "" {
+		if srcRoot == "" {
 			return nil, &types.TypeError{Msg: fmt.Sprintf("user module import '%s' requires a src/ directory", moduleName)}
 		}
 		t := getTarget()
-		modPath := resolveUserModulePath(root, moduleName)
+		modPath := resolveUserModulePath(srcRoot, moduleName)
 		var err error
-		src, err = loadUserModuleSource(root, moduleName, t)
+		src, err = loadUserModuleSource(srcRoot, moduleName, t)
 		if err != nil {
 			return nil, &types.TypeError{Msg: fmt.Sprintf("module not found: %s (looked for %s)", moduleName, modPath)}
 		}
@@ -2488,6 +2462,7 @@ func CheckModule(moduleName string) (*ModuleResult, error) {
 		return nil, err
 	}
 	tc := NewTypeChecker()
+	tc.srcRoot = srcRoot
 	prelude, err := loadPreludeTC()
 	if err != nil {
 		return nil, err
@@ -2685,8 +2660,6 @@ func typeDefsForModule(name string) map[string]types.Type {
 	return nil
 }
 
-
-
 // TypeEnvForModule is the exported version of typeEnvForModule.
 func TypeEnvForModule(name string) TypeEnv {
 	return typeEnvForModule(name)
@@ -2788,8 +2761,9 @@ func CopyTypeDefs(td map[string]types.Type) map[string]types.Type {
 }
 
 // CheckProgram type-checks a list of top-level expressions.
-func CheckProgram(exprs []ast.Expr) (TypeEnv, []Warning, error) {
+func CheckProgram(exprs []ast.Expr, srcRoot string) (TypeEnv, []Warning, error) {
 	tc := NewTypeChecker()
+	tc.srcRoot = srcRoot
 	prelude, err := loadPreludeTC()
 	if err != nil {
 		return nil, nil, err
@@ -3381,8 +3355,9 @@ func mergeInstances(env TypeEnv, extra map[string]map[string]bool) map[string]ma
 }
 
 // CheckProgramWithExtraEnv is like CheckProgram but with additional type env injected.
-func CheckProgramWithExtraEnv(exprs []ast.Expr, extraEnv TypeEnv) (TypeEnv, []Warning, error) {
+func CheckProgramWithExtraEnv(exprs []ast.Expr, extraEnv TypeEnv, srcRoot string) (TypeEnv, []Warning, error) {
 	tc := NewTypeChecker()
+	tc.srcRoot = srcRoot
 	prelude, err := loadPreludeTC()
 	if err != nil {
 		return nil, nil, err
