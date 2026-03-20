@@ -795,19 +795,19 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 
 	// Write main.go
 	goFile := filepath.Join(buildDir, "main.go")
-	writeIfChanged(goFile, goSrc)
+	mustWriteFile(goFile, goSrc)
 	written[goFile] = true
 
 	// Write go.mod
 	base := strings.TrimSuffix(filepath.Base(path), ".rex")
 	goMod := fmt.Sprintf("module rex_%s\n\ngo 1.24\n", base)
 	goModPath := filepath.Join(buildDir, "go.mod")
-	writeIfChanged(goModPath, goMod)
+	mustWriteFile(goModPath, goMod)
 	written[goModPath] = true
 
 	// Extract runtime
 	runtimePath := filepath.Join(buildDir, "runtime.go")
-	writeIfChanged(runtimePath, codegen.RuntimeSource())
+	mustWriteFile(runtimePath, codegen.RuntimeSource())
 	written[runtimePath] = true
 
 	// Extract companion files for needed stdlib modules
@@ -816,7 +816,7 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 		src := stdlib.GoCompanion(mod)
 		if src != "" {
 			p := filepath.Join(buildDir, "stdlib_"+strings.ToLower(strings.ReplaceAll(mod, ".", "_"))+".go")
-			writeIfChanged(p, src)
+			mustWriteFile(p, src)
 			written[p] = true
 		}
 	}
@@ -845,14 +845,7 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	return binaryPath
 }
 
-// writeIfChanged writes content to a file only if the content differs from
-// what's already on disk. This preserves file modification times so that
-// Go's build cache can skip unchanged files.
-func writeIfChanged(path, content string) {
-	existing, err := os.ReadFile(path)
-	if err == nil && string(existing) == content {
-		return
-	}
+func mustWriteFile(path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", path, err)
 		os.Exit(1)
