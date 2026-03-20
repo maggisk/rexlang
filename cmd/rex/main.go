@@ -803,8 +803,8 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 
 // resolveOverlayEntry detects when the user passes a target-overlay file
 // (e.g., Foo.browser.rex or Foo.native.rex) and resolves to the base file.
-// Returns the (possibly resolved) path. If the file is an overlay and the
-// user hasn't explicitly set --target, switches targetMode to match.
+// If no base file exists, treats it as a target-only module (like Std:Js).
+// Returns the (possibly resolved) path and switches targetMode to match.
 func resolveOverlayEntry(path string) string {
 	knownTargets := []string{"native", "browser"}
 	ext := filepath.Ext(path)
@@ -818,8 +818,9 @@ func resolveOverlayEntry(path string) string {
 				targetMode = t
 				return basePath
 			}
-			// Base file missing — warn but continue with original path
-			fmt.Fprintf(os.Stderr, "Warning: %s looks like an overlay file but %s not found\n", filepath.Base(path), filepath.Base(basePath))
+			// No base file — target-only module (e.g., browser-only). Just set target mode.
+			targetMode = t
+			return path
 		}
 	}
 	return path
