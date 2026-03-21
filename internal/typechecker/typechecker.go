@@ -2697,16 +2697,18 @@ func TypeEnvForModule(name string) TypeEnv {
 // Returns nil if the module or name is not found.
 func LookupModuleType(qualifiedName string) interface{} {
 	// Split on all "$": "Std$Http$Server$httpServe" → ["Std", "Http", "Server", "httpServe"]
+	// Also handles package modules: "db$Db$rawOpen" → ["db", "Db", "rawOpen"]
 	parts := strings.Split(qualifiedName, "$")
-	if len(parts) < 3 || parts[0] != "Std" {
+	if len(parts) < 3 {
 		return nil
 	}
+	namespace := parts[0]
 	// Last element is the local name, middle elements form the module name joined by "."
 	localName := parts[len(parts)-1]
 	moduleName := strings.Join(parts[1:len(parts)-1], ".")
 
 	moduleCacheMu.Lock()
-	result, ok := moduleCache["Std:"+moduleName]
+	result, ok := moduleCache[namespace+":"+moduleName]
 	moduleCacheMu.Unlock()
 	if !ok {
 		return nil

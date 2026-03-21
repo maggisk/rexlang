@@ -1,9 +1,10 @@
 // Module resolution for whole-program compilation.
 //
-// When compiling to Wasm, all imported module type declarations, trait
-// definitions, and impl blocks must be available. This file provides
-// ResolveImports which collects these declarations from imported modules
-// (recursively) so they can be prepended to the main program before lowering.
+// When compiling (Go backend, JS backend), all imported module type
+// declarations, trait definitions, and impl blocks must be available.
+// This file provides ResolveImports which collects these declarations
+// from imported modules (recursively) so they can be prepended to the
+// main program before lowering.
 package ir
 
 import (
@@ -209,7 +210,7 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 
 		// Also resolve this module's own imports: map imported names to
 		// their prefixed counterparts so that references like `map` from
-		// `import Std:List (map)` become `Std_List__map` in the body.
+		// `import Std:List (map)` become `Std$List$map` in the body.
 		for _, me := range modExprs {
 			innerImp, ok := me.(ast.Import)
 			if !ok {
@@ -217,9 +218,18 @@ func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
 			}
 			innerPrefix := ModulePrefix(innerImp.Module)
 			innerNames := r.modTopNames[innerImp.Module]
+			// Selective imports: import Std:List (map, filter)
 			for _, name := range innerImp.Names {
 				if innerNames[name] {
 					modNameMap[name] = innerPrefix + name
+				}
+			}
+			// Alias imports: import Std:List as List
+			// Map "List.map" → "Std$List$map" for DotAccess resolution
+			if innerImp.Alias != "" {
+				for name := range innerNames {
+					qualName := innerImp.Alias + "." + name
+					modNameMap[qualName] = innerPrefix + name
 				}
 			}
 		}

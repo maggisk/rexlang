@@ -36,6 +36,22 @@ func externalModule(name string) string {
 	return strings.Join(parts[1:len(parts)-1], ".")
 }
 
+// externalNamespace extracts the namespace from a mangled external name.
+// "Std$String$length" → "Std", "db$Db$rawQuery" → "db"
+func externalNamespace(name string) string {
+	parts := strings.Split(name, "$")
+	if len(parts) < 3 {
+		return ""
+	}
+	return parts[0]
+}
+
+// PackageCompanion identifies a Go companion file needed from a user package.
+type PackageCompanion struct {
+	Namespace string // e.g. "db"
+	Module    string // e.g. "Db" or "Http.Server"
+}
+
 // NeededModules returns the set of stdlib module names that need companion files.
 // Only includes modules where the external's type was successfully resolved.
 func NeededModules(prog *ir.Program, typeEnv typechecker.TypeEnv) []string {
@@ -46,6 +62,18 @@ func NeededModules(prog *ir.Program, typeEnv typechecker.TypeEnv) []string {
 		modules = append(modules, mod)
 	}
 	return modules
+}
+
+// NeededPackageCompanions returns the set of user package modules that need
+// companion Go files. Each entry identifies the package namespace and module name.
+func NeededPackageCompanions(prog *ir.Program, typeEnv typechecker.TypeEnv) []PackageCompanion {
+	g := newGoGen(typeEnv, false)
+	g.analyze(prog)
+	var result []PackageCompanion
+	for _, pc := range g.neededPkgModules {
+		result = append(result, pc)
+	}
+	return result
 }
 
 // returnKind inspects a Rex return type and returns "simple", "maybe", or "result".
@@ -133,7 +161,8 @@ func newGoGen(typeEnv typechecker.TypeEnv, testMode bool) *goGen {
 		traitImpls:    make(map[string][]goImplCase),
 		locals:        make(map[string]bool),
 		knownTypes:    map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true, "List": true, "Tuple2": true, "Tuple3": true, "Tuple4": true, "Unit": true},
-		neededModules: make(map[string]bool),
+		neededModules:    make(map[string]bool),
+		neededPkgModules: make(map[string]PackageCompanion),
 		testMode:      testMode,
 	}
 }
@@ -204,7 +233,8 @@ type goGen struct {
 	knownTypes       map[string]bool   // types defined in the program (for filtering dispatch cases)
 
 	// external companion file support
-	neededModules map[string]bool // stdlib modules needed by externals
+	neededModules    map[string]bool                  // stdlib modules needed by externals
+	neededPkgModules map[string]PackageCompanion      // "db:Db" → PackageCompanion
 
 	// test mode support
 	testMode  bool
@@ -534,8 +564,14 @@ func (g *goGen) analyzeExternal(name string) *goFuncInfo {
 
 	// Track needed module (only after type lookup succeeds).
 	mod := externalModule(name)
+	ns := externalNamespace(name)
 	if mod != "" {
-		g.neededModules[mod] = true
+		if ns == "Std" {
+			g.neededModules[mod] = true
+		} else if ns != "" {
+			key := ns + ":" + mod
+			g.neededPkgModules[key] = PackageCompanion{Namespace: ns, Module: mod}
+		}
 	}
 
 	fi := &goFuncInfo{name: name, isExternal: true}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/maggisk/rexlang/internal/ast"
+	"github.com/maggisk/rexlang/internal/callgraph"
 	"github.com/maggisk/rexlang/internal/codegen"
 	"github.com/maggisk/rexlang/internal/ir"
 	"github.com/maggisk/rexlang/internal/lsp"
@@ -50,9 +51,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Usage: rex <file.rex> [args...]")
 		fmt.Fprintln(os.Stderr, "       rex --test <file.rex> [file.rex ...]")
 		fmt.Fprintln(os.Stderr, "       rex --types <file.rex>")
+		fmt.Fprintln(os.Stderr, "       rex --graph <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex build [--out=<path>] <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex --compile-go <file.rex>")
-		fmt.Fprintln(os.Stderr, "       rex --compile [--target=browser] <file.rex>")
+		fmt.Fprintln(os.Stderr, "       rex --compile --target=browser <file.rex>")
 		fmt.Fprintln(os.Stderr, "       rex init | install")
 		os.Exit(1)
 	}
@@ -120,15 +122,15 @@ func main() {
 	}
 	if args[0] == "--compile" {
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: rex --compile <file.rex>")
+			fmt.Fprintln(os.Stderr, "Usage: rex --compile --target=browser <file.rex>")
+			os.Exit(1)
+		}
+		if targetMode != "browser" {
+			fmt.Fprintln(os.Stderr, "Usage: rex --compile --target=browser <file.rex>")
 			os.Exit(1)
 		}
 		strictTodo = true
-		if targetMode == "browser" {
-			compileJSFile(args[1])
-		} else {
-			compileFile(args[1])
-		}
+		compileJSFile(args[1])
 		return
 	}
 	if args[0] == "--compile-go" {
@@ -146,6 +148,14 @@ func main() {
 			os.Exit(1)
 		}
 		showTypes(args[1])
+		return
+	}
+	if args[0] == "--graph" {
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: rex --graph <file.rex>")
+			os.Exit(1)
+		}
+		graphFile(args[1])
 		return
 	}
 	if args[0] == "--test" {
@@ -661,6 +671,90 @@ func showTypes(path string) {
 	}
 }
 
+func graphFile(path string) {
+	path = resolveOverlayEntry(path)
+	srcRoot := setupSrcRoot(path)
+
+	source, err := readSourceWithOverlay(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+		os.Exit(1)
+	}
+
+	exprs, err := parser.Parse(source)
+	if err != nil {
+		printErr("Parse error", err)
+		os.Exit(1)
+	}
+	if err := parser.ValidateToplevel(exprs); err != nil {
+		printErr("Syntax error", err)
+		os.Exit(1)
+	}
+	if err := parser.ValidateIndentation(exprs); err != nil {
+		printErr("Indentation error", err)
+		os.Exit(1)
+	}
+	exprs, err = typechecker.ReorderToplevel(exprs)
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+
+	absPath, _ := filepath.Abs(path)
+	extraTypeEnv := stdlibExtraTypeEnv(absPath)
+
+	var warnings []typechecker.Warning
+	if extraTypeEnv != nil {
+		_, warnings, err = typechecker.CheckProgramWithExtraEnv(exprs, extraTypeEnv, srcRoot)
+	} else {
+		_, warnings, err = typechecker.CheckProgram(exprs, srcRoot)
+	}
+	if err != nil {
+		printErr("Type error", err)
+		os.Exit(1)
+	}
+	handleWarnings(path, warnings)
+
+	importInfo, err := ir.ResolveImports(exprs, srcRoot, targetMode, packageRoots)
+	if err != nil {
+		printErr("Import resolution error", err)
+		os.Exit(1)
+	}
+	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
+	allExprs := append(importInfo.Decls, userExprs...)
+
+	l := ir.NewLowerer()
+	prog, err := l.LowerProgram(allExprs)
+	if err != nil {
+		printErr("IR error", err)
+		os.Exit(1)
+	}
+
+	// Shake from user-defined functions only (no $ in name) to remove
+	// unreachable stdlib internals while keeping all user code.
+	var roots []string
+	for _, d := range prog.Decls {
+		switch dl := d.(type) {
+		case ir.DLet:
+			if callgraph.IsUserFunc(dl.Name) {
+				roots = append(roots, dl.Name)
+			}
+		case ir.DLetRec:
+			for _, b := range dl.Bindings {
+				if callgraph.IsUserFunc(b.Name) {
+					roots = append(roots, b.Name)
+				}
+			}
+		}
+	}
+	if len(roots) > 0 {
+		prog = ir.ShakeFrom(prog, roots...)
+	}
+
+	g := callgraph.Build(prog)
+	g.WriteDot(os.Stdout)
+}
+
 // compileToIR runs the frontend pipeline: parse → validate → typecheck → IR.
 // Errors are printed to stderr; returns (nil, nil, err) on failure.
 func compileToIR(source, path string, testMode bool, srcRoot string) (*ir.Program, typechecker.TypeEnv, error) {
@@ -816,9 +910,17 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	mustWriteFile(goFile, goSrc)
 	written[goFile] = true
 
-	// Write go.mod
+	// Write go.mod (with Go requires from rex.toml if any)
 	base := strings.TrimSuffix(filepath.Base(path), ".rex")
+	goRequires := collectGoRequires()
 	goMod := fmt.Sprintf("module rex_%s\n\ngo 1.24\n", base)
+	if len(goRequires) > 0 {
+		goMod += "\nrequire (\n"
+		for mod, ver := range goRequires {
+			goMod += fmt.Sprintf("\t%s %s\n", mod, ver)
+		}
+		goMod += ")\n"
+	}
 	goModPath := filepath.Join(buildDir, "go.mod")
 	mustWriteFile(goModPath, goMod)
 	written[goModPath] = true
@@ -839,6 +941,29 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 		}
 	}
 
+	// Extract companion files for needed user package modules
+	pkgCompanions := codegen.NeededPackageCompanions(prog, typeEnv)
+	for _, pc := range pkgCompanions {
+		pkgSrc, ok := packageRoots[pc.Namespace]
+		if !ok {
+			continue
+		}
+		modPath := strings.ReplaceAll(pc.Module, ".", "/")
+		companionPath := filepath.Join(pkgSrc, modPath+".go")
+		data, err := os.ReadFile(companionPath)
+		if err != nil {
+			continue // no companion file — externals may be provided by user code
+		}
+		src := string(data)
+		if strings.HasPrefix(src, "//go:build ignore\n") {
+			src = src[len("//go:build ignore\n"):]
+		}
+		destName := "pkg_" + pc.Namespace + "_" + strings.ToLower(strings.ReplaceAll(pc.Module, ".", "_")) + ".go"
+		p := filepath.Join(buildDir, destName)
+		mustWriteFile(p, src)
+		written[p] = true
+	}
+
 	// Remove stale .go files from previous builds
 	entries, _ := os.ReadDir(buildDir)
 	for _, e := range entries {
@@ -846,6 +971,18 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 		if strings.HasSuffix(e.Name(), ".go") && !written[p] {
 			os.Remove(p)
 		}
+	}
+
+	// Fetch Go dependencies if needed
+	if len(goRequires) > 0 {
+		doneTidy := compileTiming.phase("go mod tidy")
+		tidyCmd := exec.Command("go", "mod", "tidy")
+		tidyCmd.Dir = buildDir
+		if tidyOut, tidyErr := tidyCmd.CombinedOutput(); tidyErr != nil {
+			fmt.Fprintf(os.Stderr, "go mod tidy failed: %v\n%s\n", tidyErr, tidyOut)
+			os.Exit(1)
+		}
+		doneTidy()
 	}
 
 	// Build
@@ -861,6 +998,38 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 	}
 
 	return binaryPath
+}
+
+// collectGoRequires gathers [go.requires] from the project and all dependency rex.toml files.
+func collectGoRequires() map[string]string {
+	requires := map[string]string{}
+
+	// Collect from the project's own rex.toml
+	cwd, _ := os.Getwd()
+	projectRoot := manifest.FindProjectRoot(cwd)
+	if projectRoot != "" {
+		m, _, err := manifest.Load(projectRoot)
+		if err == nil {
+			for mod, ver := range m.Go.Requires {
+				requires[mod] = ver
+			}
+		}
+	}
+
+	// Collect from each dependency package's rex.toml
+	for _, srcDir := range packageRoots {
+		pkgRoot := filepath.Dir(srcDir) // src/ → package root
+		m, _, err := manifest.Load(pkgRoot)
+		if err != nil {
+			continue
+		}
+		for mod, ver := range m.Go.Requires {
+			if _, exists := requires[mod]; !exists {
+				requires[mod] = ver
+			}
+		}
+	}
+	return requires
 }
 
 func mustWriteFile(path, content string) {
@@ -913,98 +1082,6 @@ func readSourceWithOverlay(path string) (string, error) {
 		return src, nil // no overlay, that's fine
 	}
 	return src + "\n" + string(overlay), nil
-}
-
-// ---------------------------------------------------------------------------
-// compileFile
-// ---------------------------------------------------------------------------
-
-func compileFile(path string) {
-	path = resolveOverlayEntry(path)
-	srcRoot := setupSrcRoot(path)
-
-	source, err := readSourceWithOverlay(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Parse
-	exprs, err := parser.Parse(source)
-	if err != nil {
-		printErr("Parse error", err)
-		os.Exit(1)
-	}
-
-	if err := parser.ValidateToplevel(exprs); err != nil {
-		printErr("Syntax error", err)
-		os.Exit(1)
-	}
-
-	if err := parser.ValidateIndentation(exprs); err != nil {
-		printErr("Indentation error", err)
-		os.Exit(1)
-	}
-
-	exprs, err = typechecker.ReorderToplevel(exprs)
-	if err != nil {
-		printErr("Type error", err)
-		os.Exit(1)
-	}
-
-	typeEnv, warnings, err := typechecker.CheckProgram(exprs, srcRoot)
-	if err != nil {
-		printErr("Type error", err)
-		os.Exit(1)
-	}
-	handleWarnings(path, warnings)
-
-	// Resolve module imports: collect type/trait/impl/function declarations
-	// from imported modules so codegen has full program visibility.
-	importInfo, err := ir.ResolveImports(exprs, srcRoot, targetMode, packageRoots)
-	if err != nil {
-		printErr("Import resolution error", err)
-		os.Exit(1)
-	}
-	userExprs := ir.ApplyAliases(exprs, importInfo.Aliases)
-	allExprs := append(importInfo.Decls, userExprs...)
-
-	// Lower to IR
-	l := ir.NewLowerer()
-	prog, err := l.LowerProgram(allExprs)
-	if err != nil {
-		printErr("IR error", err)
-		os.Exit(1)
-	}
-
-	// Tree shake: remove functions not reachable from main
-	prog = ir.Shake(prog)
-
-	// Emit WAT
-	wat, err := codegen.EmitWAT(prog, typeEnv)
-	if err != nil {
-		printErr("Codegen error", err)
-		os.Exit(1)
-	}
-
-	// Determine output paths
-	base := strings.TrimSuffix(filepath.Base(path), ".rex")
-	watPath := base + ".wat"
-	wasmPath := base + ".wasm"
-
-	if err := os.WriteFile(watPath, []byte(wat), 0644); err != nil {
-		fmt.Fprintf(os.Stderr, "Error writing WAT: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Assemble with wasm-tools
-	out, err := exec.Command("wasm-tools", "parse", watPath, "-o", wasmPath).CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "wasm-tools failed: %v\n%s", err, out)
-		os.Exit(1)
-	}
-
-	fmt.Printf("Compiled %s → %s (%s)\n", path, wasmPath, watPath)
 }
 
 // ---------------------------------------------------------------------------
@@ -1066,10 +1143,53 @@ func compileGoFile(path string) {
 		}
 	}
 
+	// Extract companion files for needed user package modules
+	pkgCompanions := codegen.NeededPackageCompanions(prog, typeEnv)
+	for _, pc := range pkgCompanions {
+		pkgSrc, ok := packageRoots[pc.Namespace]
+		if !ok {
+			continue
+		}
+		modPath := strings.ReplaceAll(pc.Module, ".", "/")
+		companionPath := filepath.Join(pkgSrc, modPath+".go")
+		data, err := os.ReadFile(companionPath)
+		if err != nil {
+			continue
+		}
+		src := string(data)
+		if strings.HasPrefix(src, "//go:build ignore\n") {
+			src = src[len("//go:build ignore\n"):]
+		}
+		destName := "pkg_" + pc.Namespace + "_" + strings.ToLower(strings.ReplaceAll(pc.Module, ".", "_")) + ".go"
+		p := filepath.Join(goDir, destName)
+		if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing package companion file: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	goRequires := collectGoRequires()
 	goMod := fmt.Sprintf("module rex_%s\n\ngo 1.24\n", base)
+	if len(goRequires) > 0 {
+		goMod += "\nrequire (\n"
+		for mod, ver := range goRequires {
+			goMod += fmt.Sprintf("\t%s %s\n", mod, ver)
+		}
+		goMod += ")\n"
+	}
 	if err := os.WriteFile(filepath.Join(goDir, "go.mod"), []byte(goMod), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing go.mod: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Fetch Go dependencies if needed
+	if len(goRequires) > 0 {
+		tidyCmd := exec.Command("go", "mod", "tidy")
+		tidyCmd.Dir = goDir
+		if tidyOut, tidyErr := tidyCmd.CombinedOutput(); tidyErr != nil {
+			fmt.Fprintf(os.Stderr, "go mod tidy failed: %v\n%s\n", tidyErr, tidyOut)
+			os.Exit(1)
+		}
 	}
 
 	absOutput, _ := filepath.Abs(binaryPath)

@@ -13,6 +13,12 @@ import (
 type Manifest struct {
 	Package  PackageInfo            `toml:"package"`
 	Deps     map[string]Dependency  `toml:"dependencies"`
+	Go       GoSection              `toml:"go"`
+}
+
+// GoSection is the [go] section for Go-level dependencies.
+type GoSection struct {
+	Requires map[string]string `toml:"requires"` // Go module path → version
 }
 
 // PackageInfo is the [package] section.
