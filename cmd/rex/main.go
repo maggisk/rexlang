@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -96,6 +97,10 @@ func main() {
 	}
 	if args[0] == "lsp" {
 		lsp.Run()
+		return
+	}
+	if args[0] == "check" {
+		runCheck()
 		return
 	}
 	if args[0] == "install" {
@@ -326,6 +331,208 @@ func setupSrcRoot(entryFile string) string {
 		return ""
 	}
 	return absSrc
+}
+
+// ---------------------------------------------------------------------------
+// rex check — verify library companions compile
+// ---------------------------------------------------------------------------
+
+func runCheck() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Must be in a library with rex.toml + [package] name
+	m, deps, err := manifest.Load(cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	pkgName := m.Package.Name
+	if pkgName == "" {
+		fmt.Fprintln(os.Stderr, "Error: rex.toml must have [package] name for rex check")
+		os.Exit(1)
+	}
+
+	srcDir := filepath.Join(cwd, "src")
+	if info, err := os.Stat(srcDir); err != nil || !info.IsDir() {
+		fmt.Fprintln(os.Stderr, "Error: no src/ directory found")
+		os.Exit(1)
+	}
+
+	// Set up package roots for dependencies (so imports resolve)
+	typechecker.SetTarget(targetMode)
+	if len(deps) > 0 {
+		roots, err := manifest.PackageRoots(cwd, deps)
+		if err == nil {
+			packageRoots = roots
+			typechecker.SetPackageRoots(roots)
+		}
+	}
+
+	// Find all .rex files in src/
+	var rexFiles []string
+	filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		base := filepath.Base(path)
+		if !strings.HasSuffix(base, ".rex") {
+			return nil
+		}
+		// Skip overlay files (.browser.rex, .native.rex)
+		name := strings.TrimSuffix(base, ".rex")
+		if strings.Contains(name, ".") {
+			return nil
+		}
+		rexFiles = append(rexFiles, path)
+		return nil
+	})
+
+	if len(rexFiles) == 0 {
+		fmt.Fprintln(os.Stderr, "Error: no .rex files found in src/")
+		os.Exit(1)
+	}
+
+	// Step 1: Typecheck each .rex file and collect IR declarations per module
+	type moduleInfo struct {
+		name  string // module name (e.g. "Db")
+		dir   string // directory containing the .rex file
+		decls []ir.Decl
+	}
+	var modules []moduleInfo
+
+	for _, path := range rexFiles {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading %s: %v\n", path, err)
+			os.Exit(1)
+		}
+
+		exprs, err := parser.Parse(string(source))
+		if err != nil {
+			printErrWithSource("Parse error", err, string(source))
+			os.Exit(1)
+		}
+		if err := parser.ValidateToplevel(exprs); err != nil {
+			printErrWithSource("Syntax error", err, string(source))
+			os.Exit(1)
+		}
+		if err := parser.ValidateIndentation(exprs); err != nil {
+			printErrWithSource("Indentation error", err, string(source))
+			os.Exit(1)
+		}
+
+		typeEnv, warnings, err := typechecker.CheckProgram(exprs, srcDir)
+		if err != nil {
+			if te, ok := err.(*types.TypeError); ok {
+				te.Source = string(source)
+				te.File = path
+			}
+			printErr("Type error", err)
+			os.Exit(1)
+		}
+		_ = typeEnv
+		handleWarnings(path, warnings)
+
+		// Lower only user declarations to IR to get DType for this module.
+		// We don't need imported types — only the module's own type declarations.
+		l := ir.NewLowerer()
+		prog, err := l.LowerProgram(exprs)
+		if err != nil {
+			printErr("IR error", err)
+			os.Exit(1)
+		}
+
+		// Derive module name from file path relative to src/
+		rel, _ := filepath.Rel(srcDir, path)
+		modName := strings.TrimSuffix(rel, ".rex")
+		modName = strings.ReplaceAll(modName, string(filepath.Separator), ".")
+
+		modules = append(modules, moduleInfo{
+			name:  modName,
+			dir:   filepath.Dir(path),
+			decls: prog.Decls,
+		})
+	}
+
+	fmt.Println("Rex type-check passed")
+
+	// Step 2: Find directories with companion .go files
+	companionDirs := map[string]bool{}
+	filepath.Walk(srcDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".go") {
+			// Skip generated files
+			base := filepath.Base(path)
+			if base == "rex_runtime.go" || strings.HasSuffix(base, ".types.go") {
+				return nil
+			}
+			companionDirs[filepath.Dir(path)] = true
+		}
+		return nil
+	})
+
+	if len(companionDirs) == 0 {
+		fmt.Println("No Go companion files found — skipping Go compilation")
+		return
+	}
+
+	// Step 3: Generate rex_runtime.go in each directory with companions
+	for dir := range companionDirs {
+		runtimePath := filepath.Join(dir, "rex_runtime.go")
+		mustWriteFile(runtimePath, codegen.GenerateLibRuntime(pkgName))
+	}
+
+	// Step 4: Generate <Module>.types.go for each module with type declarations
+	for _, mod := range modules {
+		typesContent := codegen.GenerateLibTypes(pkgName, mod.decls)
+		if typesContent == "" {
+			continue
+		}
+		typesPath := filepath.Join(mod.dir, mod.name+".types.go")
+		mustWriteFile(typesPath, typesContent)
+	}
+
+	// Step 5: Generate go.mod at library root
+	goMod := fmt.Sprintf("module rexlib/%s\n\ngo 1.24\n", pkgName)
+	if len(m.Go.Requires) > 0 {
+		goMod += "\nrequire (\n"
+		for mod, ver := range m.Go.Requires {
+			goMod += fmt.Sprintf("\t%s %s\n", mod, ver)
+		}
+		goMod += ")\n"
+	}
+	mustWriteFile(filepath.Join(cwd, "go.mod"), goMod)
+
+	// Step 6: Run go mod tidy
+	tidyCmd := exec.Command("go", "mod", "tidy")
+	tidyCmd.Dir = cwd
+	tidyCmd.Stdout = os.Stdout
+	tidyCmd.Stderr = os.Stderr
+	if err := tidyCmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "go mod tidy failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Step 7: Run go build ./src/
+	buildCmd := exec.Command("go", "build", "./src/")
+	buildCmd.Dir = cwd
+	buildCmd.Stdout = os.Stdout
+	buildCmd.Stderr = os.Stderr
+	if err := buildCmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "go build failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Go compilation passed")
 }
 
 // ---------------------------------------------------------------------------
@@ -954,10 +1161,7 @@ func buildGoProgram(prog *ir.Program, typeEnv typechecker.TypeEnv, path string, 
 		if err != nil {
 			continue // no companion file — externals may be provided by user code
 		}
-		src := string(data)
-		if strings.HasPrefix(src, "//go:build ignore\n") {
-			src = src[len("//go:build ignore\n"):]
-		}
+		src := rewriteCompanionPkg(string(data))
 		destName := "pkg_" + pc.Namespace + "_" + strings.ToLower(strings.ReplaceAll(pc.Module, ".", "_")) + ".go"
 		p := filepath.Join(buildDir, destName)
 		mustWriteFile(p, src)
@@ -1037,6 +1241,20 @@ func mustWriteFile(path, content string) {
 		fmt.Fprintf(os.Stderr, "Error writing %s: %v\n", path, err)
 		os.Exit(1)
 	}
+}
+
+// rewriteCompanionPkg rewrites a companion .go file's package declaration to
+// "package main" for inclusion in the flat build directory. Handles both the
+// old format (//go:build ignore + package main) and the new format (package <name>).
+var pkgDeclRe = regexp.MustCompile(`(?m)^package\s+\w+`)
+
+func rewriteCompanionPkg(src string) string {
+	// Strip old-style build tag if present (backwards compat)
+	if strings.HasPrefix(src, "//go:build ignore\n") {
+		src = src[len("//go:build ignore\n"):]
+	}
+	// Rewrite package declaration to main
+	return pkgDeclRe.ReplaceAllString(src, "package main")
 }
 
 // resolveOverlayEntry detects when the user passes a target-overlay file
@@ -1156,10 +1374,7 @@ func compileGoFile(path string) {
 		if err != nil {
 			continue
 		}
-		src := string(data)
-		if strings.HasPrefix(src, "//go:build ignore\n") {
-			src = src[len("//go:build ignore\n"):]
-		}
+		src := rewriteCompanionPkg(string(data))
 		destName := "pkg_" + pc.Namespace + "_" + strings.ToLower(strings.ReplaceAll(pc.Module, ".", "_")) + ".go"
 		p := filepath.Join(goDir, destName)
 		if err := os.WriteFile(p, []byte(src), 0644); err != nil {
