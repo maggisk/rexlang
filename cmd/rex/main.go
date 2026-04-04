@@ -126,16 +126,32 @@ func main() {
 		return
 	}
 	if args[0] == "--compile" {
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: rex --compile --target=browser <file.rex>")
+		if targetMode != "browser" {
+			fmt.Fprintln(os.Stderr, "Usage: rex --compile --target=browser [--out=<dir>] <file.rex>")
 			os.Exit(1)
 		}
-		if targetMode != "browser" {
-			fmt.Fprintln(os.Stderr, "Usage: rex --compile --target=browser <file.rex>")
+		var outDir string
+		var compileArgs []string
+		for _, a := range args[1:] {
+			if strings.HasPrefix(a, "--out=") {
+				outDir = strings.TrimPrefix(a, "--out=")
+			} else {
+				compileArgs = append(compileArgs, a)
+			}
+		}
+		if len(compileArgs) != 1 {
+			fmt.Fprintln(os.Stderr, "Usage: rex --compile --target=browser [--out=<dir>] <file.rex>")
 			os.Exit(1)
+		}
+		if outDir == "" {
+			outDir = "dist"
 		}
 		strictTodo = true
-		compileJSFile(args[1])
+		// Browser target always uses ESM output
+		if moduleMode == "global:Rex" {
+			moduleMode = "esm"
+		}
+		compileJSFile(compileArgs[0], outDir)
 		return
 	}
 	if args[0] == "--compile-go" {
@@ -400,12 +416,7 @@ func runCheck() {
 	}
 
 	// Step 1: Typecheck each .rex file and collect IR declarations per module
-	type moduleInfo struct {
-		name  string // module name (e.g. "Db")
-		dir   string // directory containing the .rex file
-		decls []ir.Decl
-	}
-	var modules []moduleInfo
+	var modules []checkModuleInfo
 
 	for _, path := range rexFiles {
 		source, err := os.ReadFile(path)
@@ -454,14 +465,29 @@ func runCheck() {
 		modName := strings.TrimSuffix(rel, ".rex")
 		modName = strings.ReplaceAll(modName, string(filepath.Separator), ".")
 
-		modules = append(modules, moduleInfo{
-			name:  modName,
-			dir:   filepath.Dir(path),
-			decls: prog.Decls,
+		// Collect external declarations
+		var externals []string
+		for _, e := range exprs {
+			if ext, ok := e.(ast.ExternalDecl); ok {
+				externals = append(externals, ext.Name)
+			}
+		}
+
+		modules = append(modules, checkModuleInfo{
+			name:      modName,
+			dir:       filepath.Dir(path),
+			decls:     prog.Decls,
+			externals: externals,
 		})
 	}
 
 	fmt.Println("Rex type-check passed")
+
+	// --target=browser: validate JS companions, generate prelude + types
+	if targetMode == "browser" {
+		runCheckBrowser(srcDir, modules)
+		return
+	}
 
 	// Step 2: Find directories with companion .go files
 	companionDirs := map[string]bool{}
@@ -533,6 +559,101 @@ func runCheck() {
 	}
 
 	fmt.Println("Go compilation passed")
+}
+
+// checkModuleInfo holds data about a module collected during rex check.
+type checkModuleInfo struct {
+	name      string // module name (e.g. "Db")
+	dir       string // directory containing the .rex file
+	decls     []ir.Decl
+	externals []string // external function names
+}
+
+// runCheckBrowser validates JS companions and generates prelude/types files.
+func runCheckBrowser(srcDir string, modules []checkModuleInfo) {
+	hasErrors := false
+
+	for _, mod := range modules {
+		if len(mod.externals) == 0 {
+			continue
+		}
+
+		// Look for <Module>.mjs companion
+		mjsPath := filepath.Join(mod.dir, mod.name+".mjs")
+		data, err := os.ReadFile(mjsPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Module %q has %d external declarations but no JS companion.\n", mod.name, len(mod.externals))
+			fmt.Fprintf(os.Stderr, "       Expected: %s\n\n", mjsPath)
+			fmt.Fprintf(os.Stderr, "       Externals without implementations:\n")
+			for _, name := range mod.externals {
+				fmt.Fprintf(os.Stderr, "         %s\n", name)
+			}
+			fmt.Fprintln(os.Stderr)
+			hasErrors = true
+			continue
+		}
+
+		// Scan companion for exported function names
+		companionSrc := string(data)
+		exported := scanJsExports(companionSrc)
+
+		var missing []string
+		for _, name := range mod.externals {
+			if !exported[name] {
+				missing = append(missing, name)
+			}
+		}
+		if len(missing) > 0 {
+			exportedNames := make([]string, 0, len(exported))
+			for name := range exported {
+				exportedNames = append(exportedNames, name)
+			}
+			fmt.Fprintf(os.Stderr, "Error: %s is missing implementation for externals:\n", mjsPath)
+			for _, name := range missing {
+				fmt.Fprintf(os.Stderr, "         %s\n", name)
+			}
+			fmt.Fprintf(os.Stderr, "\n       The companion exports: %s\n", strings.Join(exportedNames, ", "))
+			fmt.Fprintln(os.Stderr)
+			hasErrors = true
+		}
+	}
+
+	if hasErrors {
+		os.Exit(1)
+	}
+
+	// Generate rex_prelude.mjs in src/
+	preludePath := filepath.Join(srcDir, "rex_prelude.mjs")
+	mustWriteFile(preludePath, codegen.GenerateJSPrelude())
+	fmt.Printf("Generated %s\n", preludePath)
+
+	// Generate <Module>.types.mjs for each module with type declarations
+	for _, mod := range modules {
+		typesContent := codegen.GenerateJSTypes(mod.name, mod.decls)
+		if typesContent == "" {
+			continue
+		}
+		typesPath := filepath.Join(mod.dir, mod.name+".types.mjs")
+		mustWriteFile(typesPath, typesContent)
+		fmt.Printf("Generated %s\n", typesPath)
+	}
+
+	fmt.Println("JS companion check passed")
+}
+
+// scanJsExports scans JS source for `export function name` and `export const name`
+// declarations and returns a set of exported names.
+func scanJsExports(src string) map[string]bool {
+	exports := make(map[string]bool)
+	funcRe := regexp.MustCompile(`export\s+function\s+(\w+)`)
+	constRe := regexp.MustCompile(`export\s+const\s+(\w+)`)
+	for _, m := range funcRe.FindAllStringSubmatch(src, -1) {
+		exports[m[1]] = true
+	}
+	for _, m := range constRe.FindAllStringSubmatch(src, -1) {
+		exports[m[1]] = true
+	}
+	return exports
 }
 
 // ---------------------------------------------------------------------------
@@ -1423,7 +1544,7 @@ func compileGoFile(path string) {
 // compileJSFile
 // ---------------------------------------------------------------------------
 
-func compileJSFile(path string) {
+func compileJSFile(path string, outDir string) {
 	path = resolveOverlayEntry(path)
 	srcRoot := setupSrcRoot(path)
 
@@ -1479,28 +1600,52 @@ func compileJSFile(path string) {
 
 	prog = ir.Shake(prog)
 
-	jsSrc, err := codegen.EmitJS(prog, typeEnv, importInfo.JsBindings, moduleMode)
+	jsSrc, err := codegen.EmitJS(prog, typeEnv, importInfo.JsBindings, moduleMode, importInfo.JsCompanions)
 	if err != nil {
 		printErr("Codegen error", err)
 		os.Exit(1)
 	}
 
-	base := strings.TrimSuffix(filepath.Base(path), ".rex")
-	jsFile := base + ".js"
-	htmlFile := base + ".html"
+	// Create output directory
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating output directory: %v\n", err)
+		os.Exit(1)
+	}
 
-	if err := os.WriteFile(jsFile, []byte(jsSrc), 0644); err != nil {
+	mjsFile := filepath.Join(outDir, "Main.mjs")
+	htmlFile := filepath.Join(outDir, "index.html")
+
+	if err := os.WriteFile(mjsFile, []byte(jsSrc), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing JS file: %v\n", err)
 		os.Exit(1)
 	}
 
-	htmlSrc := codegen.EmitBrowserHTML(jsFile)
+	// Copy companion .mjs files to output directory
+	for _, c := range importInfo.JsCompanions {
+		destPath := filepath.Join(outDir, c.Filename)
+		if err := os.WriteFile(destPath, []byte(c.Source), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing companion %s: %v\n", c.Filename, err)
+			os.Exit(1)
+		}
+	}
+
+	// Emit rex_prelude.mjs if any companion imports it
+	hasCompanions := len(importInfo.JsCompanions) > 0
+	if hasCompanions {
+		preludePath := filepath.Join(outDir, "rex_prelude.mjs")
+		if err := os.WriteFile(preludePath, []byte(codegen.GenerateJSPrelude()), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Error writing rex_prelude.mjs: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	htmlSrc := codegen.EmitBrowserHTML("Main.mjs")
 	if err := os.WriteFile(htmlFile, []byte(htmlSrc), 0644); err != nil {
 		fmt.Fprintf(os.Stderr, "Error writing HTML file: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("Compiled %s → %s + %s\n", path, jsFile, htmlFile)
+	fmt.Printf("Compiled %s → %s/\n", path, outDir)
 }
 
 // ---------------------------------------------------------------------------

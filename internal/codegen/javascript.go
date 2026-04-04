@@ -14,7 +14,7 @@ import (
 )
 
 // EmitJS converts an IR program to JavaScript source code (browser target).
-func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, jsBindings []ir.JsBinding, moduleMode string) (string, error) {
+func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, jsBindings []ir.JsBinding, moduleMode string, companions ...[]ir.JsCompanion) (string, error) {
 	g := &jsGen{
 		buf:              &strings.Builder{},
 		typeEnv:          typeEnv,
@@ -28,6 +28,10 @@ func EmitJS(prog *ir.Program, typeEnv typechecker.TypeEnv, jsBindings []ir.JsBin
 		knownTypes:       map[string]bool{"Int": true, "Float": true, "String": true, "Bool": true},
 		jsBindings:       jsBindings,
 		moduleMode:       moduleMode,
+		companionHandled: make(map[string]bool),
+	}
+	if len(companions) > 0 {
+		g.jsCompanions = companions[0]
 	}
 	return g.emit(prog)
 }
@@ -70,6 +74,12 @@ type jsImplCase struct {
 // Generator state
 // ---------------------------------------------------------------------------
 
+// jsCompanionImport tracks an ESM import statement for a companion file.
+type jsCompanionImport struct {
+	filename string   // e.g. "String.mjs"
+	names    []string // exported names to import
+}
+
 type jsGen struct {
 	buf              *strings.Builder
 	indent           int
@@ -87,8 +97,14 @@ type jsGen struct {
 	usesConcurrency bool
 	usesJsFfi       bool              // browser: Std:Js FFI primitives
 	knownTypes      map[string]bool   // types defined in the program
-	jsBindings      []ir.JsBinding    // companion JS file bindings
+	jsBindings      []ir.JsBinding    // legacy per-function JS bindings
+	jsCompanions    []ir.JsCompanion  // per-module .mjs companions
 	moduleMode      string            // module compilation mode
+
+	// ESM companion output
+	companionImports  []jsCompanionImport  // import statements for companions
+	companionWrappers []string             // curried wrapper declarations
+	companionHandled  map[string]bool      // mangled names handled by companions (skip builtin interception)
 }
 
 func (g *jsGen) fresh() string {
@@ -127,6 +143,9 @@ func (g *jsGen) raw(s string) {
 func (g *jsGen) emit(prog *ir.Program) (string, error) {
 	// Phase 1: analyze
 	g.analyze(prog)
+
+	// Phase 1b: build companion import/wrapper info for ESM output
+	g.buildCompanionImports()
 
 	// Phase 2: emit module body
 	body := &strings.Builder{}
@@ -203,13 +222,31 @@ func (g *jsGen) wrapModule(body string) string {
 
 	switch {
 	case mode == "esm":
-		return "\"use strict\";\n\n" + body + "\nexport function main() { return $main(null); }\n"
+		var sb strings.Builder
+		// Emit companion imports at the top
+		for _, ci := range g.companionImports {
+			fmt.Fprintf(&sb, "import { %s } from \"./%s\";\n", strings.Join(ci.names, ", "), ci.filename)
+		}
+		if len(g.companionImports) > 0 {
+			sb.WriteString("\n")
+		}
+		// Emit curried wrappers for companion externals (before body so they're available)
+		for _, cw := range g.companionWrappers {
+			sb.WriteString(cw)
+			sb.WriteString("\n")
+		}
+		if len(g.companionWrappers) > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(body)
+		sb.WriteString("\nexport function main() { return $main(null); }\nmain();\n")
+		return sb.String()
 
 	case mode == "cjs":
 		return "\"use strict\";\n\n" + body + "\nmodule.exports = { main: () => $main(null) };\n"
 
 	default:
-		// global or global:Name
+		// global or global:Name — legacy IIFE mode
 		name := "Rex"
 		if strings.HasPrefix(mode, "global:") {
 			name = strings.TrimPrefix(mode, "global:")
@@ -287,6 +324,59 @@ func (g *jsGen) analyze(prog *ir.Program) {
 				})
 				g.scanExpr(m.Body)
 			}
+
+		}
+	}
+}
+
+// hasCompanionForModule checks if a companion .mjs exists for a given module.
+func (g *jsGen) hasCompanionForModule(module string) bool {
+	for _, c := range g.jsCompanions {
+		if c.Module == module {
+			return true
+		}
+	}
+	return false
+}
+
+// buildCompanionImports creates ESM import statements and curried wrappers
+// for each companion module's externals.
+func (g *jsGen) buildCompanionImports() {
+	for _, c := range g.jsCompanions {
+		prefix := ir.ModulePrefix(c.Module)
+		var importNames []string
+		for _, extName := range c.Externals {
+			importNames = append(importNames, extName)
+
+			mangledName := prefix + extName
+			g.companionHandled[mangledName] = true
+			arity := c.Arities[extName]
+
+			if arity <= 1 {
+				// 0 or 1 arg: alias directly
+				g.companionWrappers = append(g.companionWrappers,
+					fmt.Sprintf("const %s = %s;", jsFuncName(mangledName), extName))
+			} else {
+				// Multi-arg: emit curried wrapper
+				// const Mod$name = (a0) => (a1) => name(a0, a1);
+				params := make([]string, arity)
+				for i := range arity {
+					params[i] = fmt.Sprintf("a%d", i)
+				}
+				var curried string
+				for i := 0; i < arity; i++ {
+					curried += fmt.Sprintf("(%s) => ", params[i])
+				}
+				curried += fmt.Sprintf("%s(%s)", extName, strings.Join(params, ", "))
+				g.companionWrappers = append(g.companionWrappers,
+					fmt.Sprintf("const %s = %s;", jsFuncName(mangledName), curried))
+			}
+		}
+		if len(importNames) > 0 {
+			g.companionImports = append(g.companionImports, jsCompanionImport{
+				filename: c.Filename,
+				names:    importNames,
+			})
 		}
 	}
 }
@@ -526,8 +616,9 @@ function $todo(msg) { throw new Error("TODO: " + (typeof msg === "string" ? msg 
 
 `)
 
-	// String builtins
-	b.WriteString(`function $stringLength(s) { return [...s].length; }
+	// String builtins — only emit when no companion handles them
+	if !g.hasCompanionForModule("Std:String") {
+		b.WriteString(`function $stringLength(s) { return [...s].length; }
 function $toUpper(s) { return s.toUpperCase(); }
 function $toLower(s) { return s.toLowerCase(); }
 function $trim(s) { return s.trim(); }
@@ -562,6 +653,7 @@ function $stringFromList(lst) { const chars = []; let cur = lst; while (cur !== 
 function $toFloat(n) { return n; }
 
 `)
+	}
 
 
 	// Concurrency runtime — synchronous CPS actors
@@ -1331,7 +1423,8 @@ func (g *jsGen) emitApp(c ir.CApp) error {
 	}
 
 	// String/math builtins — only match if not shadowed by user-defined function
-	if !isShadowed {
+	// and not handled by a companion module
+	if !isShadowed && !g.companionHandled[funcName] {
 		if emitted := g.emitStringBuiltin(short, c); emitted {
 			return nil
 		}
@@ -2079,63 +2172,66 @@ func (g *jsGen) atomStr(a ir.Atom) string {
 			}
 		}
 		// String/math builtins as values (after user-defined names)
-		switch shortName(name) {
-		case "length":
-			return "((s) => $stringLength(s))"
-		case "toUpper":
-			return "((s) => $toUpper(s))"
-		case "toLower":
-			return "((s) => $toLower(s))"
-		case "trim":
-			return "((s) => $trim(s))"
-		case "trimLeft":
-			return "((s) => $trimLeft(s))"
-		case "trimRight":
-			return "((s) => $trimRight(s))"
-		case "reverse":
-			return "((s) => $stringReverse(s))"
-		case "words":
-			return "((s) => $words(s))"
-		case "lines":
-			return "((s) => $lines(s))"
-		case "charCode":
-			return "((s) => $charCode(s))"
-		case "fromCharCode":
-			return "((n) => $fromCharCode(n))"
-		case "parseInt":
-			return "((s) => $stringParseInt(s))"
-		case "parseFloat":
-			return "((s) => $stringParseFloat(s))"
-		case "toList":
-			return "((s) => $stringToList(s))"
-		case "fromList":
-			return "((lst) => $stringFromList(lst))"
-		case "toFloat":
-			return "((n) => $toFloat(n))"
-		case "split":
-			return "((sep) => (s) => $split(sep, s))"
-		case "join":
-			return "((sep) => (lst) => $join(sep, lst))"
-		case "contains":
-			return "((sub) => (s) => $contains(sub, s))"
-		case "startsWith":
-			return "((pfx) => (s) => $startsWith(pfx, s))"
-		case "endsWith":
-			return "((sfx) => (s) => $endsWith(sfx, s))"
-		case "indexOf":
-			return "((sub) => (s) => $indexOf(sub, s))"
-		case "charAt":
-			return "((i) => (s) => $charAt(i, s))"
-		case "repeat":
-			return "((n) => (s) => $repeat(n, s))"
-		case "substring":
-			return "((start) => (end) => (s) => $substring(start, end, s))"
-		case "replace":
-			return "((from) => (to) => (s) => $replace(from, to, s))"
-		case "padLeft":
-			return "((n) => (ch) => (s) => $padLeft(n, ch, s))"
-		case "padRight":
-			return "((n) => (ch) => (s) => $padRight(n, ch, s))"
+		// Skip when companion provides the implementation
+		if !g.companionHandled[name] {
+			switch shortName(name) {
+			case "length":
+				return "((s) => $stringLength(s))"
+			case "toUpper":
+				return "((s) => $toUpper(s))"
+			case "toLower":
+				return "((s) => $toLower(s))"
+			case "trim":
+				return "((s) => $trim(s))"
+			case "trimLeft":
+				return "((s) => $trimLeft(s))"
+			case "trimRight":
+				return "((s) => $trimRight(s))"
+			case "reverse":
+				return "((s) => $stringReverse(s))"
+			case "words":
+				return "((s) => $words(s))"
+			case "lines":
+				return "((s) => $lines(s))"
+			case "charCode":
+				return "((s) => $charCode(s))"
+			case "fromCharCode":
+				return "((n) => $fromCharCode(n))"
+			case "parseInt":
+				return "((s) => $stringParseInt(s))"
+			case "parseFloat":
+				return "((s) => $stringParseFloat(s))"
+			case "toList":
+				return "((s) => $stringToList(s))"
+			case "fromList":
+				return "((lst) => $stringFromList(lst))"
+			case "toFloat":
+				return "((n) => $toFloat(n))"
+			case "split":
+				return "((sep) => (s) => $split(sep, s))"
+			case "join":
+				return "((sep) => (lst) => $join(sep, lst))"
+			case "contains":
+				return "((sub) => (s) => $contains(sub, s))"
+			case "startsWith":
+				return "((pfx) => (s) => $startsWith(pfx, s))"
+			case "endsWith":
+				return "((sfx) => (s) => $endsWith(sfx, s))"
+			case "indexOf":
+				return "((sub) => (s) => $indexOf(sub, s))"
+			case "charAt":
+				return "((i) => (s) => $charAt(i, s))"
+			case "repeat":
+				return "((n) => (s) => $repeat(n, s))"
+			case "substring":
+				return "((start) => (end) => (s) => $substring(start, end, s))"
+			case "replace":
+				return "((from) => (to) => (s) => $replace(from, to, s))"
+			case "padLeft":
+				return "((n) => (ch) => (s) => $padLeft(n, ch, s))"
+			case "padRight":
+				return "((n) => (ch) => (s) => $padRight(n, ch, s))"
+			}
 		}
 		return jsVarName(name)
 	}
@@ -2271,7 +2367,7 @@ func EmitBrowserHTML(jsFileName string) string {
 </head>
 <body>
   <div id="app"></div>
-  <script src="%s"></script>
+  <script type="module" src="%s"></script>
 </body>
 </html>
 `, jsFileName)

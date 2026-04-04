@@ -652,8 +652,8 @@ main _ =
 
 func TestJSBrowserHTMLOutput(t *testing.T) {
 	html := EmitBrowserHTML("counter.js")
-	if !strings.Contains(html, `<script src="counter.js">`) {
-		t.Error("HTML should include script tag for counter.js")
+	if !strings.Contains(html, `<script type="module" src="counter.js">`) {
+		t.Error("HTML should include script type=module tag for counter.js")
 	}
 	if !strings.Contains(html, `<div id="app">`) {
 		t.Error("HTML should include app div")

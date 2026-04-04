@@ -20,15 +20,27 @@ import (
 
 // ImportInfo holds resolved module declarations and name mappings.
 type ImportInfo struct {
-	Decls     []ast.Expr        // module declarations (types, functions, etc.)
-	Aliases   map[string]string // imported name → prefixed module name (e.g. "length" → "Std_List__length")
-	JsBindings []JsBinding      // companion .js file contents for external FFI
+	Decls        []ast.Expr        // module declarations (types, functions, etc.)
+	Aliases      map[string]string // imported name → prefixed module name (e.g. "length" → "Std_List__length")
+	JsBindings   []JsBinding       // legacy per-function .js bindings (unused)
+	JsCompanions []JsCompanion     // per-module .mjs companion files
 }
 
 // JsBinding maps a mangled function name to its JS implementation source.
+// Legacy: per-function .js companions. Kept for backward compatibility.
 type JsBinding struct {
 	MangledName string // e.g. "rex_tearex_Html__refEq"
 	Source      string // contents of the .js file
+}
+
+// JsCompanion represents a per-module .mjs companion file for JS FFI.
+type JsCompanion struct {
+	Module    string            // module path (e.g. "Std:String", "tearex:Html", "Canvas")
+	Filename  string            // output filename (e.g. "String.mjs", "Html.mjs", "Canvas.mjs")
+	Source    string            // contents of the .mjs file
+	Path      string            // original file path (for error reporting)
+	Externals []string          // external function names declared in the .rex module
+	Arities   map[string]int    // function name → arity (from type annotations)
 }
 
 // ModulePrefix converts a module path to a valid JS identifier prefix.
@@ -83,9 +95,10 @@ func ResolveImports(exprs []ast.Expr, srcRoot string, target string, packageRoot
 		return nil, err
 	}
 	return &ImportInfo{
-		Decls:     r.decls,
-		Aliases:   r.aliases,
-		JsBindings: r.jsBindings,
+		Decls:        r.decls,
+		Aliases:      r.aliases,
+		JsBindings:   r.jsBindings,
+		JsCompanions: r.jsCompanions,
 	}, nil
 }
 
@@ -98,7 +111,8 @@ type resolver struct {
 	packageRoots map[string]string // package name → abs path to package src/
 	target       string            // compilation target ("native", "browser", etc.)
 	stack        []string          // for circular import detection
-	jsBindings   []JsBinding       // companion .js file bindings
+	jsBindings   []JsBinding       // legacy per-function .js bindings
+	jsCompanions []JsCompanion     // per-module .mjs companions
 }
 
 func (r *resolver) resolve(exprs []ast.Expr, isRoot bool) error {
@@ -476,50 +490,93 @@ func (r *resolver) loadSource(module string) (string, error) {
 }
 
 // loadCompanionJS scans module source for external declarations and looks for
-// per-function companion JS files: ModuleName.functionName.js
-// Each file's contents are wrapped in an IIFE and assigned to the mangled name.
+// a per-module companion .mjs file (e.g. Canvas.mjs for Canvas.rex).
+// For stdlib modules, loads the embedded .mjs companion from stdlib.
 func (r *resolver) loadCompanionJS(module string, modExprs []ast.Expr) {
-	// Determine the source directory and module file prefix
-	var srcDir, modFilePrefix, prefix string
+	// Collect external declaration names and arities
+	var externals []string
+	arities := make(map[string]int)
+	for _, expr := range modExprs {
+		if ext, ok := expr.(ast.ExternalDecl); ok {
+			externals = append(externals, ext.Name)
+			arities[ext.Name] = countTyFunArity(ext.Type)
+		}
+	}
+	if len(externals) == 0 {
+		return
+	}
+
+	var companionSource string
+	var companionPath string
+	var filename string
 
 	if strings.Contains(module, ":") {
 		parts := strings.SplitN(module, ":", 2)
 		namespace, name := parts[0], parts[1]
 		if namespace == "Std" {
-			return // stdlib builtins handled by codegen preamble
+			// Stdlib: load embedded .mjs companion
+			src := stdlib.JsCompanion(name)
+			if src == "" {
+				return // no companion — handled by codegen preamble
+			}
+			companionSource = src
+			companionPath = "(embedded)"
+			nameParts := strings.Split(name, ".")
+			filename = nameParts[len(nameParts)-1] + ".mjs"
+		} else {
+			// Package: look for <pkg-src>/Module.mjs
+			pkgSrc, ok := r.packageRoots[namespace]
+			if !ok {
+				return
+			}
+			modPath := strings.ReplaceAll(name, ".", "/")
+			mjsPath := pkgSrc + "/" + modPath + ".mjs"
+			data, err := os.ReadFile(mjsPath)
+			if err != nil {
+				return
+			}
+			companionSource = string(data)
+			companionPath = mjsPath
+			nameParts := strings.Split(name, ".")
+			filename = nameParts[len(nameParts)-1] + ".mjs"
 		}
-		pkgSrc, ok := r.packageRoots[namespace]
-		if !ok {
-			return
-		}
-		srcDir = pkgSrc
-		modFilePrefix = strings.ReplaceAll(name, ".", "/")
-		prefix = ModulePrefix(module)
 	} else {
+		// User module: look for <srcRoot>/Module.mjs
 		if r.srcRoot == "" {
 			return
 		}
-		srcDir = r.srcRoot
-		modFilePrefix = strings.ReplaceAll(module, ".", "/")
-		prefix = ModulePrefix(module)
+		modPath := strings.ReplaceAll(module, ".", "/")
+		mjsPath := r.srcRoot + "/" + modPath + ".mjs"
+		data, err := os.ReadFile(mjsPath)
+		if err != nil {
+			return
+		}
+		companionSource = string(data)
+		companionPath = mjsPath
+		nameParts := strings.Split(module, ".")
+		filename = nameParts[len(nameParts)-1] + ".mjs"
 	}
 
-	// Scan for external declarations
-	for _, expr := range modExprs {
-		ext, ok := expr.(ast.ExternalDecl)
+	r.jsCompanions = append(r.jsCompanions, JsCompanion{
+		Module:    module,
+		Filename:  filename,
+		Source:    companionSource,
+		Path:      companionPath,
+		Externals: externals,
+		Arities:   arities,
+	})
+}
+
+// countTyFunArity counts the number of function arrows in a type syntax.
+func countTyFunArity(ty ast.TySyntax) int {
+	arity := 0
+	for {
+		fn, ok := ty.(ast.TyFun)
 		if !ok {
-			continue
+			break
 		}
-		// Look for ModuleName.functionName.js
-		jsPath := srcDir + "/" + modFilePrefix + "." + ext.Name + ".js"
-		data, err := os.ReadFile(jsPath)
-		if err != nil {
-			continue // no companion file — might be a builtin handled by codegen
-		}
-		mangledName := prefix + ext.Name
-		r.jsBindings = append(r.jsBindings, JsBinding{
-			MangledName: mangledName,
-			Source:      string(data),
-		})
+		arity++
+		ty = fn.Ret
 	}
+	return arity
 }

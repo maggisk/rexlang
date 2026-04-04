@@ -25,6 +25,17 @@ func GoCompanion(module string) string {
 	return src
 }
 
+// JsCompanion returns the JS companion source for a stdlib module (e.g. "String", "Math").
+// Returns "" if no companion file exists.
+func JsCompanion(module string) string {
+	path := "rexfiles/" + strings.ReplaceAll(module, ".", "/") + ".mjs"
+	data, err := fs.ReadFile(stdlibFS, path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 // Source returns the source code for a stdlib module by name (e.g. "Prelude", "Json.Decode").
 func Source(name string) (string, error) {
 	path := strings.ReplaceAll(name, ".", "/")
