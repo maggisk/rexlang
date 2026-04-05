@@ -458,12 +458,7 @@ Use `todo` as a placeholder for unfinished code. It type-checks as any type but 
 handle x = todo "implement error handling"
 ```
 
-The compiler warns whenever `todo` appears. Use `--safe` to promote warnings to errors — ideal for CI:
-
-```bash
-./rex --safe myprogram.rex          # errors on any todo
-./rex --safe --test myfile.rex      # same for tests
-```
+The compiler warns whenever `todo` appears. `rex file.rex` allows it (dev mode), but `rex build`, `rex --test`, and `rex --compile` reject it — so `todo` can't slip into production builds.
 
 ### Comments
 
@@ -496,7 +491,7 @@ What the type system catches today:
 
 What can still fail at runtime:
 
-- **`todo`** — development placeholder; throws at runtime but the compiler warns, and `--safe` rejects it entirely
+- **`todo`** — development placeholder; throws at runtime. The compiler warns, and `build`/`test`/`compile` reject it
 - **Division by zero** — `x / 0` (value-dependent, inherently runtime). Use `try` from `Std:Result` to recover:
 
 ```
@@ -602,7 +597,7 @@ make test                                     # everything
 - [x] Type annotations — optional `add : Int -> Int -> Int` before binding
 - [x] Let-blocks — `let` with indented bindings terminated by `in`
 - [x] Bare top-level bindings — `name params = body` (no `let` needed); implicit self and mutual recursion
-- [x] `todo` builtin — development placeholder; `--safe` flag rejects it for CI/deploy
+- [x] `todo` builtin — development placeholder; allowed in `rex file.rex`, rejected by `build`/`test`/`compile`
 - [x] User modules — import your own `.rex` files from `src/` directory
 - [x] Opaque types — `export opaque type Email = Email String`; type name available for annotations, constructors hidden from importers
 
